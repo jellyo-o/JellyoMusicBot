@@ -66,7 +66,7 @@ public class Bot
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
         
         //Update config.txt before init
-        updateConfig();
+        // updateConfig();
         
         this.players = new PlayerManager(this, config);
         this.players.init();

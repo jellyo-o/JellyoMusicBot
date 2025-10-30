@@ -213,6 +213,8 @@ public class PlayCmd extends MusicCommand
             else
                 m.editMessage(event.getClient().getError()+" Error loading track.").queue();
         }
+
+        
     }
     
     public class PlaylistCmd extends MusicCommand

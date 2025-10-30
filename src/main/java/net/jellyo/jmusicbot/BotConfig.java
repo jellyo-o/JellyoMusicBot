@@ -57,6 +57,9 @@ public class BotConfig
     private Config aliases, transforms;
 
     private boolean valid = false;
+
+    private String spotifyID;
+    private String spotifySecret;
     
     public BotConfig(Prompt prompt)
     {
@@ -109,6 +112,9 @@ public class BotConfig
             transforms = config.getConfig("transforms");
             skipratio = config.getDouble("skipratio");
             dbots = owner == 113156185389092864L;
+
+            spotifyID     = config.getString("spotifyid");
+            spotifySecret = config.getString("spotifysecret");
             
             // we may need to write a new config file
             boolean write = false;
@@ -411,4 +417,7 @@ public class BotConfig
     {
         return transforms;
     }
+
+    public String getSpotifyID()     { return spotifyID; }
+    public String getSpotifySecret() { return spotifySecret; }
 }

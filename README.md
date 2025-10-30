@@ -1,76 +1,89 @@
-## Unofficial JMusicBot update with built-in Docker script (Forked from: https://github.com/jagrosh/MusicBot)
+# ![Jellyo Music Bot Logo](./JellyoMusicBotLogo.png) JellyoMusicBot (Enhanced JMusicBot Fork)  
 
-> [!IMPORTANT]
-> This version has a built-in Docker script ([youtube-trusted-session-generator](https://github.com/iv-org/youtube-trusted-session-generator)) that enters po_token and visitor_data automatically into the _tokens.txt_ (file creates with first launch) file each time the bot is launched. 
-> For proper operation you need **Docker** installed and **_running_** on your device.
+> A fork of the original [jagrosh/MusicBot](https://github.com/jagrosh/MusicBot), via the intermediate fork [SeVile/MusicBot](https://github.com/SeVile/MusicBot), adding Spotify playback support and Automatic Lyrics support.
 
-<img width="887" alt="Zrzut ekranu 2024-12-26 o 18 57 45" src="https://github.com/user-attachments/assets/e66d1fb3-3301-4c98-a44b-d521c0940dac" />
+## ✨ What’s New In This Fork
 
+| Feature | Description |
+|---------|-------------|
+| Spotify Support | Powered by `lavasrc` + protocol modules (configure `spotifyid` & `spotifysecret`). |
+| Lyrics Integration | Internal lyrics package (no external API key required for core behavior). |
 
-> [!TIP]
-> If Docker doesn't work, enter PO_TOKEN and VISITOR_DATA manually to tokens.txt
+## 🔧 Requirements
+
+* Java 11+ (JRE or JDK)
+* (Optional) Docker Engine running locally (for automatic YouTube tokens)
+* A Discord Bot Token (create via the [Discord Developer Portal](https://discord.com/developers/applications))
+
+## 🚀 Quick Start
+
+1. Download (or build) the shaded JAR: `JMusicBot-<version>-All.jar`.
+2. Place it in an empty folder (so generated files stay organized).
+3. First run (will generate default config template if missing):
+
+  ```bash
+  java -Dnogui=true -jar JMusicBot.jar
+  ```
+
+1. Edit `config.txt` with at least: `token`, `owner`, and (optionally) Spotify + YouTube keys.
+2. Re-run the bot. Type your prefix + `help` in Discord to explore commands.
+
+### Building From Source
+
+```bash
+mvn -q -DskipTests package
 ```
-ytpotoken=PO_TOKEN_HERE
-ytvisitordata=VISITOR_DATA_HERE
-```
 
-<img align="right" src="https://i.imgur.com/zrE80HY.png" height="200" width="200">
+Artifact will appear under `target/` (use the `*-All.jar` for a self‑contained build).
 
-# JMusicBot
+## ⚙️ Configuration Overview (config.txt)
 
-[![Downloads](https://img.shields.io/github/downloads/jagrosh/MusicBot/total.svg)](https://github.com/jagrosh/MusicBot/releases/latest)
-[![Stars](https://img.shields.io/github/stars/jagrosh/MusicBot.svg)](https://github.com/jagrosh/MusicBot/stargazers)
-[![Release](https://img.shields.io/github/release/jagrosh/MusicBot.svg)](https://github.com/jagrosh/MusicBot/releases/latest)
-[![License](https://img.shields.io/github/license/jagrosh/MusicBot.svg)](https://github.com/jagrosh/MusicBot/blob/master/LICENSE)
-[![Discord](https://discordapp.com/api/guilds/147698382092238848/widget.png)](https://discord.gg/0p9LSGoRLu6Pet0k)<br>
-[![CircleCI](https://dl.circleci.com/status-badge/img/gh/jagrosh/MusicBot/tree/master.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/jagrosh/MusicBot/tree/master)
-[![Build and Test](https://github.com/jagrosh/MusicBot/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/jagrosh/MusicBot/actions/workflows/build-and-test.yml)
-[![CodeFactor](https://www.codefactor.io/repository/github/jagrosh/musicbot/badge)](https://www.codefactor.io/repository/github/jagrosh/musicbot)
+Most options are embedded in the shipped `reference.conf`; on first run a minimal file is created if needed. Key additions in this fork:
 
-A cross-platform Discord music bot with a clean interface, and that is easy to set up and run yourself!
+| Key | Purpose | Notes |
+|-----|---------|-------|
+| `spotifyid` / `spotifysecret` | Enable Spotify track/playlist lookup via lavasrc. | Get from a Spotify Developer application. |
 
-[![Setup](http://i.imgur.com/VvXYp5j.png)](https://jmusicbot.com/setup)
+## 📝 Lyrics
 
-## Features
-  * Easy to run (just make sure Java is installed, and run!)
-  * Fast loading of songs
-  * No external keys needed (besides a Discord Bot token)
-  * Smooth playback
-  * Server-specific setup for the "DJ" role that can moderate the music
-  * Clean and beautiful menus
-  * Supports many sites, including Youtube, Soundcloud, and more
-  * Supports many online radio/streams
-  * Supports local files
-  * Playlist support (both web/youtube, and local)
+The fork bundles an internal lyrics module (no separate setup). Use the lyrics command (see in‑bot help) while a track is playing to fetch and display lyrics when available.
 
-## Supported sources and formats
-JMusicBot supports all sources and formats supported by [lavaplayer](https://github.com/sedmelluq/lavaplayer#supported-formats):
-### Sources
-  * YouTube
-  * SoundCloud
-  * Bandcamp
-  * Vimeo
-  * Twitch streams
-  * Local files
-  * HTTP URLs
-### Formats
-  * MP3
-  * FLAC
-  * WAV
-  * Matroska/WebM (AAC, Opus or Vorbis codecs)
-  * MP4/M4A (AAC codec)
-  * OGG streams (Opus, Vorbis and FLAC codecs)
-  * AAC streams
-  * Stream playlists (M3U and PLS)
+## 🔄 Updating
 
-## Example
-![Loading Example...](https://i.imgur.com/kVtTKvS.gif)
+* Replace the existing JAR with a newer release and restart.
+* The `scripts/run_jmusicbot.sh` helper can auto‑download the latest upstream release; adapt it if you want it to track this fork instead.
 
-## Setup
-Please see the [Setup Page](https://jmusicbot.com/setup) to run this bot yourself!
+## ❓ Support & Feedback
 
-## Questions/Suggestions/Bug Reports
-**Please read the [Issues List](https://github.com/jagrosh/MusicBot/issues) before suggesting a feature**. If you have a question, need troubleshooting help, or want to brainstorm a new feature, please start a [Discussion](https://github.com/jagrosh/MusicBot/discussions). If you'd like to suggest a feature or report a reproducible bug, please open an [Issue](https://github.com/jagrosh/MusicBot/issues) on this repository. If you like this bot, be sure to add a star to the libraries that make this possible: [**JDA**](https://github.com/DV8FromTheWorld/JDA) and [**lavaplayer**](https://github.com/sedmelluq/lavaplayer)!
+This fork is maintained on a best‑effort basis. For general JMusicBot usage questions, the original project resources and community still apply.
 
-## Editing
-This bot (and the source code here) might not be easy to edit for inexperienced programmers. The main purpose of having the source public is to show the capabilities of the libraries, to allow others to understand how the bot works, and to allow those knowledgeable about java, JDA, and Discord bot development to contribute. There are many requirements and dependencies required to edit and compile it, and there will not be support provided for people looking to make changes on their own. Instead, consider making a feature request (see the above section). If you choose to make edits, please do so in accordance with the Apache 2.0 License.
+| Need | Where |
+|------|-------|
+| Upstream bugs/features | <https://github.com/jagrosh/MusicBot> |
+| Fork‑specific issues | Open an Issue in this repo |
+| Idea / discussion | GitHub Discussions (if enabled) |
+
+## 📜 Attribution & Licensing
+
+This project is licensed under the **Apache License 2.0** (see `LICENSE`).
+
+Lineage:
+
+1. Original: © 2017‑2025 John Grosh (jagrosh) – JMusicBot
+2. Intermediate fork: SeVile/MusicBot (YouTube session‑related fixes)
+3. Current fork: This repository (Spotify Integration + Automatic Lyrics)
+
+All original notices are retained. Add your own notice if you redistribute further.
+
+## ⚠️ Disclaimer
+
+Spotify playback resolves tracks via available source managers; quality/availability may vary. Automated YouTube session handling is provided for convenience; ensure your usage complies with YouTube & Discord Terms of Service.
+
+## 💎 Original READMEs
+
+[Original README](https://github.com/jagrosh/MusicBot/blob/master/README.md)
+
+[Fork that fixed YouTube sources README](https://github.com/SeVile/MusicBot/blob/master/README.md)
+
+---
+Enjoy the music! 🎶

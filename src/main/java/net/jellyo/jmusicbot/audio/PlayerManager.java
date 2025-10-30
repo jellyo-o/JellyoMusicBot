@@ -41,6 +41,7 @@ import com.sedmelluq.lava.extensions.youtuberotator.tools.ip.Ipv6Block;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import dev.lavalink.youtube.clients.Web;
 import net.dv8tion.jda.api.entities.Guild;
+import com.github.topi314.lavasrc.spotify.SpotifySourceManager;
 
 /**
  *
@@ -74,6 +75,19 @@ public class PlayerManager extends DefaultAudioPlayerManager
             rotator.forConfiguration(yt.getHttpInterfaceManager(), false)
                     .withMainDelegateFilter(yt.getContextFilter())
                     .setup();
+        }
+
+        if (!"NONE".equals(bot.getConfig().getSpotifyID())
+            && !"NONE".equals(bot.getConfig().getSpotifySecret()))
+        {
+            SpotifySourceManager spotify = new SpotifySourceManager(
+                null,                            // default HTTP client
+                bot.getConfig().getSpotifyID(),
+                bot.getConfig().getSpotifySecret(),
+                "US",                            // market (change as you like)
+                this                             // your AudioPlayerManager instance
+            );
+            this.registerSourceManager(spotify);
         }
 
         yt.setPlaylistPageCount(bot.getConfig().getMaxYTPlaylistPages());

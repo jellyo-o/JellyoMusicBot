@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>com.jagrosh</groupId>
+    <groupId>net.jellyo</groupId>
     <artifactId>JMusicBot</artifactId>
     <version>0.4.4.0</version>
     <packaging>jar</packaging>
@@ -79,10 +79,21 @@
             <artifactId>v2</artifactId>
             <version>1.13.5</version>
         </dependency>
+        <!-- Lyrics integration dependencies (replacing legacy JLyrics) -->
         <dependency>
-            <groupId>com.github.jagrosh</groupId>
-            <artifactId>JLyrics</artifactId>
-            <version>master-SNAPSHOT</version>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.15.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.15.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.45.3.0</version>
         </dependency>
         <dependency>
             <groupId>com.dunctebot</groupId>
@@ -104,7 +115,19 @@
         <dependency>
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
-            <version>1.15.3</version>
+            <version>1.17.2</version>
+        </dependency>
+
+        <!-- Spotify Dependencies -->
+        <dependency>
+            <groupId>com.github.topi314.lavasrc</groupId>
+            <artifactId>lavasrc</artifactId>
+            <version>4.0.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.topi314.lavasrc</groupId>
+            <artifactId>protocol-jvm</artifactId>
+            <version>4.0.1</version>
         </dependency>
 
         <!-- Testing Dependencies -->
