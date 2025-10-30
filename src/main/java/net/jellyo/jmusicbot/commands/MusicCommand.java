@@ -20,9 +20,10 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
-import net.dv8tion.jda.api.entities.GuildVoiceState;
-import net.dv8tion.jda.api.entities.TextChannel;
-import net.dv8tion.jda.api.entities.VoiceChannel;
+import net.dv8tion.jda.api.entities.MemberVoiceState;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
+import net.dv8tion.jda.api.entities.channel.unions.AudioChannelUnion;
 import net.dv8tion.jda.api.exceptions.PermissionException;
 
 /**
@@ -64,32 +65,33 @@ public abstract class MusicCommand extends Command
         }
         if(beListening)
         {
-            VoiceChannel current = event.getGuild().getSelfMember().getVoiceState().getChannel();
+            AudioChannelUnion current = event.getGuild().getSelfMember().getVoiceState().getChannel();
             if(current==null)
                 current = settings.getVoiceChannel(event.getGuild());
-            GuildVoiceState userState = event.getMember().getVoiceState();
-            if(!userState.inVoiceChannel() || userState.isDeafened() || (current!=null && !userState.getChannel().equals(current)))
+            MemberVoiceState userState = event.getMember().getVoiceState();
+            AudioChannelUnion userChannel = userState == null ? null : userState.getChannel();
+            if(userState == null || userChannel == null || !userState.inAudioChannel() || userState.isDeafened() || (current!=null && userChannel.getIdLong()!=current.getIdLong()))
             {
                 event.replyError("You must be listening in "+(current==null ? "a voice channel" : current.getAsMention())+" to use that!");
                 return;
             }
 
             VoiceChannel afkChannel = userState.getGuild().getAfkChannel();
-            if(afkChannel != null && afkChannel.equals(userState.getChannel()))
+            if(afkChannel != null && afkChannel.getIdLong() == userChannel.getIdLong())
             {
                 event.replyError("You cannot use that command in an AFK channel!");
                 return;
             }
 
-            if(!event.getGuild().getSelfMember().getVoiceState().inVoiceChannel())
+            if(!event.getGuild().getSelfMember().getVoiceState().inAudioChannel())
             {
-                try 
+                try
                 {
-                    event.getGuild().getAudioManager().openAudioConnection(userState.getChannel());
+                    event.getGuild().getAudioManager().openAudioConnection(userChannel);
                 }
-                catch(PermissionException ex) 
+                catch(PermissionException ex)
                 {
-                    event.reply(event.getClient().getError()+" I am unable to connect to "+userState.getChannel().getAsMention()+"!");
+                    event.reply(event.getClient().getError()+" I am unable to connect to "+userChannel.getAsMention()+"!");
                     return;
                 }
             }

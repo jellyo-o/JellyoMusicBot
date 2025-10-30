@@ -27,9 +27,10 @@ import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Message;
-import net.dv8tion.jda.api.entities.TextChannel;
-import net.dv8tion.jda.api.exceptions.PermissionException;
-import net.dv8tion.jda.api.exceptions.RateLimitedException;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.utils.messages.MessageCreateData;
+import net.dv8tion.jda.api.utils.messages.MessageEditBuilder;
+import net.dv8tion.jda.api.utils.messages.MessageEditData;
 
 /**
  *
@@ -54,7 +55,7 @@ public class NowplayingHandler
     
     public void setLastNPMessage(Message m)
     {
-        lastNP.put(m.getGuild().getIdLong(), new Pair<>(m.getTextChannel().getIdLong(), m.getIdLong()));
+        lastNP.put(m.getGuild().getIdLong(), new Pair<>(m.getGuildChannel().getIdLong(), m.getIdLong()));
     }
     
     public void clearLastNPMessage(Guild guild)
@@ -81,19 +82,24 @@ public class NowplayingHandler
                 continue;
             }
             AudioHandler handler = (AudioHandler)guild.getAudioManager().getSendingHandler();
-            Message msg = handler.getNowPlaying(bot.getJDA());
+            MessageCreateData msg = handler.getNowPlaying(bot.getJDA());
             if(msg==null)
             {
                 msg = handler.getNoMusicPlaying(bot.getJDA());
                 toRemove.add(guildId);
             }
-            try 
+            if(msg != null)
             {
-                tc.editMessageById(pair.getValue(), msg).queue(m->{}, t -> lastNP.remove(guildId));
-            } 
-            catch(Exception e) 
-            {
-                toRemove.add(guildId);
+                MessageEditBuilder builder = MessageEditBuilder.fromCreateData(msg);
+                MessageEditData data = builder.build();
+                try
+                {
+                    tc.editMessageById(pair.getValue(), data).queue(m->{}, t -> lastNP.remove(guildId));
+                }
+                catch(Exception e)
+                {
+                    toRemove.add(guildId);
+                }
             }
         }
         toRemove.forEach(id -> lastNP.remove(id));
