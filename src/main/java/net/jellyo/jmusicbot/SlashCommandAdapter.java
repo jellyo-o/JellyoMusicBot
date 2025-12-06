@@ -3,17 +3,17 @@ package com.jagrosh.jmusicbot;
 import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import net.dv8tion.jda.api.JDA;
-import net.dv8tion.jda.api.entities.ChannelType;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
-import net.dv8tion.jda.api.entities.MessageChannel;
 import net.dv8tion.jda.api.entities.User;
+import net.dv8tion.jda.api.entities.channel.ChannelType;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
-import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 
 /**
  * A simple adapter to allow existing {@link CommandEvent}-based commands to be reused for slash commands.
@@ -24,7 +24,7 @@ public class SlashCommandAdapter extends CommandEvent
 
     public SlashCommandAdapter(SlashCommandInteractionEvent event, String args, CommandClient client)
     {
-        super((MessageReceivedEvent) null, args, client);
+        super((MessageReceivedEvent) null, "", args, client);
         this.slashEvent = event;
     }
 

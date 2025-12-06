@@ -7,9 +7,9 @@ import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEve
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
-import net.dv8tion.jda.api.interactions.commands.build.CommandListUpdateAction;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
+import net.dv8tion.jda.api.requests.restaction.CommandListUpdateAction;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -30,14 +30,14 @@ public class SlashCommandListener extends ListenerAdapter
     public void onReady(@NotNull ReadyEvent event)
     {
         CommandListUpdateAction updateAction = event.getJDA().updateCommands();
-        Arrays.stream(commandClient.getCommands()).forEach(command -> updateAction.addCommands(buildSlashData(command)));
+        commandClient.getCommands().forEach(command -> updateAction.addCommands(buildSlashData(command)));
         updateAction.queue();
     }
 
     @Override
     public void onSlashCommandInteraction(@NotNull SlashCommandInteractionEvent event)
     {
-        Command target = Arrays.stream(commandClient.getCommands())
+        Command target = commandClient.getCommands().stream()
                 .filter(cmd -> cmd.getName().equalsIgnoreCase(event.getName()) || Arrays.asList(cmd.getAliases() == null ? new String[0] : cmd.getAliases()).contains(event.getName()))
                 .findFirst()
                 .orElse(null);
