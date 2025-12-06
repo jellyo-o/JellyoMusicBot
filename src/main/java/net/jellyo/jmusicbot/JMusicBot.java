@@ -122,7 +122,7 @@ public class JMusicBot
                     .setActivity(config.isGameNone() ? null : Activity.playing("loading..."))
                     .setStatus(config.getStatus()==OnlineStatus.INVISIBLE || config.getStatus()==OnlineStatus.OFFLINE 
                             ? OnlineStatus.INVISIBLE : OnlineStatus.DO_NOT_DISTURB)
-                    .addEventListeners(client, waiter, new Listener(bot))
+                    .addEventListeners(client, waiter, new Listener(bot), new SlashCommandListener(client))
                     .setBulkDeleteSplittingEnabled(true)
                     .build();
             bot.setJDA(jda);
