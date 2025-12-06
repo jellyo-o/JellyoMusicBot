@@ -49,6 +49,11 @@ public class RequestMetadata
     {
         return new RequestMetadata(event.getAuthor(), new RequestInfo(event.getArgs(), track.getInfo().uri));
     }
+
+    public static RequestMetadata fromSlash(net.dv8tion.jda.api.entities.User user, String args, AudioTrack track)
+    {
+        return new RequestMetadata(user, new RequestInfo(args, track.getInfo().uri));
+    }
     
     public static class RequestInfo
     {

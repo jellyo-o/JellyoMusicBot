@@ -122,10 +122,12 @@ public class JMusicBot
                     .setActivity(config.isGameNone() ? null : Activity.playing("loading..."))
                     .setStatus(config.getStatus()==OnlineStatus.INVISIBLE || config.getStatus()==OnlineStatus.OFFLINE 
                             ? OnlineStatus.INVISIBLE : OnlineStatus.DO_NOT_DISTURB)
-                    .addEventListeners(client, waiter, new Listener(bot))
+                    .addEventListeners(client, waiter, new Listener(bot), new SlashCommandListener(bot))
                     .setBulkDeleteSplittingEnabled(true)
                     .build();
             bot.setJDA(jda);
+
+            // Slash commands are registered in SlashCommandListener.onReady()
 
             // check if something about the current startup is not supported
             String unsupportedReason = OtherUtil.getUnsupportedBotReason(jda);
