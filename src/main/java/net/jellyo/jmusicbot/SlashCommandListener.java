@@ -18,10 +18,15 @@ package com.jagrosh.jmusicbot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
+import com.jagrosh.jmusicbot.lyrics.InputValidator;
+import com.jagrosh.jmusicbot.lyrics.LyricsCache;
+import com.jagrosh.jmusicbot.lyrics.LyricsService;
+import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
+import com.jagrosh.jmusicbot.utils.OtherUtil;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
 import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
@@ -38,11 +43,17 @@ import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.selections.SelectOption;
+import net.dv8tion.jda.api.components.selections.StringSelectMenu;
+import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
+import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.exceptions.PermissionException;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.InteractionHook;
+import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
@@ -52,8 +63,16 @@ import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Handles all slash command interactions for the music bot.
@@ -61,7 +80,15 @@ import java.util.List;
 public class SlashCommandListener extends ListenerAdapter
 {
     private final static Logger LOG = LoggerFactory.getLogger(SlashCommandListener.class);
+    private static final int MAX_AUTOCOMPLETE_CHOICES = 25;
+    private static final int MAX_AUTOCOMPLETE_LENGTH = 100;
+    private static final int MAX_SEARCH_RESULTS = 4;
+    private static final long SEARCH_MENU_EXPIRATION_MS = 15 * 60 * 1000L;
+    private static final String SEARCH_MENU_PREFIX = "jmb-search:";
     private final Bot bot;
+    private final AtomicLong searchMenuCounter = new AtomicLong();
+    private final Map<String, SearchMenuState> searchMenus = new ConcurrentHashMap<>();
+    private volatile LyricsService lyricsService;
 
     public SlashCommandListener(Bot bot)
     {
@@ -76,16 +103,31 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void registerSlashCommands(JDA jda)
     {
+        List<SlashCommandData> commands = buildSlashCommands();
+
+        clearGuildSlashCommands(jda);
+        jda.updateCommands().addCommands(commands).queue(
+                cmds -> LOG.info("Registered {} global slash commands", cmds.size()),
+                err -> LOG.error("Failed to register slash commands", err)
+        );
+    }
+
+    static List<SlashCommandData> buildSlashCommands()
+    {
         List<SlashCommandData> commands = new ArrayList<>();
 
         // General commands
+        commands.add(Commands.slash("about", "Shows information about the bot"));
+        commands.add(Commands.slash("ping", "Checks the bot latency"));
         commands.add(Commands.slash("settings", "Shows the bot settings"));
 
         // Music commands (anyone can use)
         commands.add(Commands.slash("play", "Play a song")
-                .addOptions(new OptionData(OptionType.STRING, "query", "Song name or URL", true)));
+                .addOptions(songQueryOption()));
         commands.add(Commands.slash("playtop", "Play a song at the top of the queue")
-                .addOptions(new OptionData(OptionType.STRING, "query", "Song name or URL", true)));
+                .addOptions(songQueryOption()));
+        commands.add(Commands.slash("playplaylist", "Play a saved playlist")
+                .addOptions(playlistNameOption()));
         commands.add(Commands.slash("nowplaying", "Shows the currently playing song"));
         commands.add(Commands.slash("queue", "Shows the current queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "page", "Page number", false)));
@@ -97,7 +139,13 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(new OptionData(OptionType.STRING, "time", "Time to seek to (e.g., 1:30, +30, -15)", true)));
         commands.add(Commands.slash("lyrics", "Search for lyrics")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Song to search lyrics for", false)));
+        commands.add(Commands.slash("correctlyrics", "Correct the last fetched lyrics result")
+                .addOptions(new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true)));
         commands.add(Commands.slash("playlists", "Shows available playlists"));
+        commands.add(Commands.slash("search", "Search YouTube and choose a result")
+                .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
+        commands.add(Commands.slash("scsearch", "Search SoundCloud and choose a result")
+                .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
 
         // DJ commands
         commands.add(Commands.slash("forceskip", "Force skip the current song"));
@@ -116,7 +164,7 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(new OptionData(OptionType.INTEGER, "from", "Current position", true))
                 .addOptions(new OptionData(OptionType.INTEGER, "to", "New position", true)));
         commands.add(Commands.slash("playnext", "Play a song next in queue")
-                .addOptions(new OptionData(OptionType.STRING, "query", "Song name or URL", true)));
+                .addOptions(songQueryOption()));
         commands.add(Commands.slash("forceremove", "Force remove a user's songs from queue")
                 .addOptions(new OptionData(OptionType.USER, "user", "User to remove songs from", true)));
 
@@ -136,16 +184,37 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(Commands.slash("skipratio", "Set the skip vote ratio")
                 .addOptions(new OptionData(OptionType.NUMBER, "ratio", "Skip ratio (0-1)", false))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
+        commands.add(Commands.slash("setskip", "Set the skip vote percentage")
+                .addOptions(new OptionData(OptionType.INTEGER, "percent", "Skip percentage (0-100)", true)
+                        .setRequiredRange(0, 100))
+                .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
         commands.add(Commands.slash("queuetype", "Set the queue type")
                 .addOptions(new OptionData(OptionType.STRING, "type", "Queue type", false)
                         .addChoice("fair", "fair")
                         .addChoice("linear", "linear"))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
 
-        jda.updateCommands().addCommands(commands).queue(
-                cmds -> LOG.info("Registered {} slash commands", cmds.size()),
-                err -> LOG.error("Failed to register slash commands", err)
-        );
+        return commands;
+    }
+
+    private static OptionData songQueryOption()
+    {
+        return new OptionData(OptionType.STRING, "query", "Song name or URL", true)
+                .setAutoComplete(true);
+    }
+
+    private static OptionData playlistNameOption()
+    {
+        return new OptionData(OptionType.STRING, "name", "Playlist name", true)
+                .setAutoComplete(true);
+    }
+
+    private void clearGuildSlashCommands(JDA jda)
+    {
+        jda.getGuilds().forEach(guild -> guild.updateCommands().queue(
+                ignored -> LOG.debug("Cleared guild-specific slash commands for {}", guild.getName()),
+                err -> LOG.warn("Failed to clear guild-specific slash commands for {}", guild.getName(), err)
+        ));
     }
 
     @Override
@@ -162,9 +231,12 @@ public class SlashCommandListener extends ListenerAdapter
 
         switch (commandName)
         {
+            case "about": handleAbout(event); break;
+            case "ping": handlePing(event); break;
             case "settings": handleSettings(event); break;
             case "play": handlePlay(event, false); break;
             case "playtop": handlePlay(event, true); break;
+            case "playplaylist": handlePlayPlaylist(event); break;
             case "nowplaying": handleNowPlaying(event); break;
             case "queue": handleQueue(event); break;
             case "skip": handleSkip(event); break;
@@ -172,7 +244,10 @@ public class SlashCommandListener extends ListenerAdapter
             case "shuffle": handleShuffle(event); break;
             case "seek": handleSeek(event); break;
             case "lyrics": handleLyrics(event); break;
+            case "correctlyrics": handleCorrectLyrics(event); break;
             case "playlists": handlePlaylists(event); break;
+            case "search": handleSearch(event, "ytsearch:", "YouTube"); break;
+            case "scsearch": handleSearch(event, "scsearch:", "SoundCloud"); break;
             case "forceskip": handleForceSkip(event); break;
             case "pause": handlePause(event); break;
             case "stop": handleStop(event); break;
@@ -187,9 +262,186 @@ public class SlashCommandListener extends ListenerAdapter
             case "settc": handleSetTC(event); break;
             case "setvc": handleSetVC(event); break;
             case "skipratio": handleSkipRatio(event); break;
+            case "setskip": handleSetSkip(event); break;
             case "queuetype": handleQueueType(event); break;
             default: event.reply("Unknown command.").setEphemeral(true).queue();
         }
+    }
+
+    @Override
+    public void onCommandAutoCompleteInteraction(CommandAutoCompleteInteractionEvent event)
+    {
+        try
+        {
+            if ("name".equals(event.getFocusedOption().getName()) && "playplaylist".equals(event.getName()))
+            {
+                event.replyChoices(getPlaylistNameChoices(event)).queue();
+                return;
+            }
+            if ("query".equals(event.getFocusedOption().getName()) && isSongQueryCommand(event.getName()))
+            {
+                event.replyChoices(getSongQueryChoices(event)).queue();
+                return;
+            }
+            event.replyChoices(Collections.emptyList()).queue();
+        }
+        catch (Exception ex)
+        {
+            LOG.warn("Failed to handle slash command autocomplete for /{}", event.getName(), ex);
+            event.replyChoices(Collections.emptyList()).queue();
+        }
+    }
+
+    private boolean isSongQueryCommand(String commandName)
+    {
+        return "play".equals(commandName) || "playtop".equals(commandName) || "playnext".equals(commandName);
+    }
+
+    private List<Command.Choice> getSongQueryChoices(CommandAutoCompleteInteractionEvent event)
+    {
+        List<Command.Choice> choices = new ArrayList<>();
+        String query = event.getFocusedOption().getValue().trim();
+
+        if (!query.isEmpty())
+        {
+            addChoice(choices, "Search YouTube: " + query, "ytsearch:" + query);
+            addChoice(choices, "Search SoundCloud: " + query, "scsearch:" + query);
+            addChoice(choices, "Play exactly: " + query, query);
+        }
+
+        Guild guild = event.getGuild();
+        if (guild != null)
+        {
+            AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
+            if (handler != null)
+            {
+                addTrackChoice(choices, "Current", handler.getPlayer().getPlayingTrack(), query);
+                handler.getQueue().getList().forEach(track -> addTrackChoice(choices, "Queue", track.getTrack(), query));
+            }
+        }
+
+        return choices;
+    }
+
+    private List<Command.Choice> getPlaylistNameChoices(CommandAutoCompleteInteractionEvent event)
+    {
+        String query = event.getFocusedOption().getValue().trim().toLowerCase(Locale.ROOT);
+        List<Command.Choice> choices = new ArrayList<>();
+        for (String name : bot.getPlaylistLoader().getPlaylistNames())
+        {
+            if (choices.size() >= MAX_AUTOCOMPLETE_CHOICES)
+                break;
+            if (name.length() > MAX_AUTOCOMPLETE_LENGTH)
+                continue;
+            if (query.isEmpty() || name.toLowerCase(Locale.ROOT).contains(query))
+                choices.add(new Command.Choice(name, name));
+        }
+        return choices;
+    }
+
+    private void addTrackChoice(List<Command.Choice> choices, String source, AudioTrack track, String query)
+    {
+        if (track == null || choices.size() >= MAX_AUTOCOMPLETE_CHOICES)
+            return;
+
+        String title = track.getInfo().title;
+        if (title == null || title.isBlank())
+            return;
+
+        String author = track.getInfo().author;
+        String searchText = author == null || author.isBlank() ? title : title + " " + author;
+        if (!query.isEmpty() && !searchText.toLowerCase(Locale.ROOT).contains(query.toLowerCase(Locale.ROOT)))
+            return;
+
+        String display = author == null || author.isBlank() ? title : title + " - " + author;
+        addChoice(choices, source + ": " + display, display);
+    }
+
+    private void addChoice(List<Command.Choice> choices, String name, String value)
+    {
+        if (choices.size() >= MAX_AUTOCOMPLETE_CHOICES || value == null || value.isBlank())
+            return;
+
+        String trimmedValue = value.trim();
+        if (trimmedValue.length() > MAX_AUTOCOMPLETE_LENGTH)
+            return;
+
+        String truncatedName = truncate(name.trim(), MAX_AUTOCOMPLETE_LENGTH);
+        boolean exists = choices.stream().anyMatch(choice -> choice.getName().equals(truncatedName) || choice.getAsString().equals(trimmedValue));
+        if (!exists)
+            choices.add(new Command.Choice(truncatedName, trimmedValue));
+    }
+
+    private String truncate(String value, int maxLength)
+    {
+        if (value.length() <= maxLength)
+            return value;
+        return value.substring(0, maxLength - 3) + "...";
+    }
+
+    @Override
+    public void onStringSelectInteraction(StringSelectInteractionEvent event)
+    {
+        String componentId = event.getComponentId();
+        if (!componentId.startsWith(SEARCH_MENU_PREFIX))
+            return;
+
+        SearchMenuState state = searchMenus.get(componentId);
+        if (state == null || state.isExpired())
+        {
+            searchMenus.remove(componentId);
+            event.reply(bot.getConfig().getWarning() + " This search has expired. Please run the search again.").setEphemeral(true).queue();
+            return;
+        }
+        if (event.getUser().getIdLong() != state.userId)
+        {
+            event.reply(bot.getConfig().getError() + " Only the user who ran the search can choose a result.").setEphemeral(true).queue();
+            return;
+        }
+        if (event.getGuild() == null || event.getGuild().getIdLong() != state.guildId)
+        {
+            event.reply(bot.getConfig().getError() + " This search result cannot be used here.").setEphemeral(true).queue();
+            return;
+        }
+        if (!isListeningInVoice(event))
+        {
+            event.reply(bot.getConfig().getError() + " You must be in a voice channel to choose a search result.").setEphemeral(true).queue();
+            return;
+        }
+
+        int index;
+        try
+        {
+            index = Integer.parseInt(event.getValues().get(0));
+        }
+        catch (RuntimeException ex)
+        {
+            event.reply(bot.getConfig().getError() + " Invalid search result selected.").setEphemeral(true).queue();
+            return;
+        }
+        if (index < 0 || index >= state.tracks.size())
+        {
+            event.reply(bot.getConfig().getError() + " Invalid search result selected.").setEphemeral(true).queue();
+            return;
+        }
+
+        AudioTrack track = state.tracks.get(index);
+        if (bot.getConfig().isTooLong(track))
+        {
+            event.reply(bot.getConfig().getWarning() + " This track (**" + track.getInfo().title + "**) is longer than the allowed maximum: `"
+                    + TimeUtil.formatTime(track.getDuration()) + "` > `" + bot.getConfig().getMaxTime() + "`").setEphemeral(true).queue();
+            return;
+        }
+
+        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+        if (handler == null)
+            handler = bot.getPlayerManager().setUpHandler(event.getGuild());
+        int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), state.query, track))) + 1;
+        searchMenus.remove(componentId);
+        event.editMessage(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title
+                + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos == 0 ? "to begin playing" : " to the queue at position " + pos)))
+                .setComponents(Collections.emptyList())
+                .queue();
     }
 
     // ========================
@@ -228,6 +480,16 @@ public class SlashCommandListener extends ListenerAdapter
         return true;
     }
 
+    private boolean isListeningInVoice(StringSelectInteractionEvent event)
+    {
+        Member member = event.getMember();
+        if (member == null || member.getVoiceState() == null || !member.getVoiceState().inAudioChannel())
+            return false;
+
+        AudioChannel current = event.getGuild().getSelfMember().getVoiceState().getChannel();
+        return current == null || current.equals(member.getVoiceState().getChannel());
+    }
+
     private boolean connectToVoiceChannel(SlashCommandInteractionEvent event)
     {
         Guild guild = event.getGuild();
@@ -254,6 +516,28 @@ public class SlashCommandListener extends ListenerAdapter
     // ========================
     // General Commands
     // ========================
+
+    private void handleAbout(SlashCommandInteractionEvent event)
+    {
+        EmbedBuilder eb = new EmbedBuilder()
+                .setColor(event.getGuild().getSelfMember().getColor())
+                .setTitle(event.getJDA().getSelfUser().getName())
+                .setDescription("A self-hosted music bot for Discord.")
+                .addField("Version", OtherUtil.getCurrentVersion(), true)
+                .addField("Servers", String.valueOf(event.getJDA().getGuilds().size()), true)
+                .addField("Prefix", "`" + bot.getConfig().getPrefix() + "`", true);
+        event.replyEmbeds(eb.build()).queue();
+    }
+
+    private void handlePing(SlashCommandInteractionEvent event)
+    {
+        long gatewayPing = event.getJDA().getGatewayPing();
+        event.reply("Pong! Gateway: `" + gatewayPing + "ms`").queue(hook ->
+                event.getJDA().getRestPing().queue(
+                        restPing -> hook.editOriginal("Pong! Gateway: `" + gatewayPing + "ms`, REST: `" + restPing + "ms`").queue(),
+                        err -> LOG.warn("Failed to retrieve REST ping", err)
+                ));
+    }
 
     private void handleSettings(SlashCommandInteractionEvent event)
     {
@@ -288,6 +572,45 @@ public class SlashCommandListener extends ListenerAdapter
         bot.getPlayerManager().setUpHandler(event.getGuild());
         event.deferReply().queue(hook -> {
             bot.getPlayerManager().loadItemOrdered(event.getGuild(), query, new PlayResultHandler(hook, event, query, playTop, false));
+        });
+    }
+
+    private void handlePlayPlaylist(SlashCommandInteractionEvent event)
+    {
+        if (!checkVoiceState(event, false)) return;
+        if (!connectToVoiceChannel(event)) return;
+
+        String name = event.getOption("name").getAsString();
+        Playlist playlist = bot.getPlaylistLoader().getPlaylist(name);
+        if (playlist == null && name.contains(" "))
+        {
+            name = name.replaceAll("\\s+", "_");
+            playlist = bot.getPlaylistLoader().getPlaylist(name);
+        }
+        if (playlist == null)
+        {
+            event.reply(bot.getConfig().getError() + " I could not find `" + name + ".txt` in the Playlists folder.").setEphemeral(true).queue();
+            return;
+        }
+        if (playlist.getItems().isEmpty())
+        {
+            event.reply(bot.getConfig().getWarning() + " Playlist `" + playlist.getName() + "` has no entries.").setEphemeral(true).queue();
+            return;
+        }
+
+        Playlist selectedPlaylist = playlist;
+        bot.getPlayerManager().setUpHandler(event.getGuild());
+        event.deferReply().queue(hook -> {
+            AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+            int[] loaded = {0};
+            selectedPlaylist.loadTracks(bot.getPlayerManager(),
+                    track -> {
+                        handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), "playlist:" + selectedPlaylist.getName(), track)));
+                        loaded[0]++;
+                    },
+                    () -> hook.editOriginal(bot.getConfig().getSuccess() + " Loaded playlist **" + selectedPlaylist.getName()
+                            + "** with `" + loaded[0] + "` tracks"
+                            + (selectedPlaylist.getErrors().isEmpty() ? "." : " (`" + selectedPlaylist.getErrors().size() + "` entries failed).")).queue());
         });
     }
 
@@ -482,7 +805,71 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handleLyrics(SlashCommandInteractionEvent event)
     {
-        event.reply(bot.getConfig().getWarning() + " Lyrics search via slash commands is not yet fully implemented. Please use the message command for full functionality.").setEphemeral(true).queue();
+        LyricsService service = getLyricsService();
+        if (service == null)
+        {
+            event.reply(bot.getConfig().getError() + " Lyrics service failed to initialize.").setEphemeral(true).queue();
+            return;
+        }
+
+        String query;
+        if (event.getOption("query") != null)
+        {
+            query = event.getOption("query").getAsString();
+        }
+        else
+        {
+            AudioHandler sendingHandler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+            if (sendingHandler == null || !sendingHandler.isMusicPlaying(event.getJDA()))
+            {
+                event.reply(bot.getConfig().getError() + " There must be music playing, or you must provide a song name.").setEphemeral(true).queue();
+                return;
+            }
+            query = sendingHandler.getPlayer().getPlayingTrack().getInfo().title;
+        }
+
+        String usedQuery = query;
+        event.deferReply().queue(hook -> CompletableFuture
+                .supplyAsync(() -> fetchLyrics(service, usedQuery))
+                .thenAccept(opt -> {
+                    if (opt.isEmpty())
+                    {
+                        hook.editOriginal(bot.getConfig().getError() + " Lyrics for `" + usedQuery + "` could not be found.").queue();
+                        return;
+                    }
+                    sendLyricsResult(event, hook, opt.get());
+                }));
+    }
+
+    private void handleCorrectLyrics(SlashCommandInteractionEvent event)
+    {
+        LyricsService service = getLyricsService();
+        if (service == null)
+        {
+            event.reply(bot.getConfig().getError() + " Lyrics service unavailable.").setEphemeral(true).queue();
+            return;
+        }
+
+        String url = event.getOption("url").getAsString().trim();
+        if (!url.startsWith("http"))
+            url = "https://" + url;
+        if (!InputValidator.isValidGeniusUrl(url))
+        {
+            event.reply(bot.getConfig().getError() + " That doesn't look like a valid Genius lyrics URL.").setEphemeral(true).queue();
+            return;
+        }
+
+        String finalUrl = url;
+        event.deferReply().queue(hook -> CompletableFuture
+                .supplyAsync(() -> replaceLyrics(service, finalUrl))
+                .thenAccept(opt -> {
+                    if (opt.isEmpty())
+                    {
+                        hook.editOriginal(bot.getConfig().getError() + " Could not correct using that URL.").queue();
+                        return;
+                    }
+                    hook.editOriginal(bot.getConfig().getSuccess() + " Updated lyrics cache to use URL: " + opt.get().sourceUrl()).queue();
+                }));
     }
 
     private void handlePlaylists(SlashCommandInteractionEvent event)
@@ -496,6 +883,124 @@ public class SlashCommandListener extends ListenerAdapter
         StringBuilder sb = new StringBuilder(bot.getConfig().getSuccess() + " Available playlists:\n");
         playlists.forEach(name -> sb.append("`").append(name).append("`\n"));
         event.reply(sb.toString()).queue();
+    }
+
+    private void handleSearch(SlashCommandInteractionEvent event, String searchPrefix, String provider)
+    {
+        if (!checkVoiceState(event, false)) return;
+        if (!connectToVoiceChannel(event)) return;
+
+        String query = event.getOption("query").getAsString();
+        bot.getPlayerManager().setUpHandler(event.getGuild());
+        event.deferReply().queue(hook ->
+                bot.getPlayerManager().loadItemOrdered(event.getGuild(), searchPrefix + query, new SearchResultHandler(hook, event, query, provider)));
+    }
+
+    private LyricsService getLyricsService()
+    {
+        if (lyricsService == null)
+        {
+            synchronized (this)
+            {
+                if (lyricsService == null)
+                {
+                    try
+                    {
+                        lyricsService = new LyricsService(Path.of("lyrics-cache.db"));
+                    }
+                    catch (Exception ex)
+                    {
+                        LOG.warn("Failed to initialize lyrics service", ex);
+                    }
+                }
+            }
+        }
+        return lyricsService;
+    }
+
+    private Optional<LyricsCache.CachedLyrics> fetchLyrics(LyricsService service, String query)
+    {
+        try
+        {
+            return service.fetchAndCache(query, true);
+        }
+        catch (Exception ex)
+        {
+            LOG.warn("Failed to fetch lyrics for {}", query, ex);
+            return Optional.empty();
+        }
+    }
+
+    private Optional<LyricsCache.CachedLyrics> replaceLyrics(LyricsService service, String url)
+    {
+        try
+        {
+            return service.replaceLastWithFetched(url);
+        }
+        catch (Exception ex)
+        {
+            LOG.warn("Failed to replace lyrics with {}", url, ex);
+            return Optional.empty();
+        }
+    }
+
+    private void sendLyricsResult(SlashCommandInteractionEvent event, InteractionHook hook, LyricsCache.CachedLyrics lyrics)
+    {
+        String title = (lyrics.artist() == null || lyrics.artist().isBlank() ? "" : lyrics.artist() + " - ") + lyrics.title();
+        String content = lyrics.lyrics();
+        if (content.length() > 15000)
+        {
+            hook.editOriginal(bot.getConfig().getWarning() + " Lyrics found but seem unusually long: " + lyrics.sourceUrl()).queue();
+            return;
+        }
+
+        List<String> chunks = splitLyrics(content);
+        if (chunks.isEmpty())
+        {
+            hook.editOriginal(bot.getConfig().getError() + " Lyrics result was empty.").queue();
+            return;
+        }
+
+        hook.editOriginalEmbeds(newLyricsEmbed(event, title, lyrics.sourceUrl(), chunks.get(0)).build()).queue();
+        for (int i = 1; i < chunks.size(); i++)
+            event.getChannel().sendMessageEmbeds(newLyricsEmbed(event, null, null, chunks.get(i)).build()).queue();
+    }
+
+    private EmbedBuilder newLyricsEmbed(SlashCommandInteractionEvent event, String title, String url, String description)
+    {
+        EmbedBuilder eb = new EmbedBuilder()
+                .setColor(event.getGuild().getSelfMember().getColor())
+                .setDescription(description);
+        if (title != null)
+            eb.setTitle(title, url);
+        return eb;
+    }
+
+    private List<String> splitLyrics(String lyrics)
+    {
+        List<String> chunks = new ArrayList<>();
+        String remaining = lyrics.trim();
+        while (!remaining.isEmpty())
+        {
+            if (remaining.length() <= 2000)
+            {
+                chunks.add(remaining);
+                break;
+            }
+
+            int index = remaining.lastIndexOf("\n\n", 2000);
+            if (index == -1) index = remaining.lastIndexOf("\n", 2000);
+            if (index == -1) index = remaining.lastIndexOf(" ", 2000);
+            if (index == -1) index = 2000;
+            chunks.add(remaining.substring(0, index).trim());
+            remaining = remaining.substring(index).trim();
+        }
+        return chunks;
+    }
+
+    private void cleanupSearchMenus()
+    {
+        searchMenus.entrySet().removeIf(entry -> entry.getValue().isExpired());
     }
 
     // ========================
@@ -783,6 +1288,14 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
+    private void handleSetSkip(SlashCommandInteractionEvent event)
+    {
+        int percent = event.getOption("percent").getAsInt();
+        Settings s = bot.getSettingsManager().getSettings(event.getGuild());
+        s.setSkipRatio(percent / 100.0);
+        event.reply(bot.getConfig().getSuccess() + " Skip percentage has been set to `" + percent + "%` of listeners on *" + event.getGuild().getName() + "*").queue();
+    }
+
     private void handleQueueType(SlashCommandInteractionEvent event)
     {
         Settings s = bot.getSettingsManager().getSettings(event.getGuild());
@@ -802,6 +1315,120 @@ public class SlashCommandListener extends ListenerAdapter
     // ========================
     // Audio Load Result Handlers
     // ========================
+
+    private static class SearchMenuState
+    {
+        private final long userId;
+        private final long guildId;
+        private final String query;
+        private final List<AudioTrack> tracks;
+        private final long createdAt;
+
+        SearchMenuState(long userId, long guildId, String query, List<AudioTrack> tracks)
+        {
+            this.userId = userId;
+            this.guildId = guildId;
+            this.query = query;
+            this.tracks = tracks;
+            this.createdAt = System.currentTimeMillis();
+        }
+
+        private boolean isExpired()
+        {
+            return System.currentTimeMillis() - createdAt > SEARCH_MENU_EXPIRATION_MS;
+        }
+    }
+
+    private class SearchResultHandler implements AudioLoadResultHandler
+    {
+        private final InteractionHook hook;
+        private final SlashCommandInteractionEvent event;
+        private final String query;
+        private final String provider;
+
+        SearchResultHandler(InteractionHook hook, SlashCommandInteractionEvent event, String query, String provider)
+        {
+            this.hook = hook;
+            this.event = event;
+            this.query = query;
+            this.provider = provider;
+        }
+
+        @Override
+        public void trackLoaded(AudioTrack track)
+        {
+            if (bot.getConfig().isTooLong(track))
+            {
+                hook.editOriginal(bot.getConfig().getWarning() + " This track (**" + track.getInfo().title + "**) is longer than the allowed maximum: `"
+                        + TimeUtil.formatTime(track.getDuration()) + "` > `" + bot.getConfig().getMaxTime() + "`").queue();
+                return;
+            }
+            AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+            int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), query, track))) + 1;
+            hook.editOriginal(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title
+                    + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos == 0 ? "to begin playing" : " to the queue at position " + pos))).queue();
+        }
+
+        @Override
+        public void playlistLoaded(AudioPlaylist playlist)
+        {
+            if (playlist.getTracks().isEmpty())
+            {
+                noMatches();
+                return;
+            }
+
+            cleanupSearchMenus();
+            List<AudioTrack> results = new ArrayList<>();
+            List<SelectOption> options = new ArrayList<>();
+            int limit = Math.min(MAX_SEARCH_RESULTS, playlist.getTracks().size());
+            for (int i = 0; i < limit; i++)
+            {
+                AudioTrack track = playlist.getTracks().get(i);
+                results.add(track);
+                String label = truncate((i + 1) + ". " + track.getInfo().title, MAX_AUTOCOMPLETE_LENGTH);
+                String duration = TimeUtil.formatTime(track.getDuration());
+                String author = track.getInfo().author == null || track.getInfo().author.isBlank() ? provider : track.getInfo().author;
+                options.add(SelectOption.of(label, String.valueOf(i))
+                        .withDescription(truncate(duration + " | " + author, MAX_AUTOCOMPLETE_LENGTH)));
+            }
+
+            String componentId = SEARCH_MENU_PREFIX + searchMenuCounter.incrementAndGet();
+            searchMenus.put(componentId, new SearchMenuState(event.getUser().getIdLong(), event.getGuild().getIdLong(), query, results));
+            StringSelectMenu menu = StringSelectMenu.create(componentId)
+                    .setPlaceholder("Choose a " + provider + " result")
+                    .addOptions(options)
+                    .build();
+
+            StringBuilder sb = new StringBuilder(bot.getConfig().getSuccess())
+                    .append(" Search results for `").append(query).append("`:\n");
+            for (int i = 0; i < results.size(); i++)
+            {
+                AudioTrack track = results.get(i);
+                sb.append("`").append(i + 1).append(".` [`")
+                        .append(TimeUtil.formatTime(track.getDuration())).append("`] **")
+                        .append(FormatUtil.filter(track.getInfo().title)).append("**\n");
+            }
+            hook.editOriginal(sb.toString())
+                    .setComponents(ActionRow.of(menu))
+                    .queue();
+        }
+
+        @Override
+        public void noMatches()
+        {
+            hook.editOriginal(FormatUtil.filter(bot.getConfig().getWarning() + " No " + provider + " results found for `" + query + "`.")).queue();
+        }
+
+        @Override
+        public void loadFailed(FriendlyException throwable)
+        {
+            if (throwable.severity == Severity.COMMON)
+                hook.editOriginal(bot.getConfig().getError() + " Error loading: " + throwable.getMessage()).queue();
+            else
+                hook.editOriginal(bot.getConfig().getError() + " Error loading search results.").queue();
+        }
+    }
 
     private class PlayResultHandler implements AudioLoadResultHandler
     {
