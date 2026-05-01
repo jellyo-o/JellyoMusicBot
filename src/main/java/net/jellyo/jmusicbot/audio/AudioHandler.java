@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot.audio;
 
+import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
@@ -63,6 +64,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     
     private AudioFrame lastFrame;
     private AbstractQueue<QueuedTrack> queue;
+    private AudioFilterPreset filterPreset = AudioFilterPreset.OFF;
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player)
     {
@@ -141,6 +143,18 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public AudioPlayer getPlayer()
     {
         return audioPlayer;
+    }
+
+    public AudioFilterPreset getFilterPreset()
+    {
+        return filterPreset;
+    }
+
+    public void setFilterPreset(AudioFilterPreset preset)
+    {
+        filterPreset = preset == null ? AudioFilterPreset.OFF : preset;
+        audioPlayer.setFilterFactory(filterPreset.createFactory());
+        LOG.info("Audio filter set to {} for guild {}", filterPreset.getId(), guildId);
     }
     
     public RequestMetadata getRequestMetadata()
