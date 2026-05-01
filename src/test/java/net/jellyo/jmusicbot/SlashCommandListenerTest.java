@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot;
 
+import net.dv8tion.jda.api.interactions.InteractionContextType;
 import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
@@ -22,6 +23,7 @@ import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -71,6 +73,17 @@ public class SlashCommandListenerTest
 
         for (String command : expected)
             assertTrue("Missing slash command: " + command, names.contains(command));
+    }
+
+    @Test
+    public void slashCommandsAreGuildOnly()
+    {
+        for (SlashCommandData command : SlashCommandListener.buildSlashCommands())
+        {
+            assertEquals("Unexpected slash command context for /" + command.getName(),
+                    Collections.singleton(InteractionContextType.GUILD),
+                    command.getContexts());
+        }
     }
 
     @Test

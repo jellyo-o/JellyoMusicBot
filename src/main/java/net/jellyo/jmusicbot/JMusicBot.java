@@ -131,6 +131,7 @@ public class JMusicBot
                     .setBulkDeleteSplittingEnabled(true)
                     .setAudioModuleConfig(new net.dv8tion.jda.api.audio.AudioModuleConfig().withDaveSessionFactory(daveSessionFactory))
                     .build();
+            jda.setRequiredScopes("bot", "applications.commands");
             bot.setJDA(jda);
             LOG.info("JDA build completed; current status is {}", jda.getStatus());
 

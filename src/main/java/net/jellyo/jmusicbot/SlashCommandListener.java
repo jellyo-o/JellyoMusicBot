@@ -67,6 +67,7 @@ import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionE
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.exceptions.PermissionException;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.InteractionContextType;
 import net.dv8tion.jda.api.interactions.InteractionHook;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
@@ -156,23 +157,34 @@ public class SlashCommandListener extends ListenerAdapter
 
         List<SlashCommandData> commands = buildSlashCommands();
 
-        clearGuildSlashCommands(jda);
-        jda.retrieveCommands().queue(
+        LOG.info("Registering slash commands per guild to avoid Discord's global command overwrite rate limit");
+        registerGuildSlashCommands(jda, commands);
+    }
+
+    private void registerGuildSlashCommands(JDA jda, List<SlashCommandData> desiredCommands)
+    {
+        jda.getGuilds().forEach(guild -> guild.retrieveCommands().queue(
                 existing ->
                 {
-                    if(!commandsNeedUpdate(commands, existing))
+                    if(!commandsNeedUpdate(desiredCommands, existing))
                     {
-                        LOG.info("Global slash commands are already up to date");
+                        LOG.info("Slash commands are already up to date for guild {} ({})",
+                                guild.getName(), guild.getId());
                         return;
                     }
 
-                    jda.updateCommands().addCommands(commands).queue(
-                            cmds -> LOG.info("Registered {} global slash commands", cmds.size()),
-                            err -> LOG.error("Failed to register slash commands", err)
+                    LOG.info("Slash commands differ for guild {} ({}); updating {} commands",
+                            guild.getName(), guild.getId(), desiredCommands.size());
+                    guild.updateCommands().addCommands(desiredCommands).queue(
+                            cmds -> LOG.info("Registered {} slash commands for guild {} ({})",
+                                    cmds.size(), guild.getName(), guild.getId()),
+                            err -> LOG.error("Failed to register slash commands for guild {} ({})",
+                                    guild.getName(), guild.getId(), err)
                     );
                 },
-                err -> LOG.warn("Failed to retrieve current slash commands; skipping automatic registration to avoid repeated overwrites", err)
-        );
+                err -> LOG.warn("Failed to retrieve slash commands for guild {} ({})",
+                        guild.getName(), guild.getId(), err)
+        ));
     }
 
     static boolean commandsNeedUpdate(List<SlashCommandData> desiredCommands, List<Command> existingCommands)
@@ -206,93 +218,99 @@ public class SlashCommandListener extends ListenerAdapter
         List<SlashCommandData> commands = new ArrayList<>();
 
         // General commands
-        commands.add(Commands.slash("about", "Shows information about the bot"));
-        commands.add(Commands.slash("help", "Shows available commands"));
-        commands.add(Commands.slash("ping", "Checks the bot latency"));
-        commands.add(Commands.slash("settings", "Shows the bot settings"));
+        commands.add(slashCommand("about", "Shows information about the bot"));
+        commands.add(slashCommand("help", "Shows available commands"));
+        commands.add(slashCommand("ping", "Checks the bot latency"));
+        commands.add(slashCommand("settings", "Shows the bot settings"));
 
         // Music commands (anyone can use)
-        commands.add(Commands.slash("play", "Play a song")
+        commands.add(slashCommand("play", "Play a song")
                 .addOptions(songQueryOption()));
-        commands.add(Commands.slash("playtop", "Play a song at the top of the queue")
+        commands.add(slashCommand("playtop", "Play a song at the top of the queue")
                 .addOptions(songQueryOption()));
-        commands.add(Commands.slash("playplaylist", "Play a saved playlist")
+        commands.add(slashCommand("playplaylist", "Play a saved playlist")
                 .addOptions(playlistNameOption()));
-        commands.add(Commands.slash("nowplaying", "Shows the currently playing song"));
-        commands.add(Commands.slash("queue", "Shows the current queue")
+        commands.add(slashCommand("nowplaying", "Shows the currently playing song"));
+        commands.add(slashCommand("queue", "Shows the current queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "page", "Page number", false)));
-        commands.add(Commands.slash("skip", "Vote to skip the current song"));
-        commands.add(Commands.slash("remove", "Remove a song from the queue")
+        commands.add(slashCommand("skip", "Vote to skip the current song"));
+        commands.add(slashCommand("remove", "Remove a song from the queue")
                 .addOptions(new OptionData(OptionType.STRING, "position", "Position in queue or 'all'", true)));
-        commands.add(Commands.slash("shuffle", "Shuffle your songs in the queue"));
-        commands.add(Commands.slash("seek", "Seek to a position in the current song")
+        commands.add(slashCommand("shuffle", "Shuffle your songs in the queue"));
+        commands.add(slashCommand("seek", "Seek to a position in the current song")
                 .addOptions(new OptionData(OptionType.STRING, "time", "Time to seek to (e.g., 1:30, +30, -15)", true)));
-        commands.add(Commands.slash("lyrics", "Search for lyrics")
+        commands.add(slashCommand("lyrics", "Search for lyrics")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Song to search lyrics for", false)));
-        commands.add(Commands.slash("correctlyrics", "Correct cached lyrics for a song")
+        commands.add(slashCommand("correctlyrics", "Correct cached lyrics for a song")
                 .addOptions(
                         new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true),
                         new OptionData(OptionType.STRING, "query", "Song to correct", true)));
-        commands.add(Commands.slash("playlists", "Shows available playlists"));
-        commands.add(Commands.slash("search", "Search YouTube and choose a result")
+        commands.add(slashCommand("playlists", "Shows available playlists"));
+        commands.add(slashCommand("search", "Search YouTube and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
-        commands.add(Commands.slash("scsearch", "Search SoundCloud and choose a result")
+        commands.add(slashCommand("scsearch", "Search SoundCloud and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
 
         // DJ commands
-        commands.add(Commands.slash("forceskip", "Force skip the current song"));
-        commands.add(Commands.slash("pause", "Pause or resume the current song"));
-        commands.add(Commands.slash("resume", "Resume the current song if paused"));
-        commands.add(Commands.slash("stop", "Stop playback and clear the queue"));
-        commands.add(Commands.slash("volume", "Set or show the volume")
+        commands.add(slashCommand("forceskip", "Force skip the current song"));
+        commands.add(slashCommand("pause", "Pause or resume the current song"));
+        commands.add(slashCommand("resume", "Resume the current song if paused"));
+        commands.add(slashCommand("stop", "Stop playback and clear the queue"));
+        commands.add(slashCommand("volume", "Set or show the volume")
                 .addOptions(new OptionData(OptionType.INTEGER, "level", "Volume level (0-150)", false)));
-        commands.add(Commands.slash("repeat", "Toggle repeat mode")
+        commands.add(slashCommand("repeat", "Toggle repeat mode")
                 .addOptions(new OptionData(OptionType.STRING, "mode", "Repeat mode", false)
                         .addChoice("off", "off")
                         .addChoice("all", "all")
                         .addChoice("single", "single")));
-        commands.add(Commands.slash("loop", "Toggle repeat mode")
+        commands.add(slashCommand("loop", "Toggle repeat mode")
                 .addOptions(new OptionData(OptionType.STRING, "mode", "Repeat mode", false)
                         .addChoice("off", "off")
                         .addChoice("all", "all")
                         .addChoice("single", "single")));
-        commands.add(Commands.slash("skipto", "Skip to a specific position in the queue")
+        commands.add(slashCommand("skipto", "Skip to a specific position in the queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "position", "Position to skip to", true)));
-        commands.add(Commands.slash("move", "Move a track in the queue")
+        commands.add(slashCommand("move", "Move a track in the queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "from", "Current position", true))
                 .addOptions(new OptionData(OptionType.INTEGER, "to", "New position", true)));
-        commands.add(Commands.slash("playnext", "Play a song next in queue")
+        commands.add(slashCommand("playnext", "Play a song next in queue")
                 .addOptions(songQueryOption()));
-        commands.add(Commands.slash("forceremove", "Force remove a user's songs from queue")
+        commands.add(slashCommand("forceremove", "Force remove a user's songs from queue")
                 .addOptions(new OptionData(OptionType.USER, "user", "User to remove songs from", true)));
 
         // Admin commands
-        commands.add(Commands.slash("prefix", "Set the command prefix")
+        commands.add(slashCommand("prefix", "Set the command prefix")
                 .addOptions(new OptionData(OptionType.STRING, "prefix", "New prefix or 'none'", true))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("setdj", "Set the DJ role")
+        commands.add(slashCommand("setdj", "Set the DJ role")
                 .addOptions(new OptionData(OptionType.ROLE, "role", "DJ role (leave empty to clear)", false))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("settc", "Set the text channel for music commands")
+        commands.add(slashCommand("settc", "Set the text channel for music commands")
                 .addOptions(new OptionData(OptionType.CHANNEL, "channel", "Text channel (leave empty to clear)", false))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("setvc", "Set the voice channel for music")
+        commands.add(slashCommand("setvc", "Set the voice channel for music")
                 .addOptions(new OptionData(OptionType.CHANNEL, "channel", "Voice channel (leave empty to clear)", false))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("skipratio", "Set the skip vote ratio")
+        commands.add(slashCommand("skipratio", "Set the skip vote ratio")
                 .addOptions(new OptionData(OptionType.NUMBER, "ratio", "Skip ratio (0-1)", false))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("setskip", "Set the skip vote percentage")
+        commands.add(slashCommand("setskip", "Set the skip vote percentage")
                 .addOptions(new OptionData(OptionType.INTEGER, "percent", "Skip percentage (0-100)", true)
                         .setRequiredRange(0, 100))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
-        commands.add(Commands.slash("queuetype", "Set the queue type")
+        commands.add(slashCommand("queuetype", "Set the queue type")
                 .addOptions(new OptionData(OptionType.STRING, "type", "Queue type", false)
                         .addChoice("fair", "fair")
                         .addChoice("linear", "linear"))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
 
         return commands;
+    }
+
+    private static SlashCommandData slashCommand(String name, String description)
+    {
+        return Commands.slash(name, description)
+                .setContexts(InteractionContextType.GUILD);
     }
 
     private static OptionData songQueryOption()
@@ -305,22 +323,6 @@ public class SlashCommandListener extends ListenerAdapter
     {
         return new OptionData(OptionType.STRING, "name", "Playlist name", true)
                 .setAutoComplete(true);
-    }
-
-    private void clearGuildSlashCommands(JDA jda)
-    {
-        jda.getGuilds().forEach(guild -> guild.retrieveCommands().queue(
-                commands ->
-                {
-                    if(commands.isEmpty())
-                        return;
-                    guild.updateCommands().queue(
-                            ignored -> LOG.info("Cleared {} guild-specific slash commands for {}", commands.size(), guild.getName()),
-                            err -> LOG.warn("Failed to clear guild-specific slash commands for {}", guild.getName(), err)
-                    );
-                },
-                err -> LOG.warn("Failed to retrieve guild-specific slash commands for {}", guild.getName(), err)
-        ));
     }
 
     @Override

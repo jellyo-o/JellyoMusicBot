@@ -56,6 +56,7 @@ public class Listener extends ListenerAdapter
         if(event.getJDA().getGuildCache().isEmpty())
         {
             LOG.warn("This bot is not on any guilds! Use the following link to add the bot to your guilds!");
+            event.getJDA().setRequiredScopes("bot", "applications.commands");
             LOG.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
         }
         credit(event.getJDA());
