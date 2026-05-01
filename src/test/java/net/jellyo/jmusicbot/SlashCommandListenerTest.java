@@ -65,7 +65,7 @@ public class SlashCommandListenerTest
 
         String[] expected = {
                 "about", "help", "ping", "settings",
-                "play", "playtop", "playplaylist", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
+                "play", "playtop", "playplaylist", "playlist", "like", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
                 "forceskip", "pause", "resume", "stop", "volume", "repeat", "loop", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
@@ -108,6 +108,27 @@ public class SlashCommandListenerTest
         assertNotNull(query);
         assertTrue(url.isRequired());
         assertTrue(query.isRequired());
+    }
+
+    @Test
+    public void playlistCommandHasExpectedSubcommands()
+    {
+        SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
+                .filter(cmd -> "playlist".equals(cmd.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(command);
+        Set<String> subcommands = command.getSubcommands().stream()
+                .map(subcommand -> subcommand.getName())
+                .collect(Collectors.toSet());
+
+        String[] expected = {
+                "list", "create", "rename", "delete", "view", "play", "add", "addcurrent", "addqueue",
+                "remove", "move", "clear", "share", "addshared", "unshare", "unfollow", "copy"
+        };
+        for(String subcommand : expected)
+            assertTrue("Missing playlist subcommand: " + subcommand, subcommands.contains(subcommand));
     }
 
     @Test

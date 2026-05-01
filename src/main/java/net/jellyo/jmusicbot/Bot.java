@@ -24,6 +24,7 @@ import com.jagrosh.jmusicbot.audio.NowplayingHandler;
 import com.jagrosh.jmusicbot.audio.PlayerManager;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
@@ -54,6 +55,7 @@ public class Bot
     private final SettingsManager settings;
     private final PlayerManager players;
     private final PlaylistLoader playlists;
+    private final UserPlaylistService userPlaylists;
     private final NowplayingHandler nowplaying;
     private final AloneInVoiceHandler aloneInVoiceHandler;
     
@@ -69,6 +71,16 @@ public class Bot
         this.config = config;
         this.settings = settings;
         this.playlists = new PlaylistLoader(config);
+        this.userPlaylists = new UserPlaylistService(Paths.get("playlists.db"));
+        try
+        {
+            this.userPlaylists.init();
+            this.userPlaylists.importLegacyPlaylists(config, config.getOwnerId());
+        }
+        catch(Exception ex)
+        {
+            LOG.warn("Failed to initialize user playlist storage", ex);
+        }
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
         
         //Update config.txt before init
@@ -111,6 +123,11 @@ public class Bot
     public PlaylistLoader getPlaylistLoader()
     {
         return playlists;
+    }
+
+    public UserPlaylistService getUserPlaylistService()
+    {
+        return userPlaylists;
     }
     
     public NowplayingHandler getNowplayingHandler()

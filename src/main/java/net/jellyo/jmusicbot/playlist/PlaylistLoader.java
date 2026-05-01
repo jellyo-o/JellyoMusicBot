@@ -278,6 +278,11 @@ public class PlaylistLoader
         {
             return tracks;
         }
+
+        public boolean isShuffle()
+        {
+            return shuffle;
+        }
         
         public List<PlaylistLoadError> getErrors()
         {

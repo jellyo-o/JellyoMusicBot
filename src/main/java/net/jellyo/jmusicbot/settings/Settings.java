@@ -34,13 +34,12 @@ public class Settings implements GuildSettingsProvider
     protected long voiceId;
     protected long roleId;
     private int volume;
-    private String defaultPlaylist;
     private RepeatMode repeatMode;
     private QueueType queueType;
     private String prefix;
     private double skipRatio;
 
-    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
+    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
     {
         this.manager = manager;
         try
@@ -68,21 +67,19 @@ public class Settings implements GuildSettingsProvider
             this.roleId = 0;
         }
         this.volume = volume;
-        this.defaultPlaylist = defaultPlaylist;
         this.repeatMode = repeatMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
         this.queueType = queueType;
     }
     
-    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, String defaultPlaylist, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
+    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
     {
         this.manager = manager;
         this.textId = textId;
         this.voiceId = voiceId;
         this.roleId = roleId;
         this.volume = volume;
-        this.defaultPlaylist = defaultPlaylist;
         this.repeatMode = repeatMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
@@ -108,11 +105,6 @@ public class Settings implements GuildSettingsProvider
     public int getVolume()
     {
         return volume;
-    }
-    
-    public String getDefaultPlaylist()
-    {
-        return defaultPlaylist;
     }
     
     public RepeatMode getRepeatMode()
@@ -163,12 +155,6 @@ public class Settings implements GuildSettingsProvider
     public void setVolume(int volume)
     {
         this.volume = volume;
-        this.manager.writeSettings();
-    }
-    
-    public void setDefaultPlaylist(String defaultPlaylist)
-    {
-        this.defaultPlaylist = defaultPlaylist;
         this.manager.writeSettings();
     }
     

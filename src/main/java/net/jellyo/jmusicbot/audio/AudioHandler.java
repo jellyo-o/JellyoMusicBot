@@ -15,7 +15,6 @@
  */
 package com.jagrosh.jmusicbot.audio;
 
-import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
@@ -27,11 +26,9 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
-import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import java.nio.ByteBuffer;
 import net.dv8tion.jda.api.EmbedBuilder;
@@ -58,7 +55,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private final static Pattern YOUTUBE_VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
 
 
-    private final List<AudioTrack> defaultQueue = new LinkedList<>();
     private final Set<String> votes = new HashSet<>();
     
     private final PlayerManager manager;
@@ -125,10 +121,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         AudioTrack playing = audioPlayer.getPlayingTrack();
         int queueSize = queue == null ? 0 : queue.size();
-        LOG.info("Stopping player and clearing queue for guild {}; playing={}; queueSize={}; defaultQueueSize={}",
-                guildId, trackSummary(playing), queueSize, defaultQueue.size());
+        LOG.info("Stopping player and clearing queue for guild {}; playing={}; queueSize={}",
+                guildId, trackSummary(playing), queueSize);
         queue.clear();
-        defaultQueue.clear();
         audioPlayer.stopTrack();
         //current = null;
     }
@@ -156,61 +151,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return rm == null ? RequestMetadata.EMPTY : rm;
     }
     
-    public boolean playFromDefault()
-    {
-        if(!defaultQueue.isEmpty())
-        {
-            LOG.info("Starting queued default-playlist track for guild {}; remainingDefaultQueue={}",
-                    guildId, defaultQueue.size() - 1);
-            audioPlayer.playTrack(defaultQueue.remove(0));
-            return true;
-        }
-        Settings settings = manager.getBot().getSettingsManager().getSettings(guildId);
-        if(settings==null || settings.getDefaultPlaylist()==null)
-        {
-            LOG.debug("No default playlist configured for guild {}", guildId);
-            return false;
-        }
-        
-        Playlist pl = manager.getBot().getPlaylistLoader().getPlaylist(settings.getDefaultPlaylist());
-        if(pl==null || pl.getItems().isEmpty())
-        {
-            LOG.warn("Default playlist '{}' for guild {} could not be loaded or is empty",
-                    settings.getDefaultPlaylist(), guildId);
-            return false;
-        }
-        LOG.info("Loading default playlist '{}' for guild {} with {} configured entries",
-                pl.getName(), guildId, pl.getItems().size());
-        pl.loadTracks(manager, (at) -> 
-        {
-            if(audioPlayer.getPlayingTrack()==null)
-            {
-                LOG.info("Starting default playlist track for guild {}: {}", guildId, trackSummary(at));
-                audioPlayer.playTrack(at);
-            }
-            else
-            {
-                defaultQueue.add(at);
-                LOG.debug("Added track to default queue for guild {}: {}; defaultQueueSize={}",
-                        guildId, trackSummary(at), defaultQueue.size());
-            }
-        }, () -> 
-        {
-            if(pl.getTracks().isEmpty() && !manager.getBot().getConfig().getStay())
-            {
-                LOG.info("Default playlist '{}' loaded no tracks for guild {}; closing audio connection",
-                        pl.getName(), guildId);
-                manager.getBot().closeAudioConnection(guildId);
-            }
-            else
-            {
-                LOG.info("Default playlist '{}' loaded {} tracks for guild {}; errors={}",
-                        pl.getName(), pl.getTracks().size(), guildId, pl.getErrors().size());
-            }
-        });
-        return true;
-    }
-    
     // Audio Events
     @Override
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) 
@@ -236,22 +176,19 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         
         if(queue.isEmpty())
         {
-            if(!playFromDefault())
+            manager.getBot().getNowplayingHandler().onTrackUpdate(null);
+            if(!manager.getBot().getConfig().getStay())
             {
-                manager.getBot().getNowplayingHandler().onTrackUpdate(null);
-                if(!manager.getBot().getConfig().getStay())
-                {
-                    LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
-                    manager.getBot().closeAudioConnection(guildId);
-                }
-                else
-                {
-                    LOG.info("Queue empty for guild {}; staying connected because stayinchannel=true", guildId);
-                }
-                // unpause, in the case when the player was paused and the track has been skipped.
-                // this is to prevent the player being paused next time it's being used.
-                player.setPaused(false);
+                LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
+                manager.getBot().closeAudioConnection(guildId);
             }
+            else
+            {
+                LOG.info("Queue empty for guild {}; staying connected because stayinchannel=true", guildId);
+            }
+            // unpause, in the case when the player was paused and the track has been skipped.
+            // this is to prevent the player being paused next time it's being used.
+            player.setPaused(false);
         }
         else
         {
