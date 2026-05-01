@@ -33,11 +33,11 @@ public class QueuedTrack implements Queueable
     public QueuedTrack(AudioTrack track, RequestMetadata rm)
     {
         this.track = track;
-        this.track.setUserData(rm == null ? RequestMetadata.EMPTY : rm);
+        this.requestMetadata = rm == null ? RequestMetadata.EMPTY : rm;
+        this.track.setUserData(this.requestMetadata);
 
-        this.requestMetadata = rm;
-        if (this.track.isSeekable() && rm != null)
-            track.setPosition(rm.requestInfo.startTimestamp);
+        if (this.track.isSeekable() && this.requestMetadata.requestInfo != null)
+            track.setPosition(this.requestMetadata.requestInfo.startTimestamp);
     }
     
     @Override

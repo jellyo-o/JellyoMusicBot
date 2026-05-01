@@ -17,6 +17,7 @@ package com.jagrosh.jmusicbot;
 
 import com.jagrosh.jdautilities.command.CommandClient;
 import com.jagrosh.jdautilities.command.CommandClientBuilder;
+import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jdautilities.examples.command.*;
 import com.jagrosh.jmusicbot.commands.admin.*;
@@ -26,10 +27,13 @@ import com.jagrosh.jmusicbot.commands.music.*;
 import com.jagrosh.jmusicbot.commands.owner.*;
 import com.jagrosh.jmusicbot.entities.Prompt;
 import com.jagrosh.jmusicbot.gui.GUI;
+import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
 import java.awt.Color;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import javax.security.auth.login.LoginException;
 import net.dv8tion.jda.api.*;
 import net.dv8tion.jda.api.entities.Activity;
@@ -47,6 +51,7 @@ import ch.qos.logback.classic.Level;
 public class JMusicBot 
 {
     public final static Logger LOG = LoggerFactory.getLogger(JMusicBot.class);
+    private final static int HELP_MESSAGE_LIMIT = 1900;
     public final static Permission[] RECOMMENDED_PERMS = {Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND, Permission.MESSAGE_HISTORY, Permission.MESSAGE_ADD_REACTION,
                                 Permission.MESSAGE_EMBED_LINKS, Permission.MESSAGE_ATTACH_FILES, Permission.MESSAGE_MANAGE, Permission.MESSAGE_EXT_EMOJI,
                                 Permission.VOICE_CONNECT, Permission.VOICE_SPEAK, Permission.NICKNAME_CHANGE};
@@ -215,6 +220,7 @@ public class JMusicBot
                 .setOwnerId(Long.toString(config.getOwnerId()))
                 .setEmojis(config.getSuccess(), config.getWarning(), config.getError())
                 .setHelpWord(config.getHelp())
+                .setHelpConsumer(event -> sendPrefixHelp(event, config, settings))
                 .setLinkedCacheSize(200)
                 .setGuildSettingsManager(settings)
                 .addCommands(aboutCommand,
@@ -240,6 +246,7 @@ public class JMusicBot
                         new MoveTrackCmd(bot),
                         new PauseCmd(bot),
                         new PlaynextCmd(bot),
+                        new AutoplayCmd(bot),
                         new RepeatCmd(bot),
                         new SkiptoCmd(bot),
                         new StopCmd(bot),
@@ -277,5 +284,124 @@ public class JMusicBot
             cb.setActivity(config.getGame());
         
         return cb.build();
+    }
+
+    private static void sendPrefixHelp(CommandEvent event, BotConfig config, SettingsManager settings)
+    {
+        String prefix = getPrefixForHelp(event, config, settings);
+        List<String> pages = new ArrayList<>();
+        StringBuilder builder = new StringBuilder("**")
+                .append(event.getSelfUser().getName())
+                .append("** commands:\n")
+                .append("Use these prefix commands");
+        if(event.getClient().getAltPrefix() != null)
+            builder.append(" or the alternate prefix `").append(event.getClient().getAltPrefix()).append("`");
+        builder.append(". Slash commands with matching names are also available.\n");
+
+        appendPrefixHelp(pages, builder, "General", prefix, new String[][]{
+                {"help", "Show this command list"},
+                {"about", "Show bot information"},
+                {"ping", "Check bot latency"},
+                {"settings", "Show bot settings"}
+        });
+        appendPrefixHelp(pages, builder, "Music", prefix, new String[][]{
+                {"play <title|URL>", "Play a song or URL"},
+                {"play playlist <name>", "Play one of your playlists"},
+                {"playtop <title|URL>", "Add a song to the top of the queue"},
+                {"playlists", "List your playlists"},
+                {"nowplaying", "Show the current song"},
+                {"queue [page]", "Show the queue"},
+                {"search <query>", "Search YouTube and choose a result"},
+                {"scsearch <query>", "Search SoundCloud and choose a result"},
+                {"skip", "Vote to skip"},
+                {"remove <position|all>", "Remove queued songs"},
+                {"shuffle", "Shuffle your queued songs"},
+                {"seek <time>", "Seek the current song"},
+                {"lyrics [song]", "Fetch lyrics"},
+                {"correctlyrics <genius-url> <song>", "Correct cached lyrics for a song"}
+        });
+        appendPrefixHelp(pages, builder, "DJ", prefix, new String[][]{
+                {"forceskip", "Force skip"},
+                {"pause", "Pause or resume playback"},
+                {"stop", "Stop playback and clear the queue"},
+                {"volume [0-150]", "Show or set volume"},
+                {"repeat [off|all|single]", "Set repeat mode"},
+                {"loop [off|all|single]", "Alias for repeat"},
+                {"autoplay [off|smart|related|artist|playlist|server]", "Set autoplay radio mode"},
+                {"radio [off|smart|related|artist|playlist|server]", "Alias for autoplay"},
+                {"skipto <position>", "Skip to a queue position"},
+                {"movetrack <from> <to>", "Move a queued track"},
+                {"playnext <title|URL>", "Play a song next"},
+                {"forceremove <user>", "Remove a user's queued songs"}
+        });
+        appendPrefixHelp(pages, builder, "Admin", prefix, new String[][]{
+                {"prefix <prefix|none>", "Set server prefix"},
+                {"setdj <role|none>", "Set DJ role"},
+                {"settc <channel|none>", "Restrict music text channel"},
+                {"setvc <channel|none>", "Restrict music voice channel"},
+                {"setskip <0-100>", "Set skip percentage"},
+                {"skipratio [ratio]", "Show or set skip ratio"},
+                {"queuetype [fair|linear]", "Show or set queue type"}
+        });
+        if(event.isOwner())
+        {
+            appendPrefixHelp(pages, builder, "Owner", prefix, new String[][]{
+                    {"debug", "Show debug info"},
+                    {"setavatar <url>", "Set the bot avatar"},
+                    {"setgame <game>", "Set the bot activity"},
+                    {"setname <name>", "Set the bot name"},
+                    {"setstatus <status>", "Set the bot status"},
+                    {"shutdown", "Safely shut down"}
+            });
+        }
+        pages.add(builder.toString());
+
+        event.replyInDm(pages.get(0),
+                unused -> {
+                    sendRemainingHelpPages(event, pages, 1);
+                    if(event.isFromType(net.dv8tion.jda.api.entities.channel.ChannelType.TEXT))
+                        event.reactSuccess();
+                },
+                unused -> event.replyWarning("Help cannot be sent because you are blocking Direct Messages."));
+    }
+
+    private static String getPrefixForHelp(CommandEvent event, BotConfig config, SettingsManager settings)
+    {
+        String prefix = config.getPrefix();
+        if(event.getGuild() != null)
+        {
+            Settings guildSettings = settings.getSettings(event.getGuild());
+            if(guildSettings.getPrefix() != null)
+                prefix = guildSettings.getPrefix();
+        }
+        if("@mention".equalsIgnoreCase(prefix))
+            return "@" + event.getSelfUser().getName() + " ";
+        return prefix;
+    }
+
+    private static void appendPrefixHelp(List<String> pages, StringBuilder builder, String category, String prefix, String[][] commands)
+    {
+        StringBuilder section = new StringBuilder("\n\n__").append(category).append("__:");
+        for(String[] command : commands)
+            section.append("\n`").append(prefix).append(command[0]).append("` - ").append(command[1]);
+
+        if(builder.length() > 0 && builder.length() + section.length() > HELP_MESSAGE_LIMIT)
+        {
+            pages.add(builder.toString());
+            builder.setLength(0);
+        }
+        builder.append(section);
+    }
+
+    private static void sendRemainingHelpPages(CommandEvent event, List<String> pages, int index)
+    {
+        if(index >= pages.size())
+            return;
+
+        event.getAuthor().openPrivateChannel().queue(channel ->
+                channel.sendMessage(pages.get(index)).queue(
+                        unused -> sendRemainingHelpPages(event, pages, index + 1),
+                        error -> LOG.warn("Failed to send prefix help page {}", index + 1, error)),
+                error -> LOG.warn("Failed to open private channel for prefix help page {}", index + 1, error));
     }
 }

@@ -26,6 +26,7 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -53,6 +54,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public final static String PAUSE_EMOJI = "\u23F8"; // ⏸
     public final static String STOP_EMOJI  = "\u23F9"; // ⏹
     private final static Pattern YOUTUBE_VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
+    private final static int RECENT_TRACK_LIMIT = 25;
 
 
     private final Set<String> votes = new HashSet<>();
@@ -63,6 +65,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     
     private AudioFrame lastFrame;
     private AbstractQueue<QueuedTrack> queue;
+    private final LinkedList<String> recentTrackKeys = new LinkedList<>();
+    private String lastPlaylistName;
+    private long lastPlaylistId;
+    private boolean autoplayStopQueued = false;
+    private boolean suppressAutoplayOnce = false;
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player)
     {
@@ -88,6 +95,15 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             audioPlayer.playTrack(qtrack.getTrack());
             return -1;
         }
+        else if(shouldInterruptAutoplay(qtrack))
+        {
+            queue.addAt(0, qtrack);
+            autoplayStopQueued = true;
+            LOG.info("Manual front-queue request interrupted autoplay for guild {}; track={}",
+                    guildId, trackSummary(qtrack.getTrack()));
+            audioPlayer.stopTrack();
+            return -1;
+        }
         else
         {
             queue.addAt(0, qtrack);
@@ -102,6 +118,15 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         {
             LOG.info("Starting track immediately for guild {}: {}", guildId, trackSummary(qtrack.getTrack()));
             audioPlayer.playTrack(qtrack.getTrack());
+            return -1;
+        }
+        else if(shouldInterruptAutoplay(qtrack))
+        {
+            queue.addAt(0, qtrack);
+            autoplayStopQueued = true;
+            LOG.info("Manual queue request interrupted autoplay for guild {}; track={}",
+                    guildId, trackSummary(qtrack.getTrack()));
+            audioPlayer.stopTrack();
             return -1;
         }
         else
@@ -124,6 +149,8 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         LOG.info("Stopping player and clearing queue for guild {}; playing={}; queueSize={}",
                 guildId, trackSummary(playing), queueSize);
         queue.clear();
+        autoplayStopQueued = false;
+        suppressAutoplayOnce = playing != null;
         audioPlayer.stopTrack();
         //current = null;
     }
@@ -141,6 +168,35 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public AudioPlayer getPlayer()
     {
         return audioPlayer;
+    }
+
+    public long getGuildId()
+    {
+        return guildId;
+    }
+
+    public String getLastPlaylistName()
+    {
+        return lastPlaylistName;
+    }
+
+    public long getLastPlaylistId()
+    {
+        return lastPlaylistId;
+    }
+
+    public Set<String> getRecentTrackKeys()
+    {
+        return new HashSet<>(recentTrackKeys);
+    }
+
+    public boolean isRecentlyPlayed(AudioTrack track)
+    {
+        Set<String> keys = trackKeys(track);
+        for(String key : keys)
+            if(recentTrackKeys.contains(key))
+                return true;
+        return false;
     }
     
     public RequestMetadata getRequestMetadata()
@@ -176,19 +232,14 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         
         if(queue.isEmpty())
         {
-            manager.getBot().getNowplayingHandler().onTrackUpdate(null);
-            if(!manager.getBot().getConfig().getStay())
+            if(suppressAutoplayOnce)
             {
-                LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
-                manager.getBot().closeAudioConnection(guildId);
+                suppressAutoplayOnce = false;
+                manager.getBot().getNowplayingHandler().onTrackUpdate(null);
+                player.setPaused(false);
+                return;
             }
-            else
-            {
-                LOG.info("Queue empty for guild {}; staying connected because stayinchannel=true", guildId);
-            }
-            // unpause, in the case when the player was paused and the track has been skipped.
-            // this is to prevent the player being paused next time it's being used.
-            player.setPaused(false);
+            handleEmptyQueue(player, track);
         }
         else
         {
@@ -214,6 +265,20 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public void onTrackStart(AudioPlayer player, AudioTrack track) 
     {
         votes.clear();
+        autoplayStopQueued = false;
+        rememberRecentTrack(track);
+        RequestMetadata metadata = track.getUserData(RequestMetadata.class);
+        if(metadata != null && metadata.origin == RequestMetadata.Origin.SAVED_PLAYLIST)
+        {
+            lastPlaylistName = metadata.playlistName;
+            lastPlaylistId = metadata.playlistId;
+        }
+        else if(metadata == null || metadata.origin != RequestMetadata.Origin.AUTOPLAY)
+        {
+            lastPlaylistName = null;
+            lastPlaylistId = 0L;
+        }
+        manager.getBot().getAutoplayService().recordIfEligible(guildId, track);
         LOG.info("Track started for guild {}; volume={}; queueSize={}; track={}",
                 guildId, player.getVolume(), queue.size(), trackSummary(track));
         manager.getBot().getNowplayingHandler().onTrackUpdate(track);
@@ -232,7 +297,12 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             EmbedBuilder eb = new EmbedBuilder();
             eb.setColor(guild.getSelfMember().getColor());
             RequestMetadata rm = getRequestMetadata();
-            if(rm.getOwner() != 0L)
+            if(rm.isAutoplay())
+            {
+                eb.setAuthor("Autoplay", null,
+                        guild.getJDA().getSelfUser().getEffectiveAvatarUrl());
+            }
+            else if(rm.getOwner() != 0L)
             {
                 User u = guild.getJDA().getUserById(rm.user.id);
                 if(u==null)
@@ -354,6 +424,65 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private Guild guild(JDA jda)
     {
         return jda.getGuildById(guildId);
+    }
+
+    private void handleEmptyQueue(AudioPlayer player, AudioTrack previousTrack)
+    {
+        if(manager.getBot().getAutoplayService().startNext(this, previousTrack, () -> finishEmptyQueue(player)))
+        {
+            player.setPaused(false);
+            return;
+        }
+        finishEmptyQueue(player);
+    }
+
+    private void finishEmptyQueue(AudioPlayer player)
+    {
+        manager.getBot().getNowplayingHandler().onTrackUpdate(null);
+        if(!manager.getBot().getConfig().getStay())
+        {
+            LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
+            manager.getBot().closeAudioConnection(guildId);
+        }
+        else
+        {
+            LOG.info("Queue empty for guild {}; staying connected because stayinchannel=true", guildId);
+        }
+        // unpause, in the case when the player was paused and the track has been skipped.
+        // this is to prevent the player being paused next time it's being used.
+        player.setPaused(false);
+    }
+
+    private boolean shouldInterruptAutoplay(QueuedTrack qtrack)
+    {
+        if(autoplayStopQueued)
+            return false;
+        RequestMetadata current = getRequestMetadata();
+        RequestMetadata next = qtrack.getRequestMetadata();
+        return current.isAutoplay() && !next.isAutoplay();
+    }
+
+    private void rememberRecentTrack(AudioTrack track)
+    {
+        for(String key : trackKeys(track))
+        {
+            recentTrackKeys.remove(key);
+            recentTrackKeys.addFirst(key);
+        }
+        while(recentTrackKeys.size() > RECENT_TRACK_LIMIT)
+            recentTrackKeys.removeLast();
+    }
+
+    private static Set<String> trackKeys(AudioTrack track)
+    {
+        Set<String> keys = new HashSet<>();
+        if(track == null)
+            return keys;
+        if(track.getIdentifier() != null && !track.getIdentifier().isEmpty())
+            keys.add(track.getIdentifier());
+        if(track.getInfo() != null && track.getInfo().uri != null && !track.getInfo().uri.isEmpty())
+            keys.add(track.getInfo().uri);
+        return keys;
     }
 
     private static String trackSummary(AudioTrack track)

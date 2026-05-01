@@ -67,7 +67,7 @@ public class SlashCommandListenerTest
                 "about", "help", "ping", "settings",
                 "play", "playtop", "playplaylist", "playlist", "like", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
-                "forceskip", "pause", "resume", "stop", "volume", "repeat", "loop", "skipto", "move", "playnext", "forceremove",
+                "forceskip", "pause", "resume", "stop", "volume", "repeat", "loop", "autoplay", "radio", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
         };
 

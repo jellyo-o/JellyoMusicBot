@@ -29,15 +29,34 @@ import java.util.regex.Pattern;
  */
 public class RequestMetadata
 {
-    public static final RequestMetadata EMPTY = new RequestMetadata(null, null);
+    public static final RequestMetadata EMPTY = new RequestMetadata(null, null, Origin.UNKNOWN, null, 0L);
+
+    public enum Origin
+    {
+        UNKNOWN,
+        MANUAL,
+        SAVED_PLAYLIST,
+        AUTOPLAY
+    }
     
     public final UserInfo user;
     public final RequestInfo requestInfo;
+    public final Origin origin;
+    public final String playlistName;
+    public final long playlistId;
     
     public RequestMetadata(User user, RequestInfo requestInfo)
     {
+        this(user, requestInfo, Origin.MANUAL, null, 0L);
+    }
+
+    private RequestMetadata(User user, RequestInfo requestInfo, Origin origin, String playlistName, long playlistId)
+    {
         this.user = user == null ? null : new UserInfo(user.getIdLong(), user.getName(), user.getDiscriminator(), user.getEffectiveAvatarUrl());
         this.requestInfo = requestInfo;
+        this.origin = origin == null ? Origin.UNKNOWN : origin;
+        this.playlistName = playlistName;
+        this.playlistId = playlistId;
     }
     
     public long getOwner()
@@ -53,6 +72,31 @@ public class RequestMetadata
     public static RequestMetadata fromSlash(net.dv8tion.jda.api.entities.User user, String args, AudioTrack track)
     {
         return new RequestMetadata(user, new RequestInfo(args, track.getInfo().uri));
+    }
+
+    public static RequestMetadata fromPlaylist(User user, String playlistName, AudioTrack track)
+    {
+        return fromPlaylist(user, 0L, playlistName, track);
+    }
+
+    public static RequestMetadata fromPlaylist(User user, long playlistId, String playlistName, AudioTrack track)
+    {
+        return new RequestMetadata(user, new RequestInfo("playlist:" + playlistName, track.getInfo().uri), Origin.SAVED_PLAYLIST, playlistName, playlistId);
+    }
+
+    public static RequestMetadata autoplay(String query, AudioTrack track)
+    {
+        return new RequestMetadata(null, new RequestInfo(query, track.getInfo().uri), Origin.AUTOPLAY, null, 0L);
+    }
+
+    public boolean isAutoplay()
+    {
+        return origin == Origin.AUTOPLAY;
+    }
+
+    public boolean shouldRecordInHistory()
+    {
+        return user != null && origin != Origin.AUTOPLAY;
     }
     
     public static class RequestInfo

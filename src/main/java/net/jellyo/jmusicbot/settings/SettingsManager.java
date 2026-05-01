@@ -57,6 +57,7 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                         o.has("dj_role_id")      ? o.getString("dj_role_id")                 : null,
                         o.has("volume")          ? o.getInt("volume")                        : 100,
                         o.has("repeat_mode")     ? o.getEnum(RepeatMode.class, "repeat_mode"): RepeatMode.OFF,
+                        o.has("autoplay_mode")   ? o.getEnum(AutoplayMode.class, "autoplay_mode"): AutoplayMode.OFF,
                         o.has("prefix")          ? o.getString("prefix")                     : null,
                         o.has("skip_ratio")      ? o.getDouble("skip_ratio")                 : -1,
                         o.has("queue_type")      ? o.getEnum(QueueType.class, "queue_type")  : QueueType.FAIR));
@@ -96,7 +97,7 @@ public class SettingsManager implements GuildSettingsManager<Settings>
 
     private Settings createDefaultSettings()
     {
-        return new Settings(this, 0, 0, 0, 100, RepeatMode.OFF, null, -1, QueueType.FAIR);
+        return new Settings(this, 0, 0, 0, 100, RepeatMode.OFF, AutoplayMode.OFF, null, -1, QueueType.FAIR);
     }
 
     protected void writeSettings()
@@ -115,6 +116,8 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                 o.put("volume",s.getVolume());
             if(s.getRepeatMode()!=RepeatMode.OFF)
                 o.put("repeat_mode", s.getRepeatMode());
+            if(s.getAutoplayMode()!=AutoplayMode.OFF)
+                o.put("autoplay_mode", s.getAutoplayMode().name());
             if(s.getPrefix() != null)
                 o.put("prefix", s.getPrefix());
             if(s.getSkipRatio() != -1)

@@ -24,6 +24,7 @@ import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.commands.admin.PrefixCmd;
 import com.jagrosh.jmusicbot.commands.admin.QueueTypeCmd;
 import com.jagrosh.jmusicbot.commands.admin.SkipratioCmd;
+import com.jagrosh.jmusicbot.commands.dj.AutoplayCmd;
 import com.jagrosh.jmusicbot.commands.dj.ForceskipCmd;
 import com.jagrosh.jmusicbot.commands.dj.MoveTrackCmd;
 import com.jagrosh.jmusicbot.commands.dj.RepeatCmd;
@@ -125,6 +126,7 @@ public class SlashCommandListener extends ListenerAdapter
     private final StopCmd stopCmd;
     private final VolumeCmd volumeCmd;
     private final RepeatCmd repeatCmd;
+    private final AutoplayCmd autoplayCmd;
     private final SkiptoCmd skiptoCmd;
     private final MoveTrackCmd moveTrackCmd;
     private final PrefixCmd prefixCmd;
@@ -142,6 +144,7 @@ public class SlashCommandListener extends ListenerAdapter
         this.stopCmd = new StopCmd(bot);
         this.volumeCmd = new VolumeCmd(bot);
         this.repeatCmd = new RepeatCmd(bot);
+        this.autoplayCmd = new AutoplayCmd(bot);
         this.skiptoCmd = new SkiptoCmd(bot);
         this.moveTrackCmd = new MoveTrackCmd(bot);
         this.prefixCmd = new PrefixCmd(bot);
@@ -325,6 +328,10 @@ public class SlashCommandListener extends ListenerAdapter
                         .addChoice("off", "off")
                         .addChoice("all", "all")
                         .addChoice("single", "single")));
+        commands.add(slashCommand("autoplay", "Set automatic radio playback")
+                .addOptions(autoplayModeOption()));
+        commands.add(slashCommand("radio", "Set automatic radio playback")
+                .addOptions(autoplayModeOption()));
         commands.add(slashCommand("skipto", "Skip to a specific position in the queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "position", "Position to skip to", true)));
         commands.add(slashCommand("move", "Move a track in the queue")
@@ -389,6 +396,17 @@ public class SlashCommandListener extends ListenerAdapter
                 .addChoice("follow", "follow");
     }
 
+    private static OptionData autoplayModeOption()
+    {
+        return new OptionData(OptionType.STRING, "mode", "Autoplay mode", false)
+                .addChoice("off", "off")
+                .addChoice("smart", "smart")
+                .addChoice("related", "related")
+                .addChoice("artist", "artist")
+                .addChoice("playlist", "playlist")
+                .addChoice("server", "server");
+    }
+
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event)
     {
@@ -434,6 +452,8 @@ public class SlashCommandListener extends ListenerAdapter
             case "volume": handleSharedMusicCommand(event, volumeCmd, getOptionalLongArg(event, "level"), true, false, false); break;
             case "repeat": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
             case "loop": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
+            case "autoplay": handleSharedDJCommand(event, autoplayCmd, getOptionalStringArg(event, "mode")); break;
+            case "radio": handleSharedDJCommand(event, autoplayCmd, getOptionalStringArg(event, "mode")); break;
             case "skipto": handleSharedMusicCommand(event, skiptoCmd, String.valueOf(event.getOption("position").getAsLong()), true, true, false); break;
             case "move": handleSharedMusicCommand(event, moveTrackCmd, event.getOption("from").getAsLong() + " " + event.getOption("to").getAsLong(), true, true, false); break;
             case "playnext": handlePlayNext(event); break;
@@ -845,6 +865,8 @@ public class SlashCommandListener extends ListenerAdapter
                 {"volume [0-150]", "volume [level]", "Show or set volume"},
                 {"repeat [off|all|single]", "repeat [mode]", "Set repeat mode"},
                 {"loop [off|all|single]", "loop [mode]", "Alias for repeat"},
+                {"autoplay [off|smart|related|artist|playlist|server]", "autoplay [mode]", "Set autoplay radio mode"},
+                {"radio [off|smart|related|artist|playlist|server]", "radio [mode]", "Alias for autoplay"},
                 {"skipto <position>", "skipto position:<position>", "Skip to a queue position"},
                 {"movetrack <from> <to>", "move from:<from> to:<to>", "Move a queued track"},
                 {"playnext <title|URL>", "playnext query:<title|URL>", "Play a song next"},
@@ -907,6 +929,7 @@ public class SlashCommandListener extends ListenerAdapter
                         "\n**DJ Role:** " + (role == null ? "None" : role.getAsMention()) +
                         "\n**Prefix:** " + (s.getPrefix() == null ? "Default" : "`" + s.getPrefix() + "`") +
                         "\n**Repeat Mode:** " + s.getRepeatMode().getUserFriendlyName() +
+                        "\n**Autoplay Mode:** " + s.getAutoplayMode().getUserFriendlyName() +
                         "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName())
                 .setFooter(event.getJDA().getGuilds().size() + " servers");
         event.replyEmbeds(eb.build()).queue();
@@ -1346,7 +1369,7 @@ public class SlashCommandListener extends ListenerAdapter
                         failed.incrementAndGet();
                         return;
                     }
-                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), "playlist:" + playlist.getName(), track)));
+                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getUser(), playlist.getId(), playlist.getName(), track)));
                     loaded.incrementAndGet();
                 }
 

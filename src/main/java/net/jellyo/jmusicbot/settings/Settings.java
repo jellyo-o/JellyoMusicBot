@@ -35,11 +35,12 @@ public class Settings implements GuildSettingsProvider
     protected long roleId;
     private int volume;
     private RepeatMode repeatMode;
+    private AutoplayMode autoplayMode;
     private QueueType queueType;
     private String prefix;
     private double skipRatio;
 
-    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
+    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType)
     {
         this.manager = manager;
         try
@@ -68,12 +69,13 @@ public class Settings implements GuildSettingsProvider
         }
         this.volume = volume;
         this.repeatMode = repeatMode;
+        this.autoplayMode = autoplayMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
         this.queueType = queueType;
     }
     
-    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, RepeatMode repeatMode, String prefix, double skipRatio, QueueType queueType)
+    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType)
     {
         this.manager = manager;
         this.textId = textId;
@@ -81,6 +83,7 @@ public class Settings implements GuildSettingsProvider
         this.roleId = roleId;
         this.volume = volume;
         this.repeatMode = repeatMode;
+        this.autoplayMode = autoplayMode;
         this.prefix = prefix;
         this.skipRatio = skipRatio;
         this.queueType = queueType;
@@ -110,6 +113,11 @@ public class Settings implements GuildSettingsProvider
     public RepeatMode getRepeatMode()
     {
         return repeatMode;
+    }
+
+    public AutoplayMode getAutoplayMode()
+    {
+        return autoplayMode;
     }
     
     public String getPrefix()
@@ -161,6 +169,12 @@ public class Settings implements GuildSettingsProvider
     public void setRepeatMode(RepeatMode mode)
     {
         this.repeatMode = mode;
+        this.manager.writeSettings();
+    }
+
+    public void setAutoplayMode(AutoplayMode mode)
+    {
+        this.autoplayMode = mode;
         this.manager.writeSettings();
     }
     
