@@ -66,6 +66,7 @@ public class PlayerManager extends DefaultAudioPlayerManager
     public void init()
     {
         LOG.info("Initializing audio source managers");
+        getConfiguration().setFilterHotSwapEnabled(true);
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 
         if (config.getYTPoToken() != null && config.getYTVisitorData() != null)

@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot;
 
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
 import com.jagrosh.jmusicbot.commands.CommandChecks;
@@ -25,6 +26,7 @@ import com.jagrosh.jmusicbot.commands.admin.PrefixCmd;
 import com.jagrosh.jmusicbot.commands.admin.QueueTypeCmd;
 import com.jagrosh.jmusicbot.commands.admin.SkipratioCmd;
 import com.jagrosh.jmusicbot.commands.dj.ForceskipCmd;
+import com.jagrosh.jmusicbot.commands.dj.FilterCmd;
 import com.jagrosh.jmusicbot.commands.dj.MoveTrackCmd;
 import com.jagrosh.jmusicbot.commands.dj.RepeatCmd;
 import com.jagrosh.jmusicbot.commands.dj.SkiptoCmd;
@@ -122,6 +124,7 @@ public class SlashCommandListener extends ListenerAdapter
     private final ShuffleCmd shuffleCmd;
     private final SeekCmd seekCmd;
     private final ForceskipCmd forceskipCmd;
+    private final FilterCmd filterCmd;
     private final StopCmd stopCmd;
     private final VolumeCmd volumeCmd;
     private final RepeatCmd repeatCmd;
@@ -139,6 +142,7 @@ public class SlashCommandListener extends ListenerAdapter
         this.shuffleCmd = new ShuffleCmd(bot);
         this.seekCmd = new SeekCmd(bot);
         this.forceskipCmd = new ForceskipCmd(bot);
+        this.filterCmd = new FilterCmd(bot);
         this.stopCmd = new StopCmd(bot);
         this.volumeCmd = new VolumeCmd(bot);
         this.repeatCmd = new RepeatCmd(bot);
@@ -315,6 +319,8 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(slashCommand("stop", "Stop playback and clear the queue"));
         commands.add(slashCommand("volume", "Set or show the volume")
                 .addOptions(new OptionData(OptionType.INTEGER, "level", "Volume level (0-150)", false)));
+        commands.add(slashCommand("filter", "Set or show the audio filter")
+                .addOptions(audioFilterPresetOption()));
         commands.add(slashCommand("repeat", "Toggle repeat mode")
                 .addOptions(new OptionData(OptionType.STRING, "mode", "Repeat mode", false)
                         .addChoice("off", "off")
@@ -389,6 +395,14 @@ public class SlashCommandListener extends ListenerAdapter
                 .addChoice("follow", "follow");
     }
 
+    private static OptionData audioFilterPresetOption()
+    {
+        OptionData option = new OptionData(OptionType.STRING, "preset", "Audio filter preset", false);
+        for(AudioFilterPreset preset : AudioFilterPreset.values())
+            option.addChoice(preset.getDisplayName(), preset.getId());
+        return option;
+    }
+
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event)
     {
@@ -432,6 +446,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "resume": handleResume(event); break;
             case "stop": handleSharedMusicCommand(event, stopCmd, "", true, false, false); break;
             case "volume": handleSharedMusicCommand(event, volumeCmd, getOptionalLongArg(event, "level"), true, false, false); break;
+            case "filter": handleSharedMusicCommand(event, filterCmd, getOptionalStringArg(event, "preset"), true, false, false); break;
             case "repeat": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
             case "loop": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
             case "skipto": handleSharedMusicCommand(event, skiptoCmd, String.valueOf(event.getOption("position").getAsLong()), true, true, false); break;

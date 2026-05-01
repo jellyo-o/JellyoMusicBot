@@ -67,7 +67,7 @@ public class SlashCommandListenerTest
                 "about", "help", "ping", "settings",
                 "play", "playtop", "playplaylist", "playlist", "like", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
-                "forceskip", "pause", "resume", "stop", "volume", "repeat", "loop", "skipto", "move", "playnext", "forceremove",
+                "forceskip", "pause", "resume", "stop", "volume", "filter", "repeat", "loop", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
         };
 
@@ -129,6 +129,30 @@ public class SlashCommandListenerTest
         };
         for(String subcommand : expected)
             assertTrue("Missing playlist subcommand: " + subcommand, subcommands.contains(subcommand));
+    }
+
+    @Test
+    public void filterCommandHasExpectedPresetChoices()
+    {
+        SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
+                .filter(cmd -> "filter".equals(cmd.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(command);
+        OptionData preset = command.getOptions().stream()
+                .filter(option -> "preset".equals(option.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(preset);
+        Set<String> choices = preset.getChoices().stream()
+                .map(choice -> choice.getAsString())
+                .collect(Collectors.toSet());
+
+        String[] expected = {"off", "bassboost", "nightcore", "8d", "vaporwave", "tremolo", "karaoke"};
+        for(String choice : expected)
+            assertTrue("Missing filter preset choice: " + choice, choices.contains(choice));
     }
 
     @Test
