@@ -22,10 +22,13 @@ import com.jagrosh.jmusicbot.audio.AloneInVoiceHandler;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.NowplayingHandler;
 import com.jagrosh.jmusicbot.audio.PlayerManager;
+import com.jagrosh.jmusicbot.dashboard.DashboardServer;
+import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
+import com.jagrosh.jmusicbot.utils.OtherUtil;
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Activity;
@@ -58,6 +61,8 @@ public class Bot
     private final UserPlaylistService userPlaylists;
     private final NowplayingHandler nowplaying;
     private final AloneInVoiceHandler aloneInVoiceHandler;
+    private final DashboardStatsService dashboardStats;
+    private final DashboardServer dashboardServer;
     
     private boolean shuttingDown = false;
     private JDA jda;
@@ -82,6 +87,27 @@ public class Bot
             LOG.warn("Failed to initialize user playlist storage", ex);
         }
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
+        DashboardStatsService stats = null;
+        DashboardServer dashboard = null;
+        if(config.isDashboardEnabled())
+        {
+            stats = new DashboardStatsService(OtherUtil.getPath(config.getDashboardDatabase()));
+            try
+            {
+                stats.init();
+                dashboard = new DashboardServer(this, stats, config.getDashboardBindAddress(), config.getDashboardPort());
+                dashboard.start();
+            }
+            catch(Exception ex)
+            {
+                LOG.warn("Dashboard is enabled but failed to start; Discord bot startup will continue", ex);
+                stats.close();
+                stats = null;
+                dashboard = null;
+            }
+        }
+        this.dashboardStats = stats;
+        this.dashboardServer = dashboard;
         
         //Update config.txt before init
         // updateConfig();
@@ -138,6 +164,11 @@ public class Bot
     public AloneInVoiceHandler getAloneInVoiceHandler()
     {
         return aloneInVoiceHandler;
+    }
+
+    public DashboardStatsService getDashboardStats()
+    {
+        return dashboardStats;
     }
     
     public JDA getJDA()
@@ -210,6 +241,10 @@ public class Bot
         }
         if(gui!=null)
             gui.dispose();
+        if(dashboardServer != null)
+            dashboardServer.stop();
+        if(dashboardStats != null)
+            dashboardStats.close();
         System.exit(0);
     }
 

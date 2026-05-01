@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>JMusicBot Dashboard</title>
+    <link rel="icon" href="data:,">
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("jmusicbot.dashboard.theme");
+          var preferred = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.dataset.theme = stored || preferred;
+        } catch (error) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      }());
+    </script>
+    <link rel="stylesheet" href="/dashboard/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard navigation">
+        <div class="brand">
+          <div class="brand-mark">JM</div>
+          <div>
+            <h1>JMusicBot</h1>
+            <p>Runner dashboard</p>
+          </div>
+        </div>
+
+        <section class="status-block">
+          <div class="status-line">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="bot-status">Starting</span>
+          </div>
+          <dl>
+            <div>
+              <dt>Servers</dt>
+              <dd id="guild-count">0</dd>
+            </div>
+            <div>
+              <dt>Active</dt>
+              <dd id="active-count">0</dd>
+            </div>
+            <div>
+              <dt>Port</dt>
+              <dd id="dashboard-port">--</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section>
+          <h2>Top Servers</h2>
+          <div class="server-list" id="server-list"></div>
+        </section>
+      </aside>
+
+      <main class="dashboard">
+        <header class="topbar">
+          <div>
+            <p class="eyeline">Playback intelligence</p>
+            <h2>Music activity</h2>
+          </div>
+          <div class="topbar-actions">
+            <time id="last-updated">Waiting for data</time>
+            <label class="theme-toggle" for="theme-toggle">
+              <input id="theme-toggle" type="checkbox" role="switch" aria-label="Use light mode">
+              <span class="toggle-track" aria-hidden="true">
+                <span class="toggle-thumb"></span>
+              </span>
+              <span id="theme-label">Dark</span>
+            </label>
+            <button id="refresh-button" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <section class="metric-grid" aria-label="Summary metrics">
+          <article class="metric-card accent-teal">
+            <span>Songs played</span>
+            <strong id="songs-played">0</strong>
+          </article>
+          <article class="metric-card accent-amber">
+            <span>Minutes played</span>
+            <strong id="minutes-played">0</strong>
+          </article>
+          <article class="metric-card accent-coral">
+            <span>Songs skipped</span>
+            <strong id="skipped-songs">0</strong>
+          </article>
+          <article class="metric-card accent-mint">
+            <span>Requesters</span>
+            <strong id="unique-requesters">0</strong>
+          </article>
+        </section>
+
+        <section class="insight-grid" aria-label="Quick insights">
+          <article class="insight-card">
+            <span>Top song</span>
+            <strong id="top-song">No plays yet</strong>
+            <small id="top-song-meta">Waiting for playback</small>
+          </article>
+          <article class="insight-card">
+            <span>Completion rate</span>
+            <strong id="completion-rate">0%</strong>
+            <small>Finished tracks / all starts</small>
+          </article>
+          <article class="insight-card">
+            <span>Skip rate</span>
+            <strong id="skip-rate">0%</strong>
+            <small>Skipped tracks / all starts</small>
+          </article>
+          <article class="insight-card">
+            <span>Average play</span>
+            <strong id="average-play">0:00</strong>
+            <small>Mean listened time</small>
+          </article>
+        </section>
+
+        <nav class="tabs" role="tablist" aria-label="Dashboard analytics">
+          <button class="tab-button active" type="button" role="tab" aria-selected="true" data-tab="overview">Overview</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="tracks">Tracks</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="people">People</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
+        </nav>
+
+        <section class="tab-panel active" data-tab-panel="overview">
+          <section class="content-grid">
+            <article class="panel now-panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Now Playing</h3>
+                  <p>Live playback by Discord server</p>
+                </div>
+                <span id="live-count">0 active</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Server</th>
+                      <th>Track</th>
+                      <th>Requester</th>
+                      <th>Progress</th>
+                      <th>Queue</th>
+                    </tr>
+                  </thead>
+                  <tbody id="now-playing-body"></tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Recent Events</h3>
+                  <p>Starts, ends, skips, and playback issues</p>
+                </div>
+              </div>
+              <div class="event-list" id="event-list"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="tracks" hidden>
+          <section class="content-grid tracks-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Top Played Tracks</h3>
+                  <p>Most repeated songs by play count and listened time</p>
+                </div>
+              </div>
+              <div class="leaderboard analytics-list" id="track-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Most Skipped</h3>
+                  <p>Tracks that listeners bail on most often</p>
+                </div>
+              </div>
+              <div class="leaderboard analytics-list" id="skipped-track-list"></div>
+            </article>
+          </section>
+
+          <section class="content-grid lower-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Source Mix</h3>
+                  <p>Where music is coming from</p>
+                </div>
+              </div>
+              <div class="source-list" id="source-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Track Diversity</h3>
+                  <p>Unique songs, servers, and requesters in the top set</p>
+                </div>
+              </div>
+              <div class="stat-list" id="track-diversity"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="people" hidden>
+          <section class="content-grid">
+            <article class="panel requester-panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Requesters</h3>
+                  <p>Most active listeners</p>
+                </div>
+              </div>
+              <div class="leaderboard" id="requester-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Servers</h3>
+                  <p>Activity by Discord server</p>
+                </div>
+              </div>
+              <div class="leaderboard analytics-list" id="guild-list"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="trends" hidden>
+          <section class="content-grid lower-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Playback Trend</h3>
+                  <p>Tracked minutes by recent hour</p>
+                </div>
+              </div>
+              <div class="chart" id="minutes-chart"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Daily Trend</h3>
+                  <p>Last 14 days of songs and minutes</p>
+                </div>
+              </div>
+              <div class="chart" id="daily-chart"></div>
+            </article>
+          </section>
+
+          <section class="content-grid lower-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Favorite Hours</h3>
+                  <p>All-time listening by hour of day</p>
+                </div>
+              </div>
+              <div class="chart compact-chart" id="hour-of-day-chart"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Trend Notes</h3>
+                  <p>Quick readouts from the current data</p>
+                </div>
+              </div>
+              <div class="stat-list" id="trend-notes"></div>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/dashboard/app.js"></script>
+  </body>
+</html>

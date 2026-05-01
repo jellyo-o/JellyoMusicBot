@@ -67,6 +67,6 @@ public class SkiptoCmd extends DJCommand implements UnifiedCommand
         }
         handler.getQueue().skip(index-1);
         event.reply(event.getSuccess()+" Skipped to **"+handler.getQueue().get(0).getTrack().getInfo().title+"**");
-        handler.getPlayer().stopTrack();
+        handler.skipCurrentTrack(event.getAuthor(), "skipto");
     }
 }
