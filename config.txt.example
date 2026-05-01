@@ -1,0 +1,318 @@
+/////////////////////////////////////////////////////////
+// Example config.txt for JellyoMusicBot               //
+/////////////////////////////////////////////////////////
+// The bot reads config.txt by default. You can also pass
+// -Dconfig=/path/to/config.txt or -Dconfig.file=/path/to/config.txt.
+//
+// Syntax notes:
+// - Lines starting with // are comments.
+// - Keep quotes around values that contain spaces, punctuation, or emoji.
+// - token and owner must be changed before the bot can run.
+// - Never publish a filled-in config.txt; it contains secrets.
+/////////////////////////////////////////////////////////
+
+
+// Discord bot token.
+//
+// Minimal steps:
+// 1. Open https://discord.com/developers/applications
+// 2. Create or select an application.
+// 3. Open the Bot page and use Reset Token to show a bot token.
+// 4. Paste the bot token here. Do not paste a client secret or user token.
+//
+// Discord's docs: https://docs.discord.com/developers/quick-start/getting-started
+
+token = BOT_TOKEN_HERE
+
+
+// Bot owner Discord user ID.
+//
+// Minimal steps:
+// 1. In Discord, open User Settings > Advanced and enable Developer Mode.
+// 2. Right-click your user and choose Copy User ID.
+// 3. Paste the numeric ID here, without quotes.
+//
+// Discord's ID guide: https://support-dev.discord.com/hc/en-us/articles/360028717192
+
+owner = 0 // OWNER ID
+
+
+// Spotify integration.
+//
+// This bot expects a Spotify application Client ID and Client Secret. It does
+// not want a short-lived Spotify access token.
+//
+// Minimal steps:
+// 1. Open https://developer.spotify.com/dashboard
+// 2. Create an app. If Spotify asks for a Redirect URI, a local value such as
+//    http://127.0.0.1:3000 is enough for this bot's client-credentials use.
+// 3. Open the app's Settings page.
+// 4. Paste Client ID into spotifyid.
+// 5. Click View client secret and paste that value into spotifysecret.
+//
+// Spotify's docs: https://developer.spotify.com/documentation/web-api/tutorials/getting-started
+//
+// Set both values to the exact string "NONE" to disable Spotify support.
+
+spotifyid     = "NONE"
+spotifysecret = "NONE"
+
+
+// Primary prefix for text commands.
+// If you use !!, the play command is !!play.
+// If set to "@mention", commands use a bot mention, such as @BotName play.
+// If you use a custom text prefix, enable MESSAGE CONTENT INTENT on the bot's
+// Discord Developer Portal Bot page.
+
+prefix = "@mention"
+
+
+// Optional second text-command prefix.
+// Set to the exact string "NONE" to disable it.
+
+altprefix = "NONE"
+
+
+// Word used for the prefix help command.
+// Example: with prefix = "!!" and help = cmds, users type !!cmds.
+
+help = help
+
+
+// Default activity shown on the bot profile.
+// Valid forms:
+// - "DEFAULT"       uses the built-in default
+// - "NONE"          shows no activity
+// - "Playing X"     shows Playing X
+// - "Listening to X" shows Listening to X
+// - "Watching X"    shows Watching X
+// - "X"             defaults to Playing X
+
+game = "DEFAULT"
+
+
+// Default online status.
+// Valid values: ONLINE, IDLE, DND, INVISIBLE
+
+status = ONLINE
+
+
+// If true, the bot updates its activity with the current song title.
+// This only works reliably when the bot is playing music in one server.
+
+songinstatus = false
+
+
+// Emoji used in bot responses.
+
+success = "🎶"
+warning = "💡"
+error = "🚫"
+loading = "⌚"
+searching = "🔎"
+
+
+// If true, nowplaying messages include YouTube thumbnails.
+// Thumbnail messages do not refresh because Discord reloads the image on edit.
+
+npimages = false
+
+
+// If true, the bot stays connected after the queue finishes.
+// Staying connected uses additional bandwidth.
+
+stayinchannel = false
+
+
+// Maximum allowed length for any loaded track, in seconds.
+// Set to 0 or a negative number for no maximum.
+
+maxtime = 0
+
+
+// Maximum length for songs chosen by autoplay/radio mode.
+// Accepted examples: "8m", "10m", "8:30", "00:08:30", or a seconds value.
+// Missing, invalid, 0, or negative values fall back to 10 minutes.
+
+autoplaymaxtime = "10m"
+
+
+// Maximum YouTube playlist pages to load.
+// Each page can contain up to 100 tracks.
+// Example: 10 pages can load up to 1000 tracks.
+
+maxytplaylistpages = 10
+
+
+// Default skip vote ratio for servers that have not set their own ratio.
+// 0.55 means 55% of eligible listening users must vote to skip.
+
+skipratio = 0.55
+
+
+// Seconds the bot can be alone in a voice channel before it leaves and clears
+// the queue. Set to 0 or a negative number to disable this behavior.
+
+alonetimeuntilstop = 0
+
+
+// Folder used for legacy text-file playlists.
+// Relative paths are resolved from the working directory.
+
+playlistsfolder = "Playlists"
+
+
+// Update alerts.
+// If true, the bot may DM the owner and log when bot or tracked dependency
+// updates are detected. Set false to disable these checks.
+
+updatealerts = true
+
+
+// Logging verbosity.
+// Valid values: off, fatal, error, warn, info, debug, trace, all
+// fatal is treated as error by the logging backend.
+// Debug and trace can help troubleshooting but may include sensitive data.
+
+loglevel = info
+
+
+// Lyrics.
+// This fork uses the internal LRCLIB-backed lyrics service with Genius fallback
+// and local caching. No lyrics API key is required in config.txt.
+// The old lyrics.default setting is intentionally omitted because this codebase
+// no longer reads it.
+
+
+// Command aliases.
+// Multiple aliases may be given, separated by commas.
+// Example: play = [ p, song ]
+//
+// These keys are read for the commands listed below. Some child commands also
+// have hard-coded aliases, such as play playlist -> pl.
+
+aliases {
+  // General commands
+  settings = [ status ]
+
+  // Music commands
+  lyrics = []
+  correctlyrics = [ cl ]
+  nowplaying = [ np, current ]
+  play = [ p ]
+  playtop = [ pt ]
+  playlists = [ pls ]
+  queue = [ list, q ]
+  remove = [ delete ]
+  scsearch = []
+  search = [ ytsearch ]
+  seek = []
+  shuffle = []
+  skip = [ voteskip ]
+
+  // DJ commands
+  autoplay = [ radio ]
+  forceremove = [ forcedelete, modremove, moddelete, modelete ]
+  forceskip = [ modskip ]
+  movetrack = [ move ]
+  pause = []
+  playnext = []
+  repeat = [ loop ]
+  skipto = [ jumpto ]
+  stop = [ leave ]
+  volume = [ vol ]
+
+  // Admin commands
+  prefix = [ setprefix ]
+  queuetype = []
+  setdj = []
+  setskip = [ setskippercent, skippercent, setskipratio ]
+  settc = []
+  setvc = []
+
+  // Owner commands
+  // These remain prefix-only in normal use.
+  debug = []
+  eval = []
+  setavatar = []
+  setgame = []
+  setname = []
+  setstatus = []
+  shutdown = []
+}
+
+
+// Input transforms.
+//
+// Transforms are advanced source resolvers. Each transform watches for input
+// matching regex, loads replacement as an HTML page, reads selector text with
+// JSoup, then formats that text into a final load identifier.
+//
+// Leave this as {} unless you know the target page structure is stable.
+//
+// Example shape:
+// transforms {
+//   example {
+//     regex = "^https://example.com/tracks/(\\d+)$"
+//     replacement = "https://example.com/tracks/$1"
+//     selector = "#youtube-video-id"
+//     format = "https://www.youtube.com/watch?v=%s"
+//   }
+// }
+
+transforms = {}
+
+
+// YouTube Proof of Origin token and visitor data.
+//
+// These are optional and are not Google API keys. Leave the placeholders
+// unchanged to disable them. The bot only applies them when both values are set.
+//
+// Minimal steps:
+// 1. Install Docker, or use the Python script from the generator repository.
+// 2. Run:
+//    docker run --rm quay.io/invidious/youtube-trusted-session-generator
+// 3. Copy po_token to ytpotoken.
+// 4. Copy visitor_data to ytvisitordata.
+// 5. Regenerate these values if YouTube playback starts failing again.
+//
+// The YouTube source manager documents this flow here:
+// https://github.com/lavalink-devs/youtube-source#using-a-potoken
+//
+// A PO token is not guaranteed to fix every YouTube block and it may expire.
+
+ytpotoken = "PO_TOKEN_HERE"
+ytvisitordata = "VISITOR_DATA_HERE"
+
+
+// YouTube IP routing planner.
+//
+// Only configure this if you have your own IPv4/IPv6 blocks and understand IP
+// rotation. For normal hosting, leave ytroutingplanner as NONE and ytipblocks
+// empty.
+//
+// Valid ytroutingplanner values:
+// - NONE
+// - ROTATE_ON_BAN
+// - LOAD_BALANCE
+// - NANO_SWITCH
+// - ROTATING_NANO_SWITCH
+//
+// ytipblocks accepts IPv4 or IPv6 CIDR blocks. Do not mix IPv4 and IPv6 blocks.
+// IPv4 example: [ "192.0.2.183", "198.51.100.153/29" ]
+// IPv6 example: [ "2001:db8:1234:abcd::/64" ]
+
+ytroutingplanner = NONE
+ytipblocks = [  ]
+
+
+// Owner-only eval command.
+//
+// eval allows the owner to run arbitrary code from the bot process. It can
+// expose tokens, damage servers, or damage the host machine. Leave disabled
+// unless you fully understand the risk.
+//
+// Java 11 includes Nashorn; later Java versions may not.
+
+eval = false
+evalengine = "Nashorn"
