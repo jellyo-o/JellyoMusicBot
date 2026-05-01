@@ -19,6 +19,10 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.commands.AdminCommand;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.CommandParsers;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.Settings;
 
@@ -26,11 +30,14 @@ import com.jagrosh.jmusicbot.settings.Settings;
  *
  * @author Wolfgang Schwendtbauer
  */
-public class QueueTypeCmd extends AdminCommand
+public class QueueTypeCmd extends AdminCommand implements UnifiedCommand
 {
+    private final Bot bot;
+
     public QueueTypeCmd(Bot bot)
     {
         super();
+        this.bot = bot;
         this.name = "queuetype";
         this.help = "changes the queue type";
         this.arguments = "[" + String.join("|", QueueType.getNames()) + "]";
@@ -40,9 +47,15 @@ public class QueueTypeCmd extends AdminCommand
     @Override
     protected void execute(CommandEvent event)
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         String args = event.getArgs();
         QueueType value;
-        Settings settings = event.getClient().getSettingsFor(event.getGuild());
+        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
 
         if (args.isEmpty())
         {
@@ -53,7 +66,7 @@ public class QueueTypeCmd extends AdminCommand
 
         try
         {
-            value = QueueType.valueOf(args.toUpperCase());
+            value = CommandParsers.parseQueueType(args);
         }
         catch (IllegalArgumentException e)
         {

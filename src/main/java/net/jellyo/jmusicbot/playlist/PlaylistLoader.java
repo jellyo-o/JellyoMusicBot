@@ -28,6 +28,8 @@ import java.nio.file.Files;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -35,6 +37,8 @@ import java.util.stream.Collectors;
  */
 public class PlaylistLoader
 {
+    private final static Logger LOG = LoggerFactory.getLogger(PlaylistLoader.class);
+
     private final BotConfig config;
     
     public PlaylistLoader(BotConfig config)
@@ -62,8 +66,12 @@ public class PlaylistLoader
         try
         {
             Files.createDirectory(OtherUtil.getPath(config.getPlaylistsFolder()));
+            LOG.info("Created playlists folder at {}", OtherUtil.getPath(config.getPlaylistsFolder()).toAbsolutePath());
         } 
-        catch (IOException ignore) {}
+        catch (IOException ex)
+        {
+            LOG.warn("Failed to create playlists folder at {}", OtherUtil.getPath(config.getPlaylistsFolder()).toAbsolutePath(), ex);
+        }
     }
     
     public boolean folderExists()
@@ -122,6 +130,7 @@ public class PlaylistLoader
         }
         catch(IOException e)
         {
+            LOG.warn("Failed to read playlist '{}'", name, e);
             return null;
         }
     }
@@ -158,8 +167,12 @@ public class PlaylistLoader
         public void loadTracks(AudioPlayerManager manager, Consumer<AudioTrack> consumer, Runnable callback)
         {
             if(loaded)
+            {
+                LOG.debug("Playlist '{}' load requested after it was already loaded; ignoring", name);
                 return;
+            }
             loaded = true;
+            LOG.info("Loading playlist '{}' with {} configured items; shuffle={}", name, items.size(), shuffle);
             for(int i=0; i<items.size(); i++)
             {
                 boolean last = i+1 == items.size();
@@ -181,11 +194,15 @@ public class PlaylistLoader
                     public void trackLoaded(AudioTrack at) 
                     {
                         if(config.isTooLong(at))
+                        {
                             errors.add(new PlaylistLoadError(index, items.get(index), "This track is longer than the allowed maximum"));
+                            LOG.warn("Skipping too-long playlist item {} in '{}': {}", index + 1, name, items.get(index));
+                        }
                         else
                         {
                             at.setUserData(0L);
                             tracks.add(at);
+                            LOG.debug("Loaded playlist item {} in '{}': {}", index + 1, name, at.getInfo().title);
                             consumer.accept(at);
                         }
                         done();
@@ -216,6 +233,7 @@ public class PlaylistLoader
                             loaded.removeIf(track -> config.isTooLong(track));
                             loaded.forEach(at -> at.setUserData(0L));
                             tracks.addAll(loaded);
+                            LOG.debug("Loaded nested playlist item {} in '{}': acceptedTracks={}", index + 1, name, loaded.size());
                             loaded.forEach(at -> consumer.accept(at));
                         }
                         done();
@@ -225,6 +243,7 @@ public class PlaylistLoader
                     public void noMatches() 
                     {
                         errors.add(new PlaylistLoadError(index, items.get(index), "No matches found."));
+                        LOG.warn("No matches for playlist item {} in '{}': {}", index + 1, name, items.get(index));
                         done();
                     }
 
@@ -232,6 +251,8 @@ public class PlaylistLoader
                     public void loadFailed(FriendlyException fe) 
                     {
                         errors.add(new PlaylistLoadError(index, items.get(index), "Failed to load track: "+fe.getLocalizedMessage()));
+                        LOG.warn("Failed to load playlist item {} in '{}': {}; severity={}; message={}",
+                                index + 1, name, items.get(index), fe.severity, fe.getMessage(), fe);
                         done();
                     }
                 });

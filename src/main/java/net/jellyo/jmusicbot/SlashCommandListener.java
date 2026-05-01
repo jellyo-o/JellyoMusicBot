@@ -18,11 +18,26 @@ package com.jagrosh.jmusicbot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
+import com.jagrosh.jmusicbot.commands.CommandChecks;
+import com.jagrosh.jmusicbot.commands.SlashCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
+import com.jagrosh.jmusicbot.commands.admin.PrefixCmd;
+import com.jagrosh.jmusicbot.commands.admin.QueueTypeCmd;
+import com.jagrosh.jmusicbot.commands.admin.SkipratioCmd;
+import com.jagrosh.jmusicbot.commands.dj.ForceskipCmd;
+import com.jagrosh.jmusicbot.commands.dj.MoveTrackCmd;
+import com.jagrosh.jmusicbot.commands.dj.RepeatCmd;
+import com.jagrosh.jmusicbot.commands.dj.SkiptoCmd;
+import com.jagrosh.jmusicbot.commands.dj.StopCmd;
+import com.jagrosh.jmusicbot.commands.dj.VolumeCmd;
 import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
+import com.jagrosh.jmusicbot.commands.music.RemoveCmd;
+import com.jagrosh.jmusicbot.commands.music.SeekCmd;
+import com.jagrosh.jmusicbot.commands.music.ShuffleCmd;
+import com.jagrosh.jmusicbot.commands.music.SkipCmd;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
-import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
@@ -56,6 +71,7 @@ import net.dv8tion.jda.api.interactions.InteractionHook;
 import net.dv8tion.jda.api.interactions.commands.Command;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
 import net.dv8tion.jda.api.interactions.commands.OptionType;
+import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
@@ -72,7 +88,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Handles all slash command interactions for the music bot.
@@ -85,14 +103,41 @@ public class SlashCommandListener extends ListenerAdapter
     private static final int MAX_SEARCH_RESULTS = 5;
     private static final long SEARCH_MENU_EXPIRATION_MS = 15 * 60 * 1000L;
     private static final String SEARCH_MENU_PREFIX = "jmb-search:";
+    private static final AtomicBoolean SLASH_COMMAND_REGISTRATION_STARTED = new AtomicBoolean();
     private final Bot bot;
     private final AtomicLong searchMenuCounter = new AtomicLong();
     private final Map<String, SearchMenuState> searchMenus = new ConcurrentHashMap<>();
     private volatile LyricsService lyricsService;
+    private final SkipCmd skipCmd;
+    private final RemoveCmd removeCmd;
+    private final ShuffleCmd shuffleCmd;
+    private final SeekCmd seekCmd;
+    private final ForceskipCmd forceskipCmd;
+    private final StopCmd stopCmd;
+    private final VolumeCmd volumeCmd;
+    private final RepeatCmd repeatCmd;
+    private final SkiptoCmd skiptoCmd;
+    private final MoveTrackCmd moveTrackCmd;
+    private final PrefixCmd prefixCmd;
+    private final SkipratioCmd skipratioCmd;
+    private final QueueTypeCmd queueTypeCmd;
 
     public SlashCommandListener(Bot bot)
     {
         this.bot = bot;
+        this.skipCmd = new SkipCmd(bot);
+        this.removeCmd = new RemoveCmd(bot);
+        this.shuffleCmd = new ShuffleCmd(bot);
+        this.seekCmd = new SeekCmd(bot);
+        this.forceskipCmd = new ForceskipCmd(bot);
+        this.stopCmd = new StopCmd(bot);
+        this.volumeCmd = new VolumeCmd(bot);
+        this.repeatCmd = new RepeatCmd(bot);
+        this.skiptoCmd = new SkiptoCmd(bot);
+        this.moveTrackCmd = new MoveTrackCmd(bot);
+        this.prefixCmd = new PrefixCmd(bot);
+        this.skipratioCmd = new SkipratioCmd(bot);
+        this.queueTypeCmd = new QueueTypeCmd(bot);
     }
 
     @Override
@@ -103,13 +148,57 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void registerSlashCommands(JDA jda)
     {
+        if(!SLASH_COMMAND_REGISTRATION_STARTED.compareAndSet(false, true))
+        {
+            LOG.debug("Slash command registration already checked for this process");
+            return;
+        }
+
         List<SlashCommandData> commands = buildSlashCommands();
 
         clearGuildSlashCommands(jda);
-        jda.updateCommands().addCommands(commands).queue(
-                cmds -> LOG.info("Registered {} global slash commands", cmds.size()),
-                err -> LOG.error("Failed to register slash commands", err)
+        jda.retrieveCommands().queue(
+                existing ->
+                {
+                    if(!commandsNeedUpdate(commands, existing))
+                    {
+                        LOG.info("Global slash commands are already up to date");
+                        return;
+                    }
+
+                    jda.updateCommands().addCommands(commands).queue(
+                            cmds -> LOG.info("Registered {} global slash commands", cmds.size()),
+                            err -> LOG.error("Failed to register slash commands", err)
+                    );
+                },
+                err -> LOG.warn("Failed to retrieve current slash commands; skipping automatic registration to avoid repeated overwrites", err)
         );
+    }
+
+    static boolean commandsNeedUpdate(List<SlashCommandData> desiredCommands, List<Command> existingCommands)
+    {
+        List<CommandData> existingData = existingCommands.stream()
+                .filter(command -> command.getType() == Command.Type.SLASH)
+                .map(CommandData::fromCommand)
+                .collect(Collectors.toList());
+
+        return commandDataNeedUpdate(desiredCommands, existingData);
+    }
+
+    static boolean commandDataNeedUpdate(List<SlashCommandData> desiredCommands, List<? extends CommandData> existingCommands)
+    {
+        Map<String, ? extends CommandData> existingByName = existingCommands.stream()
+                .collect(Collectors.toMap(CommandData::getName, command -> command));
+        if(existingByName.size() != desiredCommands.size())
+            return true;
+
+        for(SlashCommandData desired : desiredCommands)
+        {
+            CommandData existing = existingByName.get(desired.getName());
+            if(existing == null || !existing.toData().equals(desired.toData()))
+                return true;
+        }
+        return false;
     }
 
     static List<SlashCommandData> buildSlashCommands()
@@ -140,8 +229,10 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(new OptionData(OptionType.STRING, "time", "Time to seek to (e.g., 1:30, +30, -15)", true)));
         commands.add(Commands.slash("lyrics", "Search for lyrics")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Song to search lyrics for", false)));
-        commands.add(Commands.slash("correctlyrics", "Correct the last fetched lyrics result")
-                .addOptions(new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true)));
+        commands.add(Commands.slash("correctlyrics", "Correct cached lyrics for a song")
+                .addOptions(
+                        new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true),
+                        new OptionData(OptionType.STRING, "query", "Song to correct", true)));
         commands.add(Commands.slash("playlists", "Shows available playlists"));
         commands.add(Commands.slash("search", "Search YouTube and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
@@ -167,7 +258,7 @@ public class SlashCommandListener extends ListenerAdapter
                         .addChoice("single", "single")));
         commands.add(Commands.slash("skipto", "Skip to a specific position in the queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "position", "Position to skip to", true)));
-        commands.add(Commands.slash("movetrack", "Move a track in the queue")
+        commands.add(Commands.slash("move", "Move a track in the queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "from", "Current position", true))
                 .addOptions(new OptionData(OptionType.INTEGER, "to", "New position", true)));
         commands.add(Commands.slash("playnext", "Play a song next in queue")
@@ -218,9 +309,17 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void clearGuildSlashCommands(JDA jda)
     {
-        jda.getGuilds().forEach(guild -> guild.updateCommands().queue(
-                ignored -> LOG.debug("Cleared guild-specific slash commands for {}", guild.getName()),
-                err -> LOG.warn("Failed to clear guild-specific slash commands for {}", guild.getName(), err)
+        jda.getGuilds().forEach(guild -> guild.retrieveCommands().queue(
+                commands ->
+                {
+                    if(commands.isEmpty())
+                        return;
+                    guild.updateCommands().queue(
+                            ignored -> LOG.info("Cleared {} guild-specific slash commands for {}", commands.size(), guild.getName()),
+                            err -> LOG.warn("Failed to clear guild-specific slash commands for {}", guild.getName(), err)
+                    );
+                },
+                err -> LOG.warn("Failed to retrieve guild-specific slash commands for {}", guild.getName(), err)
         ));
     }
 
@@ -236,6 +335,9 @@ public class SlashCommandListener extends ListenerAdapter
             return;
         }
 
+        LOG.debug("Slash command /{} invoked in guild {} ({}) by user {} ({})",
+                commandName, guild.getName(), guild.getId(), event.getUser().getName(), event.getUser().getId());
+
         switch (commandName)
         {
             case "about": handleAbout(event); break;
@@ -247,35 +349,81 @@ public class SlashCommandListener extends ListenerAdapter
             case "playplaylist": handlePlayPlaylist(event); break;
             case "nowplaying": handleNowPlaying(event); break;
             case "queue": handleQueue(event); break;
-            case "skip": handleSkip(event); break;
-            case "remove": handleRemove(event); break;
-            case "shuffle": handleShuffle(event); break;
-            case "seek": handleSeek(event); break;
+            case "skip": handleSharedMusicCommand(event, skipCmd, "", false, true, true); break;
+            case "remove": handleSharedMusicCommand(event, removeCmd, event.getOption("position").getAsString(), false, true, true); break;
+            case "shuffle": handleSharedMusicCommand(event, shuffleCmd, "", false, true, true); break;
+            case "seek": handleSharedMusicCommand(event, seekCmd, event.getOption("time").getAsString(), false, true, true); break;
             case "lyrics": handleLyrics(event); break;
             case "correctlyrics": handleCorrectLyrics(event); break;
             case "playlists": handlePlaylists(event); break;
             case "search": handleSearch(event, "ytsearch:", "YouTube"); break;
             case "scsearch": handleSearch(event, "scsearch:", "SoundCloud"); break;
-            case "forceskip": handleForceSkip(event); break;
+            case "forceskip": handleSharedMusicCommand(event, forceskipCmd, "", true, true, false); break;
             case "pause": handlePause(event); break;
             case "resume": handleResume(event); break;
-            case "stop": handleStop(event); break;
-            case "volume": handleVolume(event); break;
-            case "repeat": handleRepeat(event); break;
-            case "loop": handleRepeat(event); break;
-            case "skipto": handleSkipTo(event); break;
-            case "movetrack": handleMoveTrack(event); break;
+            case "stop": handleSharedMusicCommand(event, stopCmd, "", true, false, false); break;
+            case "volume": handleSharedMusicCommand(event, volumeCmd, getOptionalLongArg(event, "level"), true, false, false); break;
+            case "repeat": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
+            case "loop": handleSharedDJCommand(event, repeatCmd, getOptionalStringArg(event, "mode")); break;
+            case "skipto": handleSharedMusicCommand(event, skiptoCmd, String.valueOf(event.getOption("position").getAsLong()), true, true, false); break;
+            case "move": handleSharedMusicCommand(event, moveTrackCmd, event.getOption("from").getAsLong() + " " + event.getOption("to").getAsLong(), true, true, false); break;
             case "playnext": handlePlayNext(event); break;
             case "forceremove": handleForceRemove(event); break;
-            case "prefix": handlePrefix(event); break;
+            case "prefix": handleSharedAdminCommand(event, prefixCmd, event.getOption("prefix").getAsString()); break;
             case "setdj": handleSetDJ(event); break;
             case "settc": handleSetTC(event); break;
             case "setvc": handleSetVC(event); break;
             case "skipratio": handleSkipRatio(event); break;
-            case "setskip": handleSetSkip(event); break;
-            case "queuetype": handleQueueType(event); break;
+            case "setskip": handleSharedAdminCommand(event, skipratioCmd, String.valueOf(event.getOption("percent").getAsLong())); break;
+            case "queuetype": handleSharedAdminCommand(event, queueTypeCmd, getOptionalStringArg(event, "type")); break;
             default: event.reply("Unknown command.").setEphemeral(true).queue();
         }
+    }
+
+    private void handleSharedMusicCommand(SlashCommandInteractionEvent event, UnifiedCommand command, String args,
+                                          boolean requiresDJ, boolean bePlaying, boolean beListening)
+    {
+        SlashCommandContext context = new SlashCommandContext(event, bot, args);
+        if(requiresDJ && !CommandChecks.checkDJPermission(context, bot))
+        {
+            context.replyErrorEphemeral("You need DJ permissions to use this command.");
+            return;
+        }
+        if(!CommandChecks.checkMusicCommand(bot, context, bePlaying, beListening))
+            return;
+        command.doCommand(context);
+    }
+
+    private void handleSharedDJCommand(SlashCommandInteractionEvent event, UnifiedCommand command, String args)
+    {
+        SlashCommandContext context = new SlashCommandContext(event, bot, args);
+        if(!CommandChecks.checkDJPermission(context, bot))
+        {
+            context.replyErrorEphemeral("You need DJ permissions to use this command.");
+            return;
+        }
+        command.doCommand(context);
+    }
+
+    private void handleSharedAdminCommand(SlashCommandInteractionEvent event, UnifiedCommand command, String args)
+    {
+        SlashCommandContext context = new SlashCommandContext(event, bot, args);
+        if(!CommandChecks.checkAdminPermission(context, bot))
+        {
+            context.replyErrorEphemeral("You need Manage Server permission to use this command.");
+            return;
+        }
+        command.doCommand(context);
+    }
+
+    private String getOptionalStringArg(SlashCommandInteractionEvent event, String name)
+    {
+        return event.getOption(name) == null ? "" : event.getOption(name).getAsString();
+    }
+
+    private String getOptionalLongArg(SlashCommandInteractionEvent event, String name)
+    {
+        return event.getOption(name) == null ? "" : String.valueOf(event.getOption(name).getAsLong());
     }
 
     @Override
@@ -438,6 +586,8 @@ public class SlashCommandListener extends ListenerAdapter
         AudioTrack track = state.tracks.get(index);
         if (bot.getConfig().isTooLong(track))
         {
+            LOG.warn("Rejected selected slash search result in guild {} ({}): track too long; query='{}'; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), state.query, describeTrack(track));
             event.reply(bot.getConfig().getWarning() + " This track (**" + track.getInfo().title + "**) is longer than the allowed maximum: `"
                     + TimeUtil.formatTime(track.getDuration()) + "` > `" + bot.getConfig().getMaxTime() + "`").setEphemeral(true).queue();
             return;
@@ -447,6 +597,8 @@ public class SlashCommandListener extends ListenerAdapter
         if (handler == null)
             handler = bot.getPlayerManager().setUpHandler(event.getGuild());
         int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), state.query, track))) + 1;
+        LOG.info("Selected slash search result added in guild {} ({}); query='{}'; position={}; track={}",
+                event.getGuild().getName(), event.getGuild().getId(), state.query, pos, describeTrack(track));
         searchMenus.remove(componentId);
         event.editMessage(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title
                 + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos == 0 ? "to begin playing" : " to the queue at position " + pos)))
@@ -513,12 +665,31 @@ public class SlashCommandListener extends ListenerAdapter
         AudioChannel current = guild.getSelfMember().getVoiceState().getChannel();
         if (current == null || !current.equals(target))
         {
-            try { guild.getAudioManager().openAudioConnection((VoiceChannel) target); }
+            try
+            {
+                LOG.info("Opening audio connection for slash command /{} in guild {} ({}) to channel {} ({})",
+                        event.getName(), guild.getName(), guild.getId(), target.getName(), target.getId());
+                guild.getAudioManager().openAudioConnection(target);
+            }
             catch (PermissionException ex)
             {
+                LOG.warn("Failed to open audio connection for slash command /{} in guild {} ({}) to channel {} ({})",
+                        event.getName(), guild.getName(), guild.getId(), target.getName(), target.getId(), ex);
                 event.reply(bot.getConfig().getError() + " I am unable to connect to " + target.getAsMention() + "!").setEphemeral(true).queue();
                 return false;
             }
+            catch (RuntimeException ex)
+            {
+                LOG.warn("Unexpected failure while opening audio connection for slash command /{} in guild {} ({}) to channel {} ({})",
+                        event.getName(), guild.getName(), guild.getId(), target.getName(), target.getId(), ex);
+                event.reply(bot.getConfig().getError() + " I could not connect to " + target.getAsMention() + ". Check the console logs for details.").setEphemeral(true).queue();
+                return false;
+            }
+        }
+        else
+        {
+            LOG.debug("Slash command /{} is already connected to requested voice channel {} ({}) in guild {} ({})",
+                    event.getName(), current.getName(), current.getId(), guild.getName(), guild.getId());
         }
         return true;
     }
@@ -577,7 +748,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"shuffle", "shuffle", "Shuffle your queued songs"},
                 {"seek <time>", "seek time:<time>", "Seek the current song"},
                 {"lyrics [song]", "lyrics [query]", "Fetch lyrics"},
-                {"correctlyrics <genius-url>", "correctlyrics url:<genius-url>", "Correct the last lyrics result"}
+                {"correctlyrics <genius-url> | <song>", "correctlyrics url:<genius-url> query:<song>", "Correct cached lyrics for a song"}
         }, prefix);
         addHelpFields(eb, "DJ", new String[][]{
                 {"forceskip", "forceskip", "Force skip"},
@@ -588,7 +759,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"repeat [off|all|single]", "repeat [mode]", "Set repeat mode"},
                 {"loop [off|all|single]", "loop [mode]", "Alias for repeat"},
                 {"skipto <position>", "skipto position:<position>", "Skip to a queue position"},
-                {"movetrack <from> <to>", "movetrack from:<from> to:<to>", "Move a queued track"},
+                {"movetrack <from> <to>", "move from:<from> to:<to>", "Move a queued track"},
                 {"playnext <title|URL>", "playnext query:<title|URL>", "Play a song next"},
                 {"forceremove <user>", "forceremove user:<user>", "Remove a user's queued songs"}
         }, prefix);
@@ -665,6 +836,8 @@ public class SlashCommandListener extends ListenerAdapter
         if (!connectToVoiceChannel(event)) return;
         String query = event.getOption("query").getAsString();
         bot.getPlayerManager().setUpHandler(event.getGuild());
+        LOG.info("Loading slash /{} request in guild {} ({}); query='{}'",
+                event.getName(), event.getGuild().getName(), event.getGuild().getId(), query);
         event.deferReply().queue(hook -> {
             bot.getPlayerManager().loadItemOrdered(event.getGuild(), query, new PlayResultHandler(hook, event, query, playTop, false));
         });
@@ -773,131 +946,6 @@ public class SlashCommandListener extends ListenerAdapter
         event.replyEmbeds(eb.build()).queue();
     }
 
-    private void handleSkip(SlashCommandInteractionEvent event)
-    {
-        if (!checkVoiceState(event, true)) return;
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        RequestMetadata rm = handler.getRequestMetadata();
-        double skipRatio = bot.getSettingsManager().getSettings(event.getGuild()).getSkipRatio();
-        if (skipRatio == -1) skipRatio = bot.getConfig().getSkipRatio();
-        if (event.getUser().getIdLong() == rm.getOwner() || skipRatio == 0)
-        {
-            event.reply(bot.getConfig().getSuccess() + " Skipped **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**").queue();
-            handler.getPlayer().stopTrack();
-        }
-        else
-        {
-            int listeners = (int) event.getGuild().getSelfMember().getVoiceState().getChannel().getMembers().stream()
-                    .filter(m -> !m.getUser().isBot() && !m.getVoiceState().isDeafened()).count();
-            String msg;
-            if (handler.getVotes().contains(event.getUser().getId()))
-                msg = bot.getConfig().getWarning() + " You already voted to skip this song `[";
-            else
-            {
-                msg = bot.getConfig().getSuccess() + " You voted to skip the song `[";
-                handler.getVotes().add(event.getUser().getId());
-            }
-            int skippers = (int) event.getGuild().getSelfMember().getVoiceState().getChannel().getMembers().stream()
-                    .filter(m -> handler.getVotes().contains(m.getUser().getId())).count();
-            int required = (int) Math.ceil(listeners * skipRatio);
-            msg += skippers + " votes, " + required + "/" + listeners + " needed]`";
-            if (skippers >= required)
-            {
-                msg += "\n" + bot.getConfig().getSuccess() + " Skipped **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**";
-                handler.getPlayer().stopTrack();
-            }
-            event.reply(msg).queue();
-        }
-    }
-
-    private void handleRemove(SlashCommandInteractionEvent event)
-    {
-        if (!checkVoiceState(event, true)) return;
-        String arg = event.getOption("position").getAsString();
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (handler.getQueue().isEmpty())
-        {
-            event.reply(bot.getConfig().getError() + " There is nothing in the queue!").setEphemeral(true).queue();
-            return;
-        }
-        if (arg.equalsIgnoreCase("all"))
-        {
-            int count = handler.getQueue().removeAll(event.getUser().getIdLong());
-            if (count == 0) event.reply(bot.getConfig().getWarning() + " You don't have any songs in the queue!").queue();
-            else event.reply(bot.getConfig().getSuccess() + " Successfully removed your " + count + " entries.").queue();
-            return;
-        }
-        int pos;
-        try { pos = Integer.parseInt(arg); }
-        catch (NumberFormatException e)
-        {
-            event.reply(bot.getConfig().getError() + " Please provide a valid position or 'all'.").setEphemeral(true).queue();
-            return;
-        }
-        if (pos < 1 || pos > handler.getQueue().size())
-        {
-            event.reply(bot.getConfig().getError() + " Position must be between 1 and " + handler.getQueue().size() + "!").setEphemeral(true).queue();
-            return;
-        }
-        QueuedTrack qt = handler.getQueue().get(pos - 1);
-        boolean isDJ = checkDJPermission(event);
-        if (qt.getIdentifier() == event.getUser().getIdLong() || isDJ)
-        {
-            handler.getQueue().remove(pos - 1);
-            event.reply(bot.getConfig().getSuccess() + " Removed **" + qt.getTrack().getInfo().title + "** from the queue").queue();
-        }
-        else
-            event.reply(bot.getConfig().getError() + " You cannot remove that track because you didn't add it!").setEphemeral(true).queue();
-    }
-
-    private void handleShuffle(SlashCommandInteractionEvent event)
-    {
-        if (!checkVoiceState(event, true)) return;
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        int shuffled = handler.getQueue().shuffle(event.getUser().getIdLong());
-        switch (shuffled)
-        {
-            case 0: event.reply(bot.getConfig().getError() + " You don't have any music in the queue to shuffle!").queue(); break;
-            case 1: event.reply(bot.getConfig().getWarning() + " You only have one song in the queue!").queue(); break;
-            default: event.reply(bot.getConfig().getSuccess() + " You successfully shuffled your " + shuffled + " entries.").queue();
-        }
-    }
-
-    private void handleSeek(SlashCommandInteractionEvent event)
-    {
-        if (!checkVoiceState(event, true)) return;
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        AudioTrack track = handler.getPlayer().getPlayingTrack();
-        if (!track.isSeekable())
-        {
-            event.reply(bot.getConfig().getError() + " This track is not seekable.").setEphemeral(true).queue();
-            return;
-        }
-        RequestMetadata rm = handler.getRequestMetadata();
-        if (!checkDJPermission(event) && rm.getOwner() != event.getUser().getIdLong())
-        {
-            event.reply(bot.getConfig().getError() + " You cannot seek this track because you didn't add it!").setEphemeral(true).queue();
-            return;
-        }
-        String args = event.getOption("time").getAsString();
-        TimeUtil.SeekTime seekTime = TimeUtil.parseTime(args);
-        if (seekTime == null)
-        {
-            event.reply(bot.getConfig().getError() + " Invalid time format! Examples: `1:30`, `+30`, `-15`, `1m30s`").setEphemeral(true).queue();
-            return;
-        }
-        long currentPos = track.getPosition();
-        long duration = track.getDuration();
-        long seekMs = seekTime.relative ? currentPos + seekTime.milliseconds : seekTime.milliseconds;
-        if (seekMs < 0 || seekMs > duration)
-        {
-            event.reply(bot.getConfig().getError() + " Cannot seek to that position!").setEphemeral(true).queue();
-            return;
-        }
-        track.setPosition(seekMs);
-        event.reply(bot.getConfig().getSuccess() + " Seeked to `" + TimeUtil.formatTime(seekMs) + "/" + TimeUtil.formatTime(duration) + "`").queue();
-    }
-
     private void handleLyrics(SlashCommandInteractionEvent event)
     {
         LyricsService service = getLyricsService();
@@ -946,6 +994,7 @@ public class SlashCommandListener extends ListenerAdapter
         }
 
         String url = event.getOption("url").getAsString().trim();
+        String query = event.getOption("query").getAsString().trim();
         if (!url.startsWith("http"))
             url = "https://" + url;
         if (!InputValidator.isValidGeniusUrl(url))
@@ -953,17 +1002,23 @@ public class SlashCommandListener extends ListenerAdapter
             event.reply(bot.getConfig().getError() + " That doesn't look like a valid Genius lyrics URL.").setEphemeral(true).queue();
             return;
         }
+        if (InputValidator.sanitizeQuery(query) == null)
+        {
+            event.reply(bot.getConfig().getError() + " That song name is not valid.").setEphemeral(true).queue();
+            return;
+        }
 
         String finalUrl = url;
+        String finalQuery = query;
         event.deferReply().queue(hook -> CompletableFuture
-                .supplyAsync(() -> replaceLyrics(service, finalUrl))
+                .supplyAsync(() -> replaceLyrics(service, finalUrl, finalQuery))
                 .thenAccept(opt -> {
                     if (opt.isEmpty())
                     {
                         hook.editOriginal(bot.getConfig().getError() + " Could not correct using that URL.").queue();
                         return;
                     }
-                    hook.editOriginal(bot.getConfig().getSuccess() + " Updated lyrics cache to use URL: " + opt.get().sourceUrl()).queue();
+                    hook.editOriginal(bot.getConfig().getSuccess() + " Updated lyrics cache for `" + finalQuery + "` to use URL: " + opt.get().sourceUrl()).queue();
                 }));
     }
 
@@ -987,6 +1042,8 @@ public class SlashCommandListener extends ListenerAdapter
 
         String query = event.getOption("query").getAsString();
         bot.getPlayerManager().setUpHandler(event.getGuild());
+        LOG.info("Loading slash /{} search in guild {} ({}); provider={}; query='{}'",
+                event.getName(), event.getGuild().getName(), event.getGuild().getId(), provider, query);
         event.deferReply().queue(hook ->
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), searchPrefix + query, new SearchResultHandler(hook, event, query, provider)));
     }
@@ -1026,15 +1083,15 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
-    private Optional<LyricsCache.CachedLyrics> replaceLyrics(LyricsService service, String url)
+    private Optional<LyricsCache.CachedLyrics> replaceLyrics(LyricsService service, String url, String query)
     {
         try
         {
-            return service.replaceLastWithFetched(url);
+            return service.replaceForQueryWithGeniusUrl(url, query);
         }
         catch (Exception ex)
         {
-            LOG.warn("Failed to replace lyrics with {}", url, ex);
+            LOG.warn("Failed to replace lyrics for {} with {}", query, url, ex);
             return Optional.empty();
         }
     }
@@ -1102,21 +1159,6 @@ public class SlashCommandListener extends ListenerAdapter
     // DJ Commands
     // ========================
 
-    private void handleForceSkip(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        if (!checkVoiceState(event, true)) return;
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        RequestMetadata rm = handler.getRequestMetadata();
-        event.reply(bot.getConfig().getSuccess() + " Skipped **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**" +
-                (rm.getOwner() == 0L ? " (autoplay)" : " (requested by **" + FormatUtil.formatUsername(rm.user) + "**)")).queue();
-        handler.getPlayer().stopTrack();
-    }
-
     private void handlePause(SlashCommandInteractionEvent event)
     {
         if (!checkDJPermission(event))
@@ -1156,124 +1198,6 @@ public class SlashCommandListener extends ListenerAdapter
 
         handler.getPlayer().setPaused(false);
         event.reply(bot.getConfig().getSuccess() + " Resumed **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**").queue();
-    }
-
-    private void handleStop(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (handler != null) handler.stopAndClear();
-        event.getGuild().getAudioManager().closeAudioConnection();
-        event.reply(bot.getConfig().getSuccess() + " The player has stopped and the queue has been cleared.").queue();
-    }
-
-    private void handleVolume(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (handler == null)
-        {
-            event.reply(bot.getConfig().getWarning() + " No audio handler active.").setEphemeral(true).queue();
-            return;
-        }
-        int currentVolume = handler.getPlayer().getVolume();
-        if (event.getOption("level") == null)
-        {
-            event.reply(FormatUtil.volumeIcon(currentVolume) + " Current volume is `" + currentVolume + "`").queue();
-        }
-        else
-        {
-            int newVolume = (int) event.getOption("level").getAsLong();
-            if (newVolume < 0 || newVolume > 150)
-            {
-                event.reply(bot.getConfig().getError() + " Volume must be between 0 and 150!").setEphemeral(true).queue();
-                return;
-            }
-            handler.getPlayer().setVolume(newVolume);
-            bot.getSettingsManager().getSettings(event.getGuild()).setVolume(newVolume);
-            event.reply(FormatUtil.volumeIcon(newVolume) + " Volume changed from `" + currentVolume + "` to `" + newVolume + "`").queue();
-        }
-    }
-
-    private void handleRepeat(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
-        String mode = event.getOption("mode") != null ? event.getOption("mode").getAsString() : null;
-        RepeatMode value;
-        if (mode == null) value = settings.getRepeatMode() == RepeatMode.OFF ? RepeatMode.ALL : RepeatMode.OFF;
-        else
-        {
-            switch (mode.toLowerCase())
-            {
-                case "off": value = RepeatMode.OFF; break;
-                case "all": value = RepeatMode.ALL; break;
-                case "single": value = RepeatMode.SINGLE; break;
-                default:
-                    event.reply(bot.getConfig().getError() + " Invalid repeat mode!").setEphemeral(true).queue();
-                    return;
-            }
-        }
-        settings.setRepeatMode(value);
-        event.reply(bot.getConfig().getSuccess() + " Repeat mode is now `" + value.getUserFriendlyName() + "`").queue();
-    }
-
-    private void handleSkipTo(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        if (!checkVoiceState(event, true)) return;
-        int index = (int) event.getOption("position").getAsLong();
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (index < 1 || index > handler.getQueue().size())
-        {
-            event.reply(bot.getConfig().getError() + " Position must be between 1 and " + handler.getQueue().size() + "!").setEphemeral(true).queue();
-            return;
-        }
-        handler.getQueue().skip(index - 1);
-        event.reply(bot.getConfig().getSuccess() + " Skipped to **" + handler.getQueue().get(0).getTrack().getInfo().title + "**").queue();
-        handler.getPlayer().stopTrack();
-    }
-
-    private void handleMoveTrack(SlashCommandInteractionEvent event)
-    {
-        if (!checkDJPermission(event))
-        {
-            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
-            return;
-        }
-        if (!checkVoiceState(event, true)) return;
-        int from = (int) event.getOption("from").getAsLong();
-        int to = (int) event.getOption("to").getAsLong();
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (from == to)
-        {
-            event.reply(bot.getConfig().getError() + " Can't move a track to the same position.").setEphemeral(true).queue();
-            return;
-        }
-        int size = handler.getQueue().size();
-        if (from < 1 || from > size || to < 1 || to > size)
-        {
-            event.reply(bot.getConfig().getError() + " Position must be between 1 and " + size + "!").setEphemeral(true).queue();
-            return;
-        }
-        QueuedTrack track = handler.getQueue().moveItem(from - 1, to - 1);
-        event.reply(bot.getConfig().getSuccess() + " Moved **" + track.getTrack().getInfo().title + "** from position `" + from + "` to `" + to + "`.").queue();
     }
 
     private void handlePlayNext(SlashCommandInteractionEvent event)
@@ -1316,22 +1240,6 @@ public class SlashCommandListener extends ListenerAdapter
     // ========================
     // Admin Commands
     // ========================
-
-    private void handlePrefix(SlashCommandInteractionEvent event)
-    {
-        String prefix = event.getOption("prefix").getAsString();
-        Settings s = bot.getSettingsManager().getSettings(event.getGuild());
-        if (prefix.equalsIgnoreCase("none"))
-        {
-            s.setPrefix(null);
-            event.reply(bot.getConfig().getSuccess() + " Prefix cleared.").queue();
-        }
-        else
-        {
-            s.setPrefix(prefix);
-            event.reply(bot.getConfig().getSuccess() + " Prefix set to `" + prefix + "`").queue();
-        }
-    }
 
     private void handleSetDJ(SlashCommandInteractionEvent event)
     {
@@ -1403,30 +1311,6 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
-    private void handleSetSkip(SlashCommandInteractionEvent event)
-    {
-        int percent = event.getOption("percent").getAsInt();
-        Settings s = bot.getSettingsManager().getSettings(event.getGuild());
-        s.setSkipRatio(percent / 100.0);
-        event.reply(bot.getConfig().getSuccess() + " Skip percentage has been set to `" + percent + "%` of listeners on *" + event.getGuild().getName() + "*").queue();
-    }
-
-    private void handleQueueType(SlashCommandInteractionEvent event)
-    {
-        Settings s = bot.getSettingsManager().getSettings(event.getGuild());
-        if (event.getOption("type") == null)
-        {
-            event.reply(bot.getConfig().getSuccess() + " Current queue type is `" + s.getQueueType().getUserFriendlyName() + "`").queue();
-        }
-        else
-        {
-            String type = event.getOption("type").getAsString();
-            QueueType qt = type.equalsIgnoreCase("fair") ? QueueType.FAIR : QueueType.LINEAR;
-            s.setQueueType(qt);
-            event.reply(bot.getConfig().getSuccess() + " Queue type set to `" + qt.getUserFriendlyName() + "`").queue();
-        }
-    }
-
     // ========================
     // Audio Load Result Handlers
     // ========================
@@ -1454,6 +1338,18 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
+    private String describeTrack(AudioTrack track)
+    {
+        if (track == null)
+            return "none";
+
+        String source = track.getSourceManager() == null ? "unknown" : track.getSourceManager().getSourceName();
+        return "'" + track.getInfo().title + "' by '" + track.getInfo().author + "'"
+                + " [id=" + track.getIdentifier()
+                + ", source=" + source
+                + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
+    }
+
     private class SearchResultHandler implements AudioLoadResultHandler
     {
         private final InteractionHook hook;
@@ -1474,12 +1370,16 @@ public class SlashCommandListener extends ListenerAdapter
         {
             if (bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected slash search track in guild {} ({}): track too long; provider={}; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), provider, query, describeTrack(track));
                 hook.editOriginal(bot.getConfig().getWarning() + " This track (**" + track.getInfo().title + "**) is longer than the allowed maximum: `"
                         + TimeUtil.formatTime(track.getDuration()) + "` > `" + bot.getConfig().getMaxTime() + "`").queue();
                 return;
             }
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), query, track))) + 1;
+            LOG.info("Slash search track loaded in guild {} ({}); provider={}; query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), provider, query, pos, describeTrack(track));
             hook.editOriginal(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title
                     + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos == 0 ? "to begin playing" : " to the queue at position " + pos))).queue();
         }
@@ -1489,9 +1389,14 @@ public class SlashCommandListener extends ListenerAdapter
         {
             if (playlist.getTracks().isEmpty())
             {
+                LOG.info("Slash search returned empty playlist in guild {} ({}); provider={}; query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), provider, query);
                 noMatches();
                 return;
             }
+
+            LOG.info("Slash search returned {} results in guild {} ({}); provider={}; query='{}'",
+                    playlist.getTracks().size(), event.getGuild().getName(), event.getGuild().getId(), provider, query);
 
             cleanupSearchMenus();
             List<AudioTrack> results = new ArrayList<>();
@@ -1532,12 +1437,16 @@ public class SlashCommandListener extends ListenerAdapter
         @Override
         public void noMatches()
         {
+            LOG.info("No slash search results in guild {} ({}); provider={}; query='{}'",
+                    event.getGuild().getName(), event.getGuild().getId(), provider, query);
             hook.editOriginal(FormatUtil.filter(bot.getConfig().getWarning() + " No " + provider + " results found for `" + query + "`.")).queue();
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Slash search load failed in guild {} ({}); provider={}; query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), provider, query, throwable.severity, throwable.getMessage(), throwable);
             if (throwable.severity == Severity.COMMON)
                 hook.editOriginal(bot.getConfig().getError() + " Error loading: " + throwable.getMessage()).queue();
             else
@@ -1566,6 +1475,8 @@ public class SlashCommandListener extends ListenerAdapter
         {
             if (bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected slash /{} track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getName(), event.getGuild().getName(), event.getGuild().getId(), args, describeTrack(track));
                 hook.editOriginal(bot.getConfig().getWarning() + " This track (**" + track.getInfo().title + "**) is longer than the allowed maximum: `" +
                         TimeUtil.formatTime(track.getDuration()) + "` > `" + TimeUtil.formatTime(bot.getConfig().getMaxSeconds() * 1000) + "`").queue();
                 return;
@@ -1576,6 +1487,8 @@ public class SlashCommandListener extends ListenerAdapter
                 pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
             else
                 pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
+            LOG.info("Slash /{} track loaded in guild {} ({}); playTop={}; query='{}'; position={}; track={}",
+                    event.getName(), event.getGuild().getName(), event.getGuild().getId(), playTop, args, pos, describeTrack(track));
             String addMsg = FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title +
                     "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos == 0 ? "to begin playing" : "to the queue at position " + pos));
             hook.editOriginal(addMsg).queue();
@@ -1592,6 +1505,9 @@ public class SlashCommandListener extends ListenerAdapter
                     count[0]++;
                 }
             });
+            LOG.info("Slash /{} playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
+                    event.getName(), event.getGuild().getName(), event.getGuild().getId(), args,
+                    playlist.getName(), count[0], playlist.getTracks().size());
             return count[0];
         }
 
@@ -1612,9 +1528,17 @@ public class SlashCommandListener extends ListenerAdapter
             {
                 int count = loadPlaylist(playlist, null);
                 if (playlist.getTracks().isEmpty())
+                {
+                    LOG.info("Slash /{} playlist result was empty in guild {} ({}); query='{}'",
+                            event.getName(), event.getGuild().getName(), event.getGuild().getId(), args);
                     hook.editOriginal(bot.getConfig().getWarning() + " The playlist could not be loaded or contained 0 entries.").queue();
+                }
                 else if (count == 0)
+                {
+                    LOG.warn("Slash /{} playlist had no acceptable tracks in guild {} ({}); query='{}'; sourceTracks={}",
+                            event.getName(), event.getGuild().getName(), event.getGuild().getId(), args, playlist.getTracks().size());
                     hook.editOriginal(bot.getConfig().getWarning() + " All entries in this playlist were too long.").queue();
+                }
                 else
                     hook.editOriginal(bot.getConfig().getSuccess() + " Loaded playlist **" + (playlist.getName() != null ? playlist.getName() : "Unknown") + "** with `" + count + "` entries!").queue();
             }
@@ -1624,14 +1548,24 @@ public class SlashCommandListener extends ListenerAdapter
         public void noMatches()
         {
             if (ytsearch)
+            {
+                LOG.info("Slash /{} found no matches after YouTube fallback in guild {} ({}); query='{}'",
+                        event.getName(), event.getGuild().getName(), event.getGuild().getId(), args);
                 hook.editOriginal(bot.getConfig().getWarning() + " No results found for `" + args + "`.").queue();
+            }
             else
+            {
+                LOG.info("Slash /{} found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
+                        event.getName(), event.getGuild().getName(), event.getGuild().getId(), args);
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:" + args, new PlayResultHandler(hook, event, args, playTop, true));
+            }
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Slash /{} load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getName(), event.getGuild().getName(), event.getGuild().getId(), args, throwable.severity, throwable.getMessage(), throwable);
             if (throwable.severity == Severity.COMMON)
                 hook.editOriginal(bot.getConfig().getError() + " Error loading: " + throwable.getMessage()).queue();
             else
@@ -1657,11 +1591,15 @@ public class SlashCommandListener extends ListenerAdapter
         {
             if (bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected slash /playnext track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), args, describeTrack(track));
                 hook.editOriginal(bot.getConfig().getWarning() + " This track is longer than the allowed maximum.").queue();
                 return;
             }
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
+            LOG.info("Slash /playnext track loaded in guild {} ({}); query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), args, pos, describeTrack(track));
             hook.editOriginal(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title + "** to play next" + (pos == 0 ? "" : " (position " + pos + ")")).queue();
         }
 
@@ -1675,18 +1613,32 @@ public class SlashCommandListener extends ListenerAdapter
         @Override
         public void noMatches()
         {
+            LOG.info("Slash /playnext found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
+                    event.getGuild().getName(), event.getGuild().getId(), args);
             bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:" + args, new AudioLoadResultHandler()
             {
                 @Override public void trackLoaded(AudioTrack track) { PlayNextResultHandler.this.trackLoaded(track); }
                 @Override public void playlistLoaded(AudioPlaylist playlist) { PlayNextResultHandler.this.playlistLoaded(playlist); }
-                @Override public void noMatches() { hook.editOriginal(bot.getConfig().getWarning() + " No results found for `" + args + "`.").queue(); }
-                @Override public void loadFailed(FriendlyException throwable) { hook.editOriginal(bot.getConfig().getError() + " Error loading track.").queue(); }
+                @Override public void noMatches()
+                {
+                    LOG.info("Slash /playnext found no matches after YouTube fallback in guild {} ({}); query='{}'",
+                            event.getGuild().getName(), event.getGuild().getId(), args);
+                    hook.editOriginal(bot.getConfig().getWarning() + " No results found for `" + args + "`.").queue();
+                }
+                @Override public void loadFailed(FriendlyException throwable)
+                {
+                    LOG.warn("Slash /playnext YouTube fallback failed in guild {} ({}); query='{}'; severity={}; message={}",
+                            event.getGuild().getName(), event.getGuild().getId(), args, throwable.severity, throwable.getMessage(), throwable);
+                    hook.editOriginal(bot.getConfig().getError() + " Error loading track.").queue();
+                }
             });
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Slash /playnext load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), args, throwable.severity, throwable.getMessage(), throwable);
             hook.editOriginal(bot.getConfig().getError() + " Error loading: " + throwable.getMessage()).queue();
         }
     }

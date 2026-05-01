@@ -138,6 +138,18 @@ public class MessageCommandContext implements CommandContext
     {
         event.replyError(message);
     }
+
+    @Override
+    public void replyEphemeral(String message)
+    {
+        event.reply(message);
+    }
+
+    @Override
+    public void replyErrorEphemeral(String message)
+    {
+        event.replyError(message);
+    }
     
     @Override
     public void reply(MessageCreateData message)

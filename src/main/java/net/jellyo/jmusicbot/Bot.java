@@ -29,6 +29,9 @@ import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 /* */
 import java.io.*;
 import java.nio.file.*;
@@ -43,6 +46,8 @@ import java.util.Date;
  */
 public class Bot
 {
+    private final static Logger LOG = LoggerFactory.getLogger(Bot.class);
+
     private final EventWaiter waiter;
     private final ScheduledExecutorService threadpool;
     private final BotConfig config;
@@ -59,6 +64,7 @@ public class Bot
     
     public Bot(EventWaiter waiter, BotConfig config, SettingsManager settings)
     {
+        LOG.info("Initializing bot services");
         this.waiter = waiter;
         this.config = config;
         this.settings = settings;
@@ -74,6 +80,7 @@ public class Bot
         this.nowplaying.init();
         this.aloneInVoiceHandler = new AloneInVoiceHandler(this);
         this.aloneInVoiceHandler.init();
+        LOG.info("Bot services initialized");
     }
     
     public BotConfig getConfig()
@@ -123,9 +130,34 @@ public class Bot
     
     public void closeAudioConnection(long guildId)
     {
+        if(jda == null)
+        {
+            LOG.warn("Requested audio disconnect for guild {} before JDA was initialized", guildId);
+            return;
+        }
+
         Guild guild = jda.getGuildById(guildId);
-        if(guild!=null)
-            threadpool.submit(() -> guild.getAudioManager().closeAudioConnection());
+        if(guild == null)
+        {
+            LOG.warn("Requested audio disconnect for unknown guild {}", guildId);
+            return;
+        }
+
+        AudioChannel channel = guild.getAudioManager().getConnectedChannel();
+        LOG.info("Scheduling audio disconnect for guild {} ({}) from channel {} ({})",
+                guild.getName(), guild.getId(), channel == null ? "none" : channel.getName(), channel == null ? "none" : channel.getId());
+        threadpool.submit(() ->
+        {
+            try
+            {
+                guild.getAudioManager().closeAudioConnection();
+                LOG.debug("Audio disconnect executed for guild {} ({})", guild.getName(), guild.getId());
+            }
+            catch(Exception ex)
+            {
+                LOG.warn("Failed to close audio connection for guild {} ({})", guild.getName(), guild.getId(), ex);
+            }
+        });
     }
     
     public void resetGame()
@@ -140,11 +172,15 @@ public class Bot
         if(shuttingDown)
             return;
         shuttingDown = true;
+        LOG.warn("Bot shutdown requested");
         threadpool.shutdownNow();
         if(jda.getStatus()!=JDA.Status.SHUTTING_DOWN)
         {
             jda.getGuilds().stream().forEach(g -> 
             {
+                AudioChannel channel = g.getAudioManager().getConnectedChannel();
+                LOG.info("Closing audio connection during shutdown for guild {} ({}) from channel {} ({})",
+                        g.getName(), g.getId(), channel == null ? "none" : channel.getName(), channel == null ? "none" : channel.getId());
                 g.getAudioManager().closeAudioConnection();
                 AudioHandler ah = (AudioHandler)g.getAudioManager().getSendingHandler();
                 if(ah!=null)

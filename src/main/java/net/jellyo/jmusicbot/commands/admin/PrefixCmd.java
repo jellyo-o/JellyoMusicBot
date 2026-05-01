@@ -18,16 +18,22 @@ package com.jagrosh.jmusicbot.commands.admin;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.commands.AdminCommand;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.settings.Settings;
 
 /**
  *
  * @author John Grosh (john.a.grosh@gmail.com)
  */
-public class PrefixCmd extends AdminCommand
+public class PrefixCmd extends AdminCommand implements UnifiedCommand
 {
+    private final Bot bot;
+
     public PrefixCmd(Bot bot)
     {
+        this.bot = bot;
         this.name = "prefix";
         this.help = "sets a server-specific prefix";
         this.arguments = "<prefix|NONE>";
@@ -37,13 +43,19 @@ public class PrefixCmd extends AdminCommand
     @Override
     protected void execute(CommandEvent event) 
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         if(event.getArgs().isEmpty())
         {
             event.replyError("Please include a prefix or NONE");
             return;
         }
         
-        Settings s = event.getClient().getSettingsFor(event.getGuild());
+        Settings s = bot.getSettingsManager().getSettings(event.getGuild());
         if(event.getArgs().equalsIgnoreCase("none"))
         {
             s.setPrefix(null);

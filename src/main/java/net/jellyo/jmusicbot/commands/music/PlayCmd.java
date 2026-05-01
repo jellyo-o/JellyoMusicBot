@@ -36,6 +36,8 @@ import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.exceptions.PermissionException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -43,6 +45,8 @@ import net.dv8tion.jda.api.exceptions.PermissionException;
  */
 public class PlayCmd extends MusicCommand
 {
+    private final static Logger LOG = LoggerFactory.getLogger(PlayCmd.class);
+
     private final static String LOAD = "\uD83D\uDCE5"; // 📥
     private final static String CANCEL = "\uD83D\uDEAB"; // 🚫
     
@@ -89,7 +93,21 @@ public class PlayCmd extends MusicCommand
         String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">") 
                 ? event.getArgs().substring(1,event.getArgs().length()-1) 
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        LOG.info("Loading prefix play request in guild {} ({}); query='{}'",
+                event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,false)));
+    }
+
+    private String describeTrack(AudioTrack track)
+    {
+        if(track == null)
+            return "none";
+
+        String source = track.getSourceManager() == null ? "unknown" : track.getSourceManager().getSourceName();
+        return "'" + track.getInfo().title + "' by '" + track.getInfo().author + "'"
+                + " [id=" + track.getIdentifier()
+                + ", source=" + source
+                + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
     }
     
     private class ResultHandler implements AudioLoadResultHandler
@@ -109,12 +127,16 @@ public class PlayCmd extends MusicCommand
         {
             if(bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected prefix play track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" This track (**"+track.getInfo().title+"**) is longer than the allowed maximum: `"
                         + TimeUtil.formatTime(track.getDuration())+"` > `"+ TimeUtil.formatTime(bot.getConfig().getMaxSeconds()*1000)+"`")).queue();
                 return;
             }
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
+            LOG.info("Prefix play track loaded in guild {} ({}); query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), pos, describeTrack(track));
             String addMsg = FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0?"to begin playing":" to the queue at position "+pos));
             if(playlist==null || !event.getSelfMember().hasPermission(event.getTextChannel(), Permission.MESSAGE_ADD_REACTION))
@@ -150,6 +172,9 @@ public class PlayCmd extends MusicCommand
                     count[0]++;
                 }
             });
+            LOG.info("Prefix play playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(),
+                    playlist.getName(), count[0], playlist.getTracks().size());
             return count[0];
         }
         
@@ -177,11 +202,15 @@ public class PlayCmd extends MusicCommand
                 int count = loadPlaylist(playlist, null);
                 if(playlist.getTracks().size() == 0)
                 {
+                    LOG.info("Prefix play playlist result was empty in guild {} ({}); query='{}'",
+                            event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                     m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" The playlist "+(playlist.getName()==null ? "" : "(**"+playlist.getName()
                             +"**) ")+" could not be loaded or contained 0 entries")).queue();
                 }
                 else if(count==0)
                 {
+                    LOG.warn("Prefix play playlist had no acceptable tracks in guild {} ({}); query='{}'; sourceTracks={}",
+                            event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), playlist.getTracks().size());
                     m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" All entries in this playlist "+(playlist.getName()==null ? "" : "(**"+playlist.getName()
                             +"**) ")+"were longer than the allowed maximum (`"+bot.getConfig().getMaxTime()+"`)")).queue();
                 }
@@ -200,14 +229,24 @@ public class PlayCmd extends MusicCommand
         public void noMatches()
         {
             if(ytsearch)
+            {
+                LOG.info("Prefix play found no matches after YouTube fallback in guild {} ({}); query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" No results found for `"+event.getArgs()+"`.")).queue();
+            }
             else
+            {
+                LOG.info("Prefix play found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:"+event.getArgs(), new ResultHandler(m,event,true));
+            }
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Prefix play load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), throwable.severity, throwable.getMessage(), throwable);
             if(throwable.severity==Severity.COMMON)
                 m.editMessage(event.getClient().getError()+" Error loading: "+throwable.getMessage()).queue();
             else
@@ -246,8 +285,13 @@ public class PlayCmd extends MusicCommand
             }
             event.getChannel().sendMessage(loadingEmoji+" Loading playlist **"+event.getArgs()+"**... ("+playlist.getItems().size()+" items)").queue(m -> 
             {
+                LOG.info("Loading saved playlist '{}' in guild {} ({}) with {} configured entries",
+                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), playlist.getItems().size());
                 AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
                 playlist.loadTracks(bot.getPlayerManager(), (at)->handler.addTrack(new QueuedTrack(at, RequestMetadata.fromResultHandler(at, event))), () -> {
+                    LOG.info("Saved playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}",
+                            playlist.getName(), event.getGuild().getName(), event.getGuild().getId(),
+                            playlist.getTracks().size(), playlist.getErrors().size());
                     StringBuilder builder = new StringBuilder(playlist.getTracks().isEmpty() 
                             ? event.getClient().getWarning()+" No tracks were loaded!" 
                             : event.getClient().getSuccess()+" Loaded **"+playlist.getTracks().size()+"** tracks!");

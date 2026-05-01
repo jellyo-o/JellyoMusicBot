@@ -18,13 +18,16 @@ package com.jagrosh.jmusicbot.commands.music;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 
 /**
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class ShuffleCmd extends MusicCommand 
+public class ShuffleCmd extends MusicCommand implements UnifiedCommand
 {
     public ShuffleCmd(Bot bot)
     {
@@ -38,6 +41,12 @@ public class ShuffleCmd extends MusicCommand
 
     @Override
     public void doCommand(CommandEvent event) 
+    {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
     {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
         int s = handler.getQueue().shuffle(event.getAuthor().getIdLong());

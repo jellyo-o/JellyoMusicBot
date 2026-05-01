@@ -19,16 +19,18 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
+import com.jagrosh.jmusicbot.commands.CommandChecks;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
-import com.jagrosh.jmusicbot.settings.Settings;
-import net.dv8tion.jda.api.Permission;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import net.dv8tion.jda.api.entities.User;
 
 /**
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class RemoveCmd extends MusicCommand 
+public class RemoveCmd extends MusicCommand implements UnifiedCommand
 {
     public RemoveCmd(Bot bot)
     {
@@ -43,6 +45,12 @@ public class RemoveCmd extends MusicCommand
 
     @Override
     public void doCommand(CommandEvent event) 
+    {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
     {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
         if(handler.getQueue().isEmpty())
@@ -70,10 +78,7 @@ public class RemoveCmd extends MusicCommand
             event.replyError("Position must be a valid integer between 1 and "+handler.getQueue().size()+"!");
             return;
         }
-        Settings settings = event.getClient().getSettingsFor(event.getGuild());
-        boolean isDJ = event.getMember().hasPermission(Permission.MANAGE_SERVER);
-        if(!isDJ)
-            isDJ = event.getMember().getRoles().contains(settings.getRole(event.getGuild()));
+        boolean isDJ = CommandChecks.checkDJPermission(event, bot);
         QueuedTrack qt = handler.getQueue().get(pos-1);
         if(qt.getIdentifier()==event.getAuthor().getIdLong())
         {

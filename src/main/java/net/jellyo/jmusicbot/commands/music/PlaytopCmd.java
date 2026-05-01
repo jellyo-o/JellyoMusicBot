@@ -13,6 +13,8 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import net.dv8tion.jda.api.entities.Message;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Command to play a track or playlist at the top of the queue.
@@ -21,6 +23,8 @@ import net.dv8tion.jda.api.entities.Message;
  */
 public class PlaytopCmd extends MusicCommand
 {
+    private final static Logger LOG = LoggerFactory.getLogger(PlaytopCmd.class);
+
     private final String loadingEmoji;
 
     public PlaytopCmd(Bot bot)
@@ -46,7 +50,21 @@ public class PlaytopCmd extends MusicCommand
         String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">")
                 ? event.getArgs().substring(1,event.getArgs().length()-1)
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        LOG.info("Loading prefix playtop request in guild {} ({}); query='{}'",
+                event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,false)));
+    }
+
+    private String describeTrack(AudioTrack track)
+    {
+        if(track == null)
+            return "none";
+
+        String source = track.getSourceManager() == null ? "unknown" : track.getSourceManager().getSourceName();
+        return "'" + track.getInfo().title + "' by '" + track.getInfo().author + "'"
+                + " [id=" + track.getIdentifier()
+                + ", source=" + source
+                + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
     }
 
     private class ResultHandler implements AudioLoadResultHandler
@@ -66,12 +84,16 @@ public class PlaytopCmd extends MusicCommand
         {
             if(bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected prefix playtop track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" This track (**"+track.getInfo().title+"**) is longer than the allowed maximum: `"
                         + TimeUtil.formatTime(track.getDuration())+"` > `"+ TimeUtil.formatTime(bot.getConfig().getMaxSeconds()*1000)+"`")).queue();
                 return;
             }
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
+            LOG.info("Prefix playtop track loaded in guild {} ({}); query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), pos, describeTrack(track));
             String addMsg = FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0?"to begin playing":" to the top of the queue"));
             m.editMessage(addMsg).queue();
@@ -86,9 +108,15 @@ public class PlaytopCmd extends MusicCommand
             for(AudioTrack track : playlist.getTracks())
             {
                 if(bot.getConfig().isTooLong(track))
+                {
+                    LOG.debug("Skipping too-long prefix playtop playlist track in guild {} ({}); query='{}'; track={}",
+                            event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                     continue;
+                }
                 if(first)
                 {
+                    LOG.info("Starting first prefix playtop playlist track immediately in guild {} ({}); query='{}'; track={}",
+                            event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                     handler.getPlayer().playTrack(track);
                     first = false;
                 }
@@ -99,6 +127,9 @@ public class PlaytopCmd extends MusicCommand
                 }
                 count++;
             }
+            LOG.info("Prefix playtop playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(),
+                    playlist.getName(), count, playlist.getTracks().size());
             return count;
         }
 
@@ -121,6 +152,8 @@ public class PlaytopCmd extends MusicCommand
                 int count = loadPlaylist(playlist);
                 if(count==0)
                 {
+                    LOG.warn("Prefix playtop playlist had no acceptable tracks in guild {} ({}); query='{}'; sourceTracks={}",
+                            event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), playlist.getTracks().size());
                     m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" All entries in this playlist "+(playlist.getName()==null ? "" : "(**"+playlist.getName()+"**) ")+"were longer than the allowed maximum (`"+bot.getConfig().getMaxTime()+"`)")).queue();
                 }
                 else
@@ -134,14 +167,24 @@ public class PlaytopCmd extends MusicCommand
         public void noMatches()
         {
             if(ytsearch)
+            {
+                LOG.info("Prefix playtop found no matches after YouTube fallback in guild {} ({}); query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" No results found for `"+event.getArgs()+"`.")).queue();
+            }
             else
+            {
+                LOG.info("Prefix playtop found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:"+event.getArgs(), new ResultHandler(m,event,true));
+            }
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Prefix playtop load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), throwable.severity, throwable.getMessage(), throwable);
             if(throwable.severity==FriendlyException.Severity.COMMON)
                 m.editMessage(event.getClient().getError()+" Error loading: "+throwable.getMessage()).queue();
             else

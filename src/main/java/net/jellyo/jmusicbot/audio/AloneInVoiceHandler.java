@@ -25,6 +25,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -32,6 +34,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class AloneInVoiceHandler
 {
+    private final static Logger LOG = LoggerFactory.getLogger(AloneInVoiceHandler.class);
+
     private final Bot bot;
     private final HashMap<Long, Instant> aloneSince = new HashMap<>();
     private long aloneTimeUntilStop = 0;
@@ -45,7 +49,14 @@ public class AloneInVoiceHandler
     {
         aloneTimeUntilStop = bot.getConfig().getAloneTimeUntilStop();
         if(aloneTimeUntilStop > 0)
+        {
             bot.getThreadpool().scheduleWithFixedDelay(() -> check(), 0, 5, TimeUnit.SECONDS);
+            LOG.info("Alone-in-voice timeout enabled: {} seconds", aloneTimeUntilStop);
+        }
+        else
+        {
+            LOG.debug("Alone-in-voice timeout disabled");
+        }
     }
     
     private void check()
@@ -59,11 +70,18 @@ public class AloneInVoiceHandler
 
             if(guild == null)
             {
+                LOG.warn("Alone-in-voice timeout tracked unknown guild {}; removing tracker entry", entrySet.getKey());
                 toRemove.add(entrySet.getKey());
                 continue;
             }
 
-            ((AudioHandler) guild.getAudioManager().getSendingHandler()).stopAndClear();
+            LOG.warn("Guild {} ({}) has been alone in voice for at least {} seconds; stopping playback and disconnecting",
+                    guild.getName(), guild.getId(), aloneTimeUntilStop);
+            AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
+            if(handler != null)
+                handler.stopAndClear();
+            else
+                LOG.warn("No audio handler found while processing alone-in-voice timeout for guild {} ({})", guild.getName(), guild.getId());
             guild.getAudioManager().closeAudioConnection();
 
             toRemove.add(entrySet.getKey());
@@ -82,9 +100,17 @@ public class AloneInVoiceHandler
         boolean inList = aloneSince.containsKey(guild.getIdLong());
 
         if(!alone && inList)
+        {
+            LOG.info("Guild {} ({}) is no longer alone in voice; clearing alone timer",
+                    guild.getName(), guild.getId());
             aloneSince.remove(guild.getIdLong());
+        }
         else if(alone && !inList)
+        {
+            LOG.info("Guild {} ({}) became alone in voice; will disconnect after {} seconds if unchanged",
+                    guild.getName(), guild.getId(), aloneTimeUntilStop);
             aloneSince.put(guild.getIdLong(), Instant.now());
+        }
     }
 
     private boolean isAlone(Guild guild)

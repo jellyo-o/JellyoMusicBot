@@ -25,6 +25,8 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
 import net.dv8tion.jda.api.exceptions.PermissionException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -32,6 +34,8 @@ import net.dv8tion.jda.api.exceptions.PermissionException;
  */
 public abstract class MusicCommand extends Command 
 {
+    private final static Logger LOG = LoggerFactory.getLogger(MusicCommand.class);
+
     protected final Bot bot;
     protected boolean bePlaying;
     protected boolean beListening;
@@ -46,10 +50,14 @@ public abstract class MusicCommand extends Command
     @Override
     protected void execute(CommandEvent event) 
     {
+        LOG.debug("Prefix music command '{}' invoked in guild {} ({}) by user {} ({})",
+                name, event.getGuild().getName(), event.getGuild().getId(), event.getAuthor().getName(), event.getAuthor().getId());
         Settings settings = event.getClient().getSettingsFor(event.getGuild());
         TextChannel tchannel = settings.getTextChannel(event.getGuild());
         if(tchannel!=null && !event.getTextChannel().equals(tchannel))
         {
+            LOG.debug("Rejected prefix music command '{}' in guild {} ({}): wrong text channel {} (expected {})",
+                    name, event.getGuild().getName(), event.getGuild().getId(), event.getTextChannel().getId(), tchannel.getId());
             try 
             {
                 event.getMessage().delete().queue();
@@ -60,6 +68,8 @@ public abstract class MusicCommand extends Command
         bot.getPlayerManager().setUpHandler(event.getGuild()); // no point constantly checking for this later
         if(bePlaying && !((AudioHandler)event.getGuild().getAudioManager().getSendingHandler()).isMusicPlaying(event.getJDA()))
         {
+            LOG.debug("Rejected prefix music command '{}' in guild {} ({}): no music playing",
+                    name, event.getGuild().getName(), event.getGuild().getId());
             event.reply(event.getClient().getError()+" There must be music playing to use that!");
             return;
         }
@@ -71,6 +81,11 @@ public abstract class MusicCommand extends Command
             GuildVoiceState userState = event.getMember().getVoiceState();
             if(!userState.inAudioChannel() || userState.isDeafened() || (current!=null && !userState.getChannel().equals(current)))
             {
+                LOG.debug("Rejected prefix music command '{}' in guild {} ({}): user voice mismatch; requiredChannel={}, userChannel={}, deafened={}",
+                        name, event.getGuild().getName(), event.getGuild().getId(),
+                        current == null ? "any" : current.getId(),
+                        userState.inAudioChannel() ? userState.getChannel().getId() : "none",
+                        userState.isDeafened());
                 event.replyError("You must be listening in "+(current==null ? "a voice channel" : current.getAsMention())+" to use that!");
                 return;
             }
@@ -78,6 +93,8 @@ public abstract class MusicCommand extends Command
             VoiceChannel afkChannel = userState.getGuild().getAfkChannel();
             if(afkChannel != null && afkChannel.equals(userState.getChannel()))
             {
+                LOG.debug("Rejected prefix music command '{}' in guild {} ({}): user is in AFK channel {}",
+                        name, event.getGuild().getName(), event.getGuild().getId(), afkChannel.getId());
                 event.replyError("You cannot use that command in an AFK channel!");
                 return;
             }
@@ -86,10 +103,16 @@ public abstract class MusicCommand extends Command
             {
                 try 
                 {
+                    LOG.info("Opening audio connection for prefix command '{}' in guild {} ({}) to channel {} ({})",
+                            name, event.getGuild().getName(), event.getGuild().getId(),
+                            userState.getChannel().getName(), userState.getChannel().getId());
                     event.getGuild().getAudioManager().openAudioConnection(userState.getChannel());
                 }
                 catch(PermissionException ex) 
                 {
+                    LOG.warn("Failed to open audio connection for prefix command '{}' in guild {} ({}) to channel {} ({})",
+                            name, event.getGuild().getName(), event.getGuild().getId(),
+                            userState.getChannel().getName(), userState.getChannel().getId(), ex);
                     event.reply(event.getClient().getError()+" I am unable to connect to "+userState.getChannel().getAsMention()+"!");
                     return;
                 }

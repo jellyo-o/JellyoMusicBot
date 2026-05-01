@@ -18,14 +18,21 @@ package com.jagrosh.jmusicbot.commands.dj;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.commands.CommandContext;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class StopCmd extends DJCommand 
+public class StopCmd extends DJCommand implements UnifiedCommand
 {
+    private final static Logger LOG = LoggerFactory.getLogger(StopCmd.class);
+
     public StopCmd(Bot bot)
     {
         super(bot);
@@ -38,9 +45,19 @@ public class StopCmd extends DJCommand
     @Override
     public void doCommand(CommandEvent event) 
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-        handler.stopAndClear();
+        LOG.info("Stop command invoked in guild {} ({}) by user {} ({}); handlerPresent={}",
+                event.getGuild().getName(), event.getGuild().getId(),
+                event.getAuthor().getName(), event.getAuthor().getId(), handler != null);
+        if(handler != null)
+            handler.stopAndClear();
         event.getGuild().getAudioManager().closeAudioConnection();
-        event.reply(event.getClient().getSuccess()+" The player has stopped and the queue has been cleared.");
+        event.reply(event.getSuccess()+" The player has stopped and the queue has been cleared.");
     }
 }

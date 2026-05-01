@@ -28,6 +28,8 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import net.dv8tion.jda.api.entities.Message;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -35,6 +37,8 @@ import net.dv8tion.jda.api.entities.Message;
  */
 public class PlaynextCmd extends DJCommand
 {
+    private final static Logger LOG = LoggerFactory.getLogger(PlaynextCmd.class);
+
     private final String loadingEmoji;
     
     public PlaynextCmd(Bot bot)
@@ -60,7 +64,21 @@ public class PlaynextCmd extends DJCommand
         String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">") 
                 ? event.getArgs().substring(1,event.getArgs().length()-1) 
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        LOG.info("Loading prefix playnext request in guild {} ({}); query='{}'",
+                event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,false)));
+    }
+
+    private String describeTrack(AudioTrack track)
+    {
+        if(track == null)
+            return "none";
+
+        String source = track.getSourceManager() == null ? "unknown" : track.getSourceManager().getSourceName();
+        return "'" + track.getInfo().title + "' by '" + track.getInfo().author + "'"
+                + " [id=" + track.getIdentifier()
+                + ", source=" + source
+                + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
     }
     
     private class ResultHandler implements AudioLoadResultHandler
@@ -80,12 +98,16 @@ public class PlaynextCmd extends DJCommand
         {
             if(bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected prefix playnext track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" This track (**"+track.getInfo().title+"**) is longer than the allowed maximum: `"
                         + TimeUtil.formatTime(track.getDuration())+"` > `"+ TimeUtil.formatTime(bot.getConfig().getMaxSeconds()*1000)+"`")).queue();
                 return;
             }
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
+            LOG.info("Prefix playnext track loaded in guild {} ({}); query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), pos, describeTrack(track));
             String addMsg = FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0?"to begin playing":" to the queue at position "+pos));
             m.editMessage(addMsg).queue();
@@ -114,14 +136,24 @@ public class PlaynextCmd extends DJCommand
         public void noMatches()
         {
             if(ytsearch)
+            {
+                LOG.info("Prefix playnext found no matches after YouTube fallback in guild {} ({}); query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" No results found for `"+event.getArgs()+"`.")).queue();
+            }
             else
+            {
+                LOG.info("Prefix playnext found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:"+event.getArgs(), new ResultHandler(m,event,true));
+            }
         }
 
         @Override
         public void loadFailed(FriendlyException throwable)
         {
+            LOG.warn("Prefix playnext load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), throwable.severity, throwable.getMessage(), throwable);
             if(throwable.severity==FriendlyException.Severity.COMMON)
                 m.editMessage(event.getClient().getError()+" Error loading: "+throwable.getMessage()).queue();
             else

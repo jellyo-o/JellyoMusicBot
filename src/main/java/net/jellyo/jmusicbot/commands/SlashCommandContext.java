@@ -138,18 +138,23 @@ public class SlashCommandContext implements CommandContext
     
     private void doReply(String message)
     {
+        doReply(message, false);
+    }
+
+    private void doReply(String message, boolean ephemeral)
+    {
         if(deferred && hook != null)
         {
             hook.editOriginal(message).queue();
         }
         else if(!replied)
         {
-            event.reply(message).queue();
+            event.reply(message).setEphemeral(ephemeral).queue();
             replied = true;
         }
         else
         {
-            event.getHook().sendMessage(message).queue();
+            event.getHook().sendMessage(message).setEphemeral(ephemeral).queue();
         }
     }
     
@@ -175,6 +180,18 @@ public class SlashCommandContext implements CommandContext
     public void replyError(String message)
     {
         doReply(getError() + " " + message);
+    }
+
+    @Override
+    public void replyEphemeral(String message)
+    {
+        doReply(message, true);
+    }
+
+    @Override
+    public void replyErrorEphemeral(String message)
+    {
+        doReply(getError() + " " + message, true);
     }
     
     @Override

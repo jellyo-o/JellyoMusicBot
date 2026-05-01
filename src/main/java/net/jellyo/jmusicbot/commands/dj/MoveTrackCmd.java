@@ -5,13 +5,17 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.CommandParsers;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 
 /**
  * Command that provides users the ability to move a track in the playlist.
  */
-public class MoveTrackCmd extends DJCommand
+public class MoveTrackCmd extends DJCommand implements UnifiedCommand
 {
 
     public MoveTrackCmd(Bot bot)
@@ -27,23 +31,22 @@ public class MoveTrackCmd extends DJCommand
     @Override
     public void doCommand(CommandEvent event)
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         int from;
         int to;
 
-        String[] parts = event.getArgs().split("\\s+", 2);
-        if(parts.length < 2)
-        {
-            event.replyError("Please include two valid indexes.");
-            return;
-        }
-
         try
         {
-            // Validate the args
-            from = Integer.parseInt(parts[0]);
-            to = Integer.parseInt(parts[1]);
+            int[] move = CommandParsers.parseMove(event.getArgs());
+            from = move[0];
+            to = move[1];
         }
-        catch (NumberFormatException e)
+        catch (RuntimeException e)
         {
             event.replyError("Please provide two valid indexes.");
             return;

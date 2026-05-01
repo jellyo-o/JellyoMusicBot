@@ -18,7 +18,11 @@ package com.jagrosh.jmusicbot.commands.dj;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.CommandParsers;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 
@@ -26,7 +30,7 @@ import com.jagrosh.jmusicbot.utils.FormatUtil;
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class VolumeCmd extends DJCommand
+public class VolumeCmd extends DJCommand implements UnifiedCommand
 {
     public VolumeCmd(Bot bot)
     {
@@ -40,8 +44,19 @@ public class VolumeCmd extends DJCommand
     @Override
     public void doCommand(CommandEvent event)
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-        Settings settings = event.getClient().getSettingsFor(event.getGuild());
+        if(handler == null)
+        {
+            event.replyWarning("No audio handler active.");
+            return;
+        }
+        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
         int volume = handler.getPlayer().getVolume();
         if(event.getArgs().isEmpty())
         {
@@ -50,19 +65,18 @@ public class VolumeCmd extends DJCommand
         else
         {
             int nvolume;
-            try{
-                nvolume = Integer.parseInt(event.getArgs());
-            }catch(NumberFormatException e){
-                nvolume = -1;
-            }
-            if(nvolume<0 || nvolume>150)
-                event.reply(event.getClient().getError()+" Volume must be a valid integer between 0 and 150!");
-            else
+            try
             {
-                handler.getPlayer().setVolume(nvolume);
-                settings.setVolume(nvolume);
-                event.reply(FormatUtil.volumeIcon(nvolume)+" Volume changed from `"+volume+"` to `"+nvolume+"`");
+                nvolume = CommandParsers.parseVolume(event.getArgs());
             }
+            catch(RuntimeException e)
+            {
+                event.reply(event.getError()+" Volume must be a valid integer between 0 and 150!");
+                return;
+            }
+            handler.getPlayer().setVolume(nvolume);
+            settings.setVolume(nvolume);
+            event.reply(FormatUtil.volumeIcon(nvolume)+" Volume changed from `"+volume+"` to `"+nvolume+"`");
         }
     }
     

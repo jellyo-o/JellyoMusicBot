@@ -109,6 +109,16 @@ public interface CommandContext
      * Reply with an error message
      */
     void replyError(String message);
+
+    /**
+     * Reply to the command privately when supported.
+     */
+    void replyEphemeral(String message);
+
+    /**
+     * Reply with an error message privately when supported.
+     */
+    void replyErrorEphemeral(String message);
     
     /**
      * Reply with a MessageCreateData

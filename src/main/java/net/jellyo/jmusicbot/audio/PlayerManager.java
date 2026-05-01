@@ -42,6 +42,8 @@ import dev.lavalink.youtube.YoutubeAudioSourceManager;
 import dev.lavalink.youtube.clients.Web;
 import net.dv8tion.jda.api.entities.Guild;
 import com.github.topi314.lavasrc.spotify.SpotifySourceManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -49,6 +51,8 @@ import com.github.topi314.lavasrc.spotify.SpotifySourceManager;
  */
 public class PlayerManager extends DefaultAudioPlayerManager
 {
+    private final static Logger LOG = LoggerFactory.getLogger(PlayerManager.class);
+
     private final Bot bot;
     
     private final BotConfig config;
@@ -61,14 +65,24 @@ public class PlayerManager extends DefaultAudioPlayerManager
 
     public void init()
     {
+        LOG.info("Initializing audio source managers");
         TransformativeAudioSourceManager.createTransforms(bot.getConfig().getTransforms()).forEach(t -> registerSourceManager(t));
 
         if (config.getYTPoToken() != null && config.getYTVisitorData() != null)
+        {
             Web.setPoTokenAndVisitorData(config.getYTPoToken(), config.getYTVisitorData());
+            LOG.info("Configured YouTube PO token and visitor data");
+        }
+        else
+        {
+            LOG.debug("YouTube PO token and visitor data are not configured");
+        }
 
         YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true);
         if (config.getYTRoutingPlanner() != YouTubeUtil.RoutingPlanner.NONE)
         {
+            LOG.info("Configuring YouTube routing planner {} with {} IP blocks",
+                    config.getYTRoutingPlanner(), config.getYTIpBlocks().size());
             AbstractRoutePlanner routePlanner = YouTubeUtil.createRouterPlanner(config.getYTRoutingPlanner(), config.getYTIpBlocks());
             YoutubeIpRotatorSetup rotator = new YoutubeIpRotatorSetup(routePlanner);
 
@@ -88,6 +102,11 @@ public class PlayerManager extends DefaultAudioPlayerManager
                 this                             // your AudioPlayerManager instance
             );
             this.registerSourceManager(spotify);
+            LOG.info("Registered Spotify source manager");
+        }
+        else
+        {
+            LOG.debug("Spotify source manager is disabled by config");
         }
 
         yt.setPlaylistPageCount(bot.getConfig().getMaxYTPlaylistPages());
@@ -105,6 +124,7 @@ public class PlayerManager extends DefaultAudioPlayerManager
         AudioSourceManagers.registerLocalSource(this);
 
         DuncteBotSources.registerAll(this, "en-US");
+        LOG.info("Audio source managers initialized");
     }
     
     public Bot getBot()
@@ -127,9 +147,14 @@ public class PlayerManager extends DefaultAudioPlayerManager
             handler = new AudioHandler(this, guild, player);
             player.addListener(handler);
             guild.getAudioManager().setSendingHandler(handler);
+            LOG.info("Created audio handler for guild {} ({}) with volume {}",
+                    guild.getName(), guild.getId(), player.getVolume());
         }
         else
+        {
             handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
+            LOG.debug("Reusing audio handler for guild {} ({})", guild.getName(), guild.getId());
+        }
         return handler;
     }
 }

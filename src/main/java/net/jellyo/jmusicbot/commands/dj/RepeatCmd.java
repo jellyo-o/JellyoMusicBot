@@ -17,7 +17,11 @@ package com.jagrosh.jmusicbot.commands.dj;
 
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.CommandParsers;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 
@@ -25,7 +29,7 @@ import com.jagrosh.jmusicbot.settings.Settings;
  *
  * @author John Grosh <john.a.grosh@gmail.com>
  */
-public class RepeatCmd extends DJCommand
+public class RepeatCmd extends DJCommand implements UnifiedCommand
 {
     public RepeatCmd(Bot bot)
     {
@@ -45,29 +49,20 @@ public class RepeatCmd extends DJCommand
     @Override
     protected void execute(CommandEvent event) 
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         String args = event.getArgs();
         RepeatMode value;
-        Settings settings = event.getClient().getSettingsFor(event.getGuild());
-        if(args.isEmpty())
+        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
+        try
         {
-            if(settings.getRepeatMode() == RepeatMode.OFF)
-                value = RepeatMode.ALL;
-            else
-                value = RepeatMode.OFF;
+            value = CommandParsers.parseRepeatMode(args, settings.getRepeatMode());
         }
-        else if(args.equalsIgnoreCase("false") || args.equalsIgnoreCase("off"))
-        {
-            value = RepeatMode.OFF;
-        }
-        else if(args.equalsIgnoreCase("true") || args.equalsIgnoreCase("on") || args.equalsIgnoreCase("all"))
-        {
-            value = RepeatMode.ALL;
-        }
-        else if(args.equalsIgnoreCase("one") || args.equalsIgnoreCase("single"))
-        {
-            value = RepeatMode.SINGLE;
-        }
-        else
+        catch(IllegalArgumentException ex)
         {
             event.replyError("Valid options are `off`, `all` or `single` (or leave empty to toggle between `off` and `all`)");
             return;

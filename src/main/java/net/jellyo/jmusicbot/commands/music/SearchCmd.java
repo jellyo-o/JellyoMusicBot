@@ -32,6 +32,8 @@ import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Message;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -39,6 +41,8 @@ import net.dv8tion.jda.api.entities.Message;
  */
 public class SearchCmd extends MusicCommand 
 {
+    private final static Logger LOG = LoggerFactory.getLogger(SearchCmd.class);
+
     protected String searchPrefix = "ytsearch:";
     private final OrderedMenu.Builder builder;
     private final String searchingEmoji;
@@ -69,8 +73,22 @@ public class SearchCmd extends MusicCommand
             event.replyError("Please include a query.");
             return;
         }
+        LOG.info("Loading prefix search in guild {} ({}); prefix='{}'; query='{}'",
+                event.getGuild().getName(), event.getGuild().getId(), searchPrefix, event.getArgs());
         event.reply(searchingEmoji+" Searching... `["+event.getArgs()+"]`", 
                 m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), searchPrefix + event.getArgs(), new ResultHandler(m,event)));
+    }
+
+    private String describeTrack(AudioTrack track)
+    {
+        if(track == null)
+            return "none";
+
+        String source = track.getSourceManager() == null ? "unknown" : track.getSourceManager().getSourceName();
+        return "'" + track.getInfo().title + "' by '" + track.getInfo().author + "'"
+                + " [id=" + track.getIdentifier()
+                + ", source=" + source
+                + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
     }
     
     private class ResultHandler implements AudioLoadResultHandler 
@@ -89,12 +107,16 @@ public class SearchCmd extends MusicCommand
         {
             if(bot.getConfig().isTooLong(track))
             {
+                LOG.warn("Rejected prefix search track in guild {} ({}): track too long; query='{}'; track={}",
+                        event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                 m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" This track (**"+track.getInfo().title+"**) is longer than the allowed maximum: `"
                         + TimeUtil.formatTime(track.getDuration())+"` > `"+bot.getConfig().getMaxTime()+"`")).queue();
                 return;
             }
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
+            LOG.info("Prefix search track loaded in guild {} ({}); query='{}'; position={}; track={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), pos, describeTrack(track));
             m.editMessage(FormatUtil.filter(event.getClient().getSuccess()+" Added **"+track.getInfo().title
                     +"** (`"+ TimeUtil.formatTime(track.getDuration())+"`) "+(pos==0 ? "to begin playing"
                         : " to the queue at position "+pos))).queue();
@@ -103,6 +125,8 @@ public class SearchCmd extends MusicCommand
         @Override
         public void playlistLoaded(AudioPlaylist playlist)
         {
+            LOG.info("Prefix search returned {} results in guild {} ({}); query='{}'",
+                    playlist.getTracks().size(), event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
             builder.setColor(event.getSelfMember().getColor())
                     .setText(FormatUtil.filter(event.getClient().getSuccess()+" Search results for `"+event.getArgs()+"`:"))
                     .setChoices(new String[0])
@@ -111,12 +135,16 @@ public class SearchCmd extends MusicCommand
                         AudioTrack track = playlist.getTracks().get(i-1);
                         if(bot.getConfig().isTooLong(track))
                         {
+                            LOG.warn("Rejected selected prefix search result in guild {} ({}): track too long; query='{}'; track={}",
+                                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), describeTrack(track));
                             event.replyWarning("This track (**"+track.getInfo().title+"**) is longer than the allowed maximum: `"
                                     + TimeUtil.formatTime(track.getDuration())+"` > `"+bot.getConfig().getMaxTime()+"`");
                             return;
                         }
                         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
                         int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)))+1;
+                        LOG.info("Selected prefix search result added in guild {} ({}); query='{}'; position={}; track={}",
+                                event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), pos, describeTrack(track));
                         event.replySuccess("Added **" + FormatUtil.filter(track.getInfo().title)
                                 + "** (`" + TimeUtil.formatTime(track.getDuration()) + "`) " + (pos==0 ? "to begin playing" 
                                     : " to the queue at position "+pos));
@@ -135,12 +163,16 @@ public class SearchCmd extends MusicCommand
         @Override
         public void noMatches() 
         {
+            LOG.info("No prefix search results in guild {} ({}); query='{}'",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
             m.editMessage(FormatUtil.filter(event.getClient().getWarning()+" No results found for `"+event.getArgs()+"`.")).queue();
         }
 
         @Override
         public void loadFailed(FriendlyException throwable) 
         {
+            LOG.warn("Prefix search load failed in guild {} ({}); query='{}'; severity={}; message={}",
+                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), throwable.severity, throwable.getMessage(), throwable);
             if(throwable.severity==Severity.COMMON)
                 m.editMessage(event.getClient().getError()+" Error loading: "+throwable.getMessage()).queue();
             else

@@ -51,9 +51,9 @@ body:
       options:
         - label: I have looked for information about this [within the documentation](https://jmusicbot.com/)
           required: true
-        - label: I have searched for similar issues [on the issues page](https://github.com/jagrosh/MusicBot/issues?q=is%3Aissue)
+        - label: I have searched for similar issues [on the issues page](https://github.com/jellyo-o/JellyoMusicBot/issues?q=is%3Aissue)
           required: true
-        - label: I am using an official release from [the releases page](https://github.com/jagrosh/MusicBot/releases)
+        - label: I am using an official release from [the releases page](https://github.com/jellyo-o/JellyoMusicBot/releases)
           required: true
   - type: input
     id: version

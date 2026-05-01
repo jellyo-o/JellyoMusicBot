@@ -19,8 +19,11 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
-import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.CommandChecks;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import org.slf4j.Logger;
@@ -30,7 +33,7 @@ import org.slf4j.LoggerFactory;
 /**
  * @author Whew., Inc.
  */
-public class SeekCmd extends MusicCommand
+public class SeekCmd extends MusicCommand implements UnifiedCommand
 {
     private final static Logger LOG = LoggerFactory.getLogger("Seeking");
     
@@ -48,6 +51,12 @@ public class SeekCmd extends MusicCommand
     @Override
     public void doCommand(CommandEvent event)
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
         AudioTrack playingTrack = handler.getPlayer().getPlayingTrack();
         if (!playingTrack.isSeekable())
@@ -57,7 +66,8 @@ public class SeekCmd extends MusicCommand
         }
 
 
-        if (!DJCommand.checkDJPermission(event) && playingTrack.getUserData(RequestMetadata.class).getOwner() != event.getAuthor().getIdLong())
+        RequestMetadata requestMetadata = handler.getRequestMetadata();
+        if (!CommandChecks.checkDJPermission(event, bot) && requestMetadata.getOwner() != event.getAuthor().getIdLong())
         {
             event.replyError("You cannot seek **" + playingTrack.getInfo().title + "** because you didn't add it!");
             return;
@@ -75,7 +85,7 @@ public class SeekCmd extends MusicCommand
         long trackDuration = playingTrack.getDuration();
 
         long seekMilliseconds = seekTime.relative ? currentPosition + seekTime.milliseconds : seekTime.milliseconds;
-        if (seekMilliseconds > trackDuration)
+        if (seekMilliseconds < 0 || seekMilliseconds > trackDuration)
         {
             event.replyError("Cannot seek to `" + TimeUtil.formatTime(seekMilliseconds) + "` because the current track is `" + TimeUtil.formatTime(trackDuration) + "` long!");
             return;

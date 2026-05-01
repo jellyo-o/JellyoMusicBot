@@ -15,7 +15,9 @@
  */
 package com.jagrosh.jmusicbot;
 
+import com.jagrosh.jmusicbot.utils.DependencyUpdateChecker;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
@@ -37,6 +39,8 @@ import org.slf4j.LoggerFactory;
  */
 public class Listener extends ListenerAdapter
 {
+    private final static Logger LOG = LoggerFactory.getLogger(Listener.class);
+
     private final Bot bot;
     
     public Listener(Bot bot)
@@ -47,11 +51,12 @@ public class Listener extends ListenerAdapter
     @Override
     public void onReady(ReadyEvent event)
     {
+        LOG.info("JDA ready as {} ({}); guilds={}",
+                event.getJDA().getSelfUser().getName(), event.getJDA().getSelfUser().getId(), event.getJDA().getGuilds().size());
         if(event.getJDA().getGuildCache().isEmpty())
         {
-            Logger log = LoggerFactory.getLogger("MusicBot");
-            log.warn("This bot is not on any guilds! Use the following link to add the bot to your guilds!");
-            log.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
+            LOG.warn("This bot is not on any guilds! Use the following link to add the bot to your guilds!");
+            LOG.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
         }
         credit(event.getJDA());
         event.getJDA().getGuilds().forEach((guild) -> 
@@ -62,36 +67,62 @@ public class Listener extends ListenerAdapter
                 VoiceChannel vc = bot.getSettingsManager().getSettings(guild).getVoiceChannel(guild);
                 if(defpl!=null && vc!=null && bot.getPlayerManager().setUpHandler(guild).playFromDefault())
                 {
+                    LOG.info("Auto-joining configured voice channel {} ({}) in guild {} ({}) for default playlist '{}'",
+                            vc.getName(), vc.getId(), guild.getName(), guild.getId(), defpl);
                     guild.getAudioManager().openAudioConnection(vc);
                 }
+                else
+                {
+                    LOG.debug("No startup voice auto-join for guild {} ({}); defaultPlaylist={}; voiceChannel={}",
+                            guild.getName(), guild.getId(), defpl, vc == null ? "none" : vc.getId());
+                }
             }
-            catch(Exception ignore) {}
+            catch(Exception ex)
+            {
+                LOG.warn("Failed startup default-playlist voice join for guild {} ({})",
+                        guild.getName(), guild.getId(), ex);
+            }
         });
         if(bot.getConfig().useUpdateAlerts())
         {
+            LOG.debug("Update alerts enabled; scheduling update check");
             bot.getThreadpool().scheduleWithFixedDelay(() -> 
             {
                 try
                 {
-                    User owner = bot.getJDA().retrieveUserById(bot.getConfig().getOwnerId()).complete();
                     String currentVersion = OtherUtil.getCurrentVersion();
-                    String latestVersionJagrosh = OtherUtil.getLatestVersion("jagrosh");
-                    String latestVersionSeVile = OtherUtil.getLatestVersion("SeVile");
-                    
-                    if (latestVersionJagrosh != null && latestVersionSeVile != null) 
+                    String latestVersion = OtherUtil.getLatestVersion();
+
+                    if (latestVersion != null && OtherUtil.compareVersions(latestVersion, currentVersion) > 0)
                     {
-                        boolean isJagroshNewerThan043 = OtherUtil.compareVersions(latestVersionJagrosh, "0.4.3") > 0;
-                        boolean isCurrentVersionSeVile = currentVersion.equalsIgnoreCase(latestVersionSeVile);
-                        
-                        if (isJagroshNewerThan043 && !isCurrentVersionSeVile) 
+                        String msg = String.format(OtherUtil.NEW_VERSION_AVAILABLE, currentVersion, latestVersion);
+                        LOG.warn("{}", msg);
+                        try
                         {
-                            String msg = String.format(OtherUtil.NEW_VERSION_AVAILABLE, currentVersion, latestVersionJagrosh);
+                            User owner = bot.getJDA().retrieveUserById(bot.getConfig().getOwnerId()).complete();
                             owner.openPrivateChannel().queue(pc -> pc.sendMessage(msg).queue());
                         }
+                        catch(Exception ex)
+                        {
+                            LOG.warn("Failed to send update alert DM to owner", ex);
+                        }
+                    }
+
+                    List<DependencyUpdateChecker.DependencyUpdate> dependencyUpdates = DependencyUpdateChecker.checkForUpdates();
+                    if(!dependencyUpdates.isEmpty())
+                    {
+                        LOG.warn("{}", DependencyUpdateChecker.formatUpdates(dependencyUpdates));
                     }
                 }
-                catch(Exception ignored) {}
+                catch(Exception ex)
+                {
+                    LOG.warn("Failed to check for updates", ex);
+                }
             }, 0, 24, TimeUnit.HOURS);
+        }
+        else
+        {
+            LOG.debug("Update alerts disabled");
         }
     }
     
@@ -110,12 +141,14 @@ public class Listener extends ListenerAdapter
     @Override
     public void onShutdown(ShutdownEvent event)
     {
+        LOG.warn("JDA shutdown event received with close code {}", event.getCloseCode());
         bot.shutdown();
     }
 
     @Override
     public void onGuildJoin(GuildJoinEvent event) 
     {
+        LOG.info("Joined guild {} ({})", event.getGuild().getName(), event.getGuild().getId());
         credit(event.getJDA());
     }
     

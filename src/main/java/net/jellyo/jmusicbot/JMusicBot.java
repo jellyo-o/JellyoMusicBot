@@ -57,6 +57,8 @@ public class JMusicBot
      */
     public static void main(String[] args)
     {
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
+                LOG.error("FATAL uncaught exception in thread {}", thread.getName(), throwable));
         if(args.length > 0)
             switch(args[0].toLowerCase())
             {
@@ -82,11 +84,12 @@ public class JMusicBot
         config.load();
         if(!config.isValid())
             return;
-        LOG.info("Loaded config from " + config.getConfigLocation());
 
         // set log level from config
-        ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME)).setLevel(
-                Level.toLevel(config.getLogLevel(), Level.INFO));
+        Level configuredLevel = parseLogLevel(config.getLogLevel());
+        ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME)).setLevel(configuredLevel);
+        LOG.info("Loaded config from {}", config.getConfigLocation());
+        LOG.info("Root log level set to {}", configuredLevel);
         
         // set up the listener
         EventWaiter waiter = new EventWaiter();
@@ -102,8 +105,6 @@ public class JMusicBot
                 GUI gui = new GUI(bot);
                 bot.setGUI(gui);
                 gui.init();
-
-                LOG.info("Loaded config from " + config.getConfigLocation());
             }
             catch(Exception e)
             {
@@ -116,6 +117,7 @@ public class JMusicBot
         // attempt to log in and start
         try
         {
+            LOG.info("Starting JDA with {} gateway intents", INTENTS.length);
             moe.kyokobot.libdave.DaveFactory daveFactory = new moe.kyokobot.libdave.NativeDaveFactory();
             net.dv8tion.jda.api.audio.dave.DaveSessionFactory daveSessionFactory = new moe.kyokobot.libdave.jda.LDJDADaveSessionFactory(daveFactory);
 
@@ -130,6 +132,7 @@ public class JMusicBot
                     .setAudioModuleConfig(new net.dv8tion.jda.api.audio.AudioModuleConfig().withDaveSessionFactory(daveSessionFactory))
                     .build();
             bot.setJDA(jda);
+            LOG.info("JDA build completed; current status is {}", jda.getStatus());
 
             // Slash commands are registered in SlashCommandListener.onReady()
 
@@ -148,7 +151,7 @@ public class JMusicBot
             // message content intent
             if(!"@mention".equals(config.getPrefix()))
             {
-                LOG.info("JMusicBot", "You currently have a custom prefix set. "
+                LOG.info("You currently have a custom prefix set. "
                         + "If your prefix is not working, make sure that the 'MESSAGE CONTENT INTENT' is Enabled "
                         + "on https://discord.com/developers/applications/" + jda.getSelfUser().getId() + "/bot");
             }
@@ -172,6 +175,26 @@ public class JMusicBot
                     + "attempting to connect, please make sure you're connected to the internet");
             System.exit(1);
         }
+        catch(Exception ex)
+        {
+            LOG.error("FATAL startup failure while connecting to Discord", ex);
+            prompt.alert(Prompt.Level.ERROR, "JMusicBot", ex + "\nFatal startup failure while connecting to Discord");
+            System.exit(1);
+        }
+    }
+
+    private static Level parseLogLevel(String configuredLevel)
+    {
+        if(configuredLevel != null && configuredLevel.equalsIgnoreCase("fatal"))
+            return Level.ERROR;
+
+        Level level = Level.toLevel(configuredLevel, null);
+        if(level == null)
+        {
+            LOG.warn("Unknown loglevel '{}'; falling back to INFO. Valid values: off, fatal, error, warn, info, debug, trace, all", configuredLevel);
+            return Level.INFO;
+        }
+        return level;
     }
     
     private static CommandClient createCommandClient(BotConfig config, SettingsManager settings, Bot bot)

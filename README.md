@@ -51,7 +51,19 @@ The fork bundles an internal lyrics module (no separate setup). Use the lyrics c
 ## 🔄 Updating
 
 * Replace the existing JAR with a newer release and restart.
-* The `scripts/run_jmusicbot.sh` helper can auto‑download the latest upstream release; adapt it if you want it to track this fork instead.
+* The `scripts/run_jmusicbot.sh` helper can auto‑download the latest release from this fork.
+
+## Versioning
+
+This fork uses its own CalVer release line instead of continuing upstream-style `0.6.0.x` versions:
+
+```text
+YYYY.M.patch[-qualifier]
+```
+
+Example stable releases: `2026.5.0`, `2026.5.1`, `2026.6.0`. Example prereleases: `2026.5.0-a1`, `2026.5.0-b1`, `2026.5.0-rc1`.
+
+See [`VERSIONING.md`](VERSIONING.md) for the release rules.
 
 ## ❓ Support & Feedback
 

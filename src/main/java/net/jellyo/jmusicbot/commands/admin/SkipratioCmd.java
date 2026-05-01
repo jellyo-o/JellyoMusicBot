@@ -18,16 +18,23 @@ package com.jagrosh.jmusicbot.commands.admin;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.commands.AdminCommand;
+import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.CommandParsers;
+import com.jagrosh.jmusicbot.commands.MessageCommandContext;
+import com.jagrosh.jmusicbot.commands.UnifiedCommand;
 import com.jagrosh.jmusicbot.settings.Settings;
 
 /**
  *
  * @author John Grosh (john.a.grosh@gmail.com)
  */
-public class SkipratioCmd extends AdminCommand
+public class SkipratioCmd extends AdminCommand implements UnifiedCommand
 {
+    private final Bot bot;
+
     public SkipratioCmd(Bot bot)
     {
+        this.bot = bot;
         this.name = "setskip";
         this.help = "sets a server-specific skip percentage";
         this.arguments = "<0 - 100>";
@@ -37,19 +44,20 @@ public class SkipratioCmd extends AdminCommand
     @Override
     protected void execute(CommandEvent event) 
     {
+        doCommand(new MessageCommandContext(event));
+    }
+
+    @Override
+    public void doCommand(CommandContext event)
+    {
         try
         {
-            int val = Integer.parseInt(event.getArgs().endsWith("%") ? event.getArgs().substring(0,event.getArgs().length()-1) : event.getArgs());
-            if( val < 0 || val > 100)
-            {
-                event.replyError("The provided value must be between 0 and 100!");
-                return;
-            }
-            Settings s = event.getClient().getSettingsFor(event.getGuild());
+            int val = CommandParsers.parseSkipPercentage(event.getArgs());
+            Settings s = bot.getSettingsManager().getSettings(event.getGuild());
             s.setSkipRatio(val / 100.0);
             event.replySuccess("Skip percentage has been set to `" + val + "%` of listeners on *" + event.getGuild().getName() + "*");
         }
-        catch(NumberFormatException ex)
+        catch(RuntimeException ex)
         {
             event.replyError("Please include an integer between 0 and 100 (default is 55). This number is the percentage of listening users that must vote to skip a song.");
         }

@@ -40,10 +40,12 @@ import org.json.JSONTokener;
  */
 public class OtherUtil
 {
+    private final static String RELEASE_REPO_OWNER = "jellyo-o";
+    private final static String RELEASE_REPO_NAME = "JellyoMusicBot";
     public final static String NEW_VERSION_AVAILABLE = "There is a new version of JMusicBot available!\n"
                     + "Current version: %s\n"
                     + "New Version: %s\n\n"
-                    + "Please visit https://github.com/jagrosh/MusicBot/releases/latest to get the latest release.";
+                    + "Please visit https://github.com/" + RELEASE_REPO_OWNER + "/" + RELEASE_REPO_NAME + "/releases/latest to get the latest release.";
     private final static String WINDOWS_INVALID_PATH = "c:\\windows\\system32\\";
     
     /**
@@ -164,21 +166,12 @@ public class OtherUtil
     public static void checkVersion(Prompt prompt)
     {
         String version = getCurrentVersion();
-        String latestJagrosh = getLatestVersion("jagrosh");
-        String latestSeVile = getLatestVersion("SeVile");
-        
-        boolean isSeVileVersion = version.toLowerCase().contains("sevile");
-        
-        if (isSeVileVersion) {
-            if (latestJagrosh != null && compareVersions(latestJagrosh, "0.4.4") > 0) {
-                prompt.alert(Prompt.Level.WARNING, "JMusicBot Version", 
-                    String.format(NEW_VERSION_AVAILABLE, version, latestJagrosh));
-            }
-        } else {
-            if (latestJagrosh != null && !latestJagrosh.equals(version)) {
-                prompt.alert(Prompt.Level.WARNING, "JMusicBot Version", 
-                    String.format(NEW_VERSION_AVAILABLE, version, latestJagrosh));
-            }
+        String latest = getLatestVersion();
+
+        if(latest != null && compareVersions(latest, version) > 0)
+        {
+            prompt.alert(Prompt.Level.WARNING, "JMusicBot Version",
+                    String.format(NEW_VERSION_AVAILABLE, version, latest));
         }
     }
     
@@ -190,11 +183,21 @@ public class OtherUtil
             return "UNKNOWN";
     }
     
-    public static String getLatestVersion(String repoOwner) {
+    public static String getLatestVersion()
+    {
+        return getLatestVersion(RELEASE_REPO_OWNER, RELEASE_REPO_NAME);
+    }
+
+    public static String getLatestVersion(String repoOwner)
+    {
+        return getLatestVersion(repoOwner, "MusicBot");
+    }
+
+    public static String getLatestVersion(String repoOwner, String repoName) {
         try {
             Response response = new OkHttpClient.Builder().build()
                     .newCall(new Request.Builder().get()
-                    .url("https://api.github.com/repos/" + repoOwner + "/MusicBot/releases/latest").build())
+                    .url("https://api.github.com/repos/" + repoOwner + "/" + repoName + "/releases/latest").build())
                     .execute();
             ResponseBody body = response.body();
             if (body != null) {
@@ -211,21 +214,105 @@ public class OtherUtil
         return null;
     }
 
-    public static int compareVersions(String v1, String v2) 
+    public static int compareVersions(String v1, String v2)
     {
-        String[] parts1 = v1.replace("v", "").split("\\.");
-        String[] parts2 = v2.replace("v", "").split("\\.");
-    
-        int length = Math.max(parts1.length, parts2.length);
-        for (int i = 0; i < length; i++) 
+        VersionParts first = VersionParts.parse(v1);
+        VersionParts second = VersionParts.parse(v2);
+
+        int length = Math.max(first.numbers.length, second.numbers.length);
+        for (int i = 0; i < length; i++)
         {
-            int num1 = i < parts1.length ? Integer.parseInt(parts1[i]) : 0;
-            int num2 = i < parts2.length ? Integer.parseInt(parts2[i]) : 0;
-    
+            int num1 = i < first.numbers.length ? first.numbers[i] : 0;
+            int num2 = i < second.numbers.length ? second.numbers[i] : 0;
+
             if (num1 > num2) return 1;
             if (num1 < num2) return -1;
         }
+        if(first.qualifier.isEmpty() && !second.qualifier.isEmpty()) return 1;
+        if(!first.qualifier.isEmpty() && second.qualifier.isEmpty()) return -1;
+        QualifierParts firstQualifier = QualifierParts.parse(first.qualifier);
+        QualifierParts secondQualifier = QualifierParts.parse(second.qualifier);
+        int qualifier = firstQualifier.rank - secondQualifier.rank;
+        if(qualifier != 0) return qualifier;
+        if(firstQualifier.number != secondQualifier.number) return Integer.compare(firstQualifier.number, secondQualifier.number);
+        return first.qualifier.compareTo(second.qualifier);
+    }
+
+    private static int qualifierRank(String qualifier)
+    {
+        if(qualifier == null || qualifier.isEmpty()) return 4;
+        String q = qualifier.toLowerCase();
+        if(q.startsWith("snapshot")) return 0;
+        if(q.startsWith("a") || q.startsWith("alpha")) return 1;
+        if(q.startsWith("b") || q.startsWith("beta")) return 2;
+        if(q.startsWith("rc")) return 3;
         return 0;
+    }
+
+    private static class QualifierParts
+    {
+        private final int rank;
+        private final int number;
+
+        private QualifierParts(int rank, int number)
+        {
+            this.rank = rank;
+            this.number = number;
+        }
+
+        private static QualifierParts parse(String qualifier)
+        {
+            if(qualifier == null)
+                return new QualifierParts(qualifierRank(""), 0);
+            int number = 0;
+            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(\\d+)").matcher(qualifier);
+            if(matcher.find())
+            {
+                try
+                {
+                    number = Integer.parseInt(matcher.group(1));
+                }
+                catch(NumberFormatException ignored)
+                {
+                    number = 0;
+                }
+            }
+            return new QualifierParts(qualifierRank(qualifier), number);
+        }
+    }
+
+    private static class VersionParts
+    {
+        private final int[] numbers;
+        private final String qualifier;
+
+        private VersionParts(int[] numbers, String qualifier)
+        {
+            this.numbers = numbers;
+            this.qualifier = qualifier;
+        }
+
+        private static VersionParts parse(String version)
+        {
+            String clean = version == null ? "" : version.trim();
+            if(clean.startsWith("v") || clean.startsWith("V"))
+                clean = clean.substring(1);
+            String[] qualified = clean.split("-", 2);
+            String[] numeric = qualified[0].split("\\.");
+            int[] numbers = new int[numeric.length];
+            for(int i = 0; i < numeric.length; i++)
+            {
+                try
+                {
+                    numbers[i] = Integer.parseInt(numeric[i].replaceAll("[^0-9].*$", ""));
+                }
+                catch(NumberFormatException ex)
+                {
+                    numbers[i] = 0;
+                }
+            }
+            return new VersionParts(numbers, qualified.length > 1 ? qualified[1] : "");
+        }
     }
 
     /**
