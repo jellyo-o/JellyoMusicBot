@@ -290,6 +290,8 @@ public class SlashCommandListener extends ListenerAdapter
                                 .addChoice("queue", "queue")
                                 .addChoice("query", "query"),
                         songQueryOption().setRequired(false)));
+        commands.add(slashCommand("unlike", "Remove music from your Liked Songs")
+                .addOptions(unlikeTargetOption()));
         commands.add(slashCommand("liked", "View or play your Liked Songs")
                 .addOptions(new OptionData(OptionType.STRING, "action", "Action", true)
                                 .addChoice("view", "view")
@@ -390,6 +392,12 @@ public class SlashCommandListener extends ListenerAdapter
                 .setAutoComplete(true);
     }
 
+    private static OptionData unlikeTargetOption()
+    {
+        return new OptionData(OptionType.STRING, "target", "current, index from /liked, or song query", true)
+                .setAutoComplete(true);
+    }
+
     private static OptionData playlistNameOption()
     {
         return new OptionData(OptionType.STRING, "name", "Playlist name", true)
@@ -448,6 +456,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "playplaylist": handlePlayPlaylist(event); break;
             case "playlist": handlePlaylist(event); break;
             case "like": handleLike(event); break;
+            case "unlike": handleUnlike(event); break;
             case "liked": handleLiked(event); break;
             case "nowplaying": handleNowPlaying(event); break;
             case "queue": handleQueue(event); break;
@@ -546,6 +555,11 @@ public class SlashCommandListener extends ListenerAdapter
                 event.replyChoices(getSongQueryChoices(event)).queue();
                 return;
             }
+            if ("target".equals(event.getFocusedOption().getName()) && "unlike".equals(event.getName()))
+            {
+                event.replyChoices(getUnlikeTargetChoices(event)).queue();
+                return;
+            }
             event.replyChoices(Collections.emptyList()).queue();
         }
         catch (Exception ex)
@@ -612,6 +626,32 @@ public class SlashCommandListener extends ListenerAdapter
             if (query.isEmpty() || name.toLowerCase(Locale.ROOT).contains(query))
                 choices.add(new Command.Choice(name, name));
         }
+        return choices;
+    }
+
+    private List<Command.Choice> getUnlikeTargetChoices(CommandAutoCompleteInteractionEvent event)
+    {
+        String query = event.getFocusedOption().getValue().trim().toLowerCase(Locale.ROOT);
+        List<Command.Choice> choices = new ArrayList<>();
+        if("current".contains(query))
+            addChoice(choices, "Current song", "current");
+
+        bot.getUserPlaylistService().resolveVisible(event.getUser().getIdLong(), UserPlaylistService.LIKED_SONGS)
+                .ifPresent(playlist -> {
+                    List<PlaylistTrack> items = bot.getUserPlaylistService().listItems(playlist.getId());
+                    for(int i = 0; i < items.size() && choices.size() < MAX_AUTOCOMPLETE_CHOICES; i++)
+                    {
+                        PlaylistTrack item = items.get(i);
+                        String index = String.valueOf(i + 1);
+                        String author = item.getAuthor() == null || item.getAuthor().isBlank() ? "" : " - " + item.getAuthor();
+                        String display = index + ". " + item.getDisplayTitle() + author;
+                        if(query.isEmpty() || index.startsWith(query) || display.toLowerCase(Locale.ROOT).contains(query))
+                            addChoice(choices, display, index);
+                    }
+                });
+
+        if(!query.isEmpty())
+            getSongQueryChoices(event).forEach(choice -> addChoice(choices, choice.getName(), choice.getAsString()));
         return choices;
     }
 
@@ -859,6 +899,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"", "playlist create name:<name>", "Create a playlist"},
                 {"", "playlist view name:<name>", "View playlist songs by index"},
                 {"", "like source:<current|queue|query>", "Add music to Liked Songs"},
+                {"", "unlike target:<current|index|query>", "Remove music from Liked Songs"},
                 {"", "liked action:<view|play>", "View or play Liked Songs"},
                 {"playtop <title|URL>", "playtop query:<title|URL>", "Add a song to the top of the queue"},
                 {"playlists", "playlists", "List your playlists"},
@@ -1055,6 +1096,84 @@ public class SlashCommandListener extends ListenerAdapter
         {
             event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
         }
+    }
+
+    private void handleUnlike(SlashCommandInteractionEvent event)
+    {
+        String target = event.getOption("target").getAsString().trim();
+        if(target.isEmpty())
+        {
+            event.reply(bot.getConfig().getError() + " Please provide `current`, an index from `/liked`, or a song query.").setEphemeral(true).queue();
+            return;
+        }
+
+        try
+        {
+            bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+            if("current".equalsIgnoreCase(target))
+            {
+                handleUnlikeCurrent(event);
+                return;
+            }
+
+            Optional<Integer> index = parsePlaylistIndex(target);
+            if(index.isPresent())
+            {
+                bot.getUserPlaylistService().removeItem(event.getUser().getIdLong(), UserPlaylistService.LIKED_SONGS, index.get());
+                event.reply(bot.getConfig().getSuccess() + " Removed liked song `" + index.get() + "`.").setEphemeral(true).queue();
+                return;
+            }
+
+            Optional<PlaylistTrack> removed = bot.getUserPlaylistService().removeFirstMatchingTrack(
+                    event.getUser().getIdLong(), UserPlaylistService.LIKED_SONGS, target);
+            if(removed.isPresent())
+                event.reply(bot.getConfig().getSuccess() + " Removed " + formatTrackName(removed.get()) + " from Liked Songs.").setEphemeral(true).queue();
+            else
+                event.reply(bot.getConfig().getWarning() + " No liked song matched `" + target + "`.").setEphemeral(true).queue();
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private void handleUnlikeCurrent(SlashCommandInteractionEvent event)
+    {
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        if(handler == null || handler.getPlayer().getPlayingTrack() == null)
+        {
+            event.reply(bot.getConfig().getWarning() + " Nothing is currently playing.").setEphemeral(true).queue();
+            return;
+        }
+
+        AudioTrack current = handler.getPlayer().getPlayingTrack();
+        PlaylistTrack track = PlaylistTrack.fromAudioTrack(current, current.getInfo().uri);
+        Optional<PlaylistTrack> removed = bot.getUserPlaylistService().removeTrack(event.getUser().getIdLong(), UserPlaylistService.LIKED_SONGS, track);
+        if(removed.isPresent())
+            event.reply(bot.getConfig().getSuccess() + " Removed " + formatTrackName(removed.get()) + " from Liked Songs.").setEphemeral(true).queue();
+        else
+            event.reply(bot.getConfig().getWarning() + " The current song is not in Liked Songs.").setEphemeral(true).queue();
+    }
+
+    private Optional<Integer> parsePlaylistIndex(String value)
+    {
+        try
+        {
+            long parsed = Long.parseLong(value);
+            if(parsed > 0 && parsed <= Integer.MAX_VALUE)
+                return Optional.of((int)parsed);
+        }
+        catch(NumberFormatException ignored)
+        {
+            // Not an index; treat it as a query.
+        }
+        return Optional.empty();
+    }
+
+    private String formatTrackName(PlaylistTrack track)
+    {
+        String author = track.getAuthor() == null || track.getAuthor().isBlank() ? "" : " - " + track.getAuthor();
+        return "**" + track.getDisplayTitle() + "**" + author;
     }
 
     private void handleLiked(SlashCommandInteractionEvent event)

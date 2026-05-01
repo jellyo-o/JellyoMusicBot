@@ -49,11 +49,12 @@ public class SlashCommandListenerTest
     }
 
     @Test
-    public void songQueryCommandsUseAutocomplete()
+    public void commandOptionsUseAutocomplete()
     {
         assertQueryAutocompleteEnabled("play");
         assertQueryAutocompleteEnabled("playtop");
         assertQueryAutocompleteEnabled("playnext");
+        assertOptionAutocompleteEnabled("unlike", "target");
     }
 
     @Test
@@ -65,7 +66,7 @@ public class SlashCommandListenerTest
 
         String[] expected = {
                 "about", "help", "ping", "settings",
-                "play", "playtop", "playplaylist", "playlist", "like", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
+                "play", "playtop", "playplaylist", "playlist", "like", "unlike", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
                 "forceskip", "pause", "resume", "stop", "volume", "filter", "repeat", "loop", "autoplay", "radio", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
@@ -181,18 +182,23 @@ public class SlashCommandListenerTest
 
     private void assertQueryAutocompleteEnabled(String commandName)
     {
+        assertOptionAutocompleteEnabled(commandName, "query");
+    }
+
+    private void assertOptionAutocompleteEnabled(String commandName, String optionName)
+    {
         SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
                 .filter(cmd -> commandName.equals(cmd.getName()))
                 .findFirst()
                 .orElse(null);
 
         assertNotNull(command);
-        OptionData query = command.getOptions().stream()
-                .filter(option -> "query".equals(option.getName()))
+        OptionData option = command.getOptions().stream()
+                .filter(candidate -> optionName.equals(candidate.getName()))
                 .findFirst()
                 .orElse(null);
 
-        assertNotNull(query);
-        assertTrue(query.isAutoComplete());
+        assertNotNull(option);
+        assertTrue(option.isAutoComplete());
     }
 }
