@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot.autoplay;
 
 import com.jagrosh.jmusicbot.utils.OtherUtil;
+import com.jagrosh.jmusicbot.utils.TrackIdentity;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -99,7 +100,7 @@ public class PlayHistoryStore
         int totalWeight = 0;
         for(MutableTrackReference reference : guildHistory.values())
         {
-            if(excluded.contains(reference.identity()) || (reference.uri != null && excluded.contains(reference.uri)))
+            if(hasExcludedKey(excluded, reference.keys()))
                 continue;
             int weight = Math.max(1, reference.plays);
             totalWeight += weight;
@@ -200,6 +201,14 @@ public class PlayHistoryStore
         return value == null || value.isEmpty() ? null : value;
     }
 
+    private static boolean hasExcludedKey(Set<String> excluded, Set<String> candidateKeys)
+    {
+        for(String key : candidateKeys)
+            if(excluded.contains(key))
+                return true;
+        return false;
+    }
+
     private static class MutableTrackReference
     {
         private final String source;
@@ -219,9 +228,9 @@ public class PlayHistoryStore
             this.author = author;
         }
 
-        private String identity()
+        private Set<String> keys()
         {
-            return identifier == null ? uri : identifier;
+            return TrackIdentity.keys(identifier, uri, title, author);
         }
 
         private TrackReference toImmutable()

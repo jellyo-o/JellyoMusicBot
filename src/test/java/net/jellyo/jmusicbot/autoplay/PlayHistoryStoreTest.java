@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot.autoplay;
 
+import com.jagrosh.jmusicbot.utils.TrackIdentity;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.source.AudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.track.AudioItem;
@@ -60,6 +61,20 @@ public class PlayHistoryStoreTest
         store.record(123L, new TestTrack("id-1", "Title 1", "Artist 1"));
 
         Optional<TrackReference> selected = store.chooseWeighted(123L, Collections.singleton("id-1"), new Random(1));
+
+        assertFalse(selected.isPresent());
+    }
+
+    @Test
+    public void excludesRecentSongVersions() throws Exception
+    {
+        PlayHistoryStore store = newStore();
+        store.record(123L, new TestTrack("lyric-id", "Artist - Song (Official Lyrics Video)", "Artist - Topic"));
+
+        Optional<TrackReference> selected = store.chooseWeighted(123L,
+                TrackIdentity.keys("video-id", "https://example.test/watch/video-id",
+                        "Artist - Song (Official Music Video)", "ArtistVEVO"),
+                new Random(1));
 
         assertFalse(selected.isPresent());
     }

@@ -22,6 +22,7 @@ import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
+import com.jagrosh.jmusicbot.utils.TrackIdentity;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.player.event.AudioEventAdapter;
@@ -606,14 +607,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private static Set<String> trackKeys(AudioTrack track)
     {
-        Set<String> keys = new HashSet<>();
-        if(track == null)
-            return keys;
-        if(track.getIdentifier() != null && !track.getIdentifier().isEmpty())
-            keys.add(track.getIdentifier());
-        if(track.getInfo() != null && track.getInfo().uri != null && !track.getInfo().uri.isEmpty())
-            keys.add(track.getInfo().uri);
-        return keys;
+        return TrackIdentity.keys(track);
     }
 
     private void recordTrackStart(AudioPlayer player, AudioTrack track)

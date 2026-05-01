@@ -335,8 +335,37 @@ public class UserPlaylistService
         List<PlaylistTrack> items = listItems(playlist.getId());
         if(index < 1 || index > items.size())
             throw new PlaylistException("Index must be between 1 and " + items.size() + ".");
-        deleteItem(items.get(index - 1).getId());
-        reindex(playlist.getId());
+        deleteAndReindex(playlist.getId(), items.get(index - 1));
+    }
+
+    public synchronized Optional<PlaylistTrack> removeTrack(long userId, String name, PlaylistTrack track)
+    {
+        if(track == null)
+            throw new PlaylistException("Track is required.");
+        PlaylistSummary playlist = requireEditable(userId, name);
+        String duplicateKey = track.getDuplicateKey();
+        for(PlaylistTrack item : listItems(playlist.getId()))
+        {
+            if(item.getDuplicateKey().equals(duplicateKey))
+                return Optional.of(deleteAndReindex(playlist.getId(), item));
+        }
+        return Optional.empty();
+    }
+
+    public synchronized Optional<PlaylistTrack> removeFirstMatchingTrack(long userId, String name, String query)
+    {
+        PlaylistSummary playlist = requireEditable(userId, name);
+        String normalizedQuery = normalizeTrackSearch(query);
+        if(normalizedQuery.isEmpty())
+            throw new PlaylistException("Query is required.");
+
+        List<PlaylistTrack> items = listItems(playlist.getId());
+        Optional<PlaylistTrack> match = findTextMatch(items, normalizedQuery, true);
+        if(!match.isPresent())
+            match = findTextMatch(items, normalizedQuery, false);
+        if(match.isPresent())
+            return Optional.of(deleteAndReindex(playlist.getId(), match.get()));
+        return Optional.empty();
     }
 
     public synchronized void moveItem(long userId, String name, int from, int to)
@@ -598,6 +627,51 @@ public class UserPlaylistService
         return keys;
     }
 
+    private Optional<PlaylistTrack> findTextMatch(List<PlaylistTrack> items, String normalizedQuery, boolean exact)
+    {
+        for(PlaylistTrack item : items)
+            if(trackMatches(item, normalizedQuery, exact))
+                return Optional.of(item);
+        return Optional.empty();
+    }
+
+    private boolean trackMatches(PlaylistTrack item, String normalizedQuery, boolean exact)
+    {
+        String author = item.getAuthor() == null ? "" : item.getAuthor();
+        String title = item.getDisplayTitle();
+        String[] values = {
+                item.getUrl(),
+                item.getQuery(),
+                item.getTitle(),
+                title,
+                author.isBlank() ? title : title + " " + author,
+                author.isBlank() ? title : author + " " + title
+        };
+
+        for(String value : values)
+        {
+            String normalized = normalizeTrackSearch(value);
+            if(normalized.isEmpty())
+                continue;
+            if(exact ? normalized.equals(normalizedQuery) : normalized.contains(normalizedQuery))
+                return true;
+        }
+        return false;
+    }
+
+    private String normalizeTrackSearch(String value)
+    {
+        if(value == null)
+            return "";
+        String clean = value.trim();
+        if(clean.startsWith("<") && clean.endsWith(">") && clean.length() > 1)
+            clean = clean.substring(1, clean.length() - 1).trim();
+        String lower = clean.toLowerCase(Locale.ROOT);
+        if(lower.startsWith("ytsearch:") || lower.startsWith("scsearch:"))
+            clean = clean.substring(clean.indexOf(':') + 1).trim();
+        return clean.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    }
+
     private void ensurePlaylistItemDuplicateKeys() throws SQLException
     {
         if(!columnExists("playlist_items", "duplicate_key"))
@@ -761,6 +835,13 @@ public class UserPlaylistService
         {
             throw new PlaylistException("Failed to remove item", ex);
         }
+    }
+
+    private PlaylistTrack deleteAndReindex(long playlistId, PlaylistTrack item)
+    {
+        deleteItem(item.getId());
+        reindex(playlistId);
+        return item;
     }
 
     private void updateOrder(long playlistId, List<PlaylistTrack> items)

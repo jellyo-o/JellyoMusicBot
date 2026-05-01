@@ -52,6 +52,23 @@ public class UserPlaylistServiceTest
     }
 
     @Test
+    public void removeLikedSongsByTrackOrQuery() throws Exception
+    {
+        UserPlaylistService service = newService();
+        service.getOrCreateLikedPlaylist(1L);
+        service.addTracksToOwned(1L, UserPlaylistService.LIKED_SONGS, List.of(track("a", "Alpha"), track("b", "Beta")));
+
+        assertTrue(service.removeTrack(1L, UserPlaylistService.LIKED_SONGS, track("a", "Different Alpha")).isPresent());
+        List<PlaylistTrack> remaining = service.listItems(1L, UserPlaylistService.LIKED_SONGS);
+        assertEquals(1, remaining.size());
+        assertEquals("Beta", remaining.get(0).getTitle());
+
+        assertTrue(service.removeFirstMatchingTrack(1L, UserPlaylistService.LIKED_SONGS, "bet").isPresent());
+        assertTrue(service.listItems(1L, UserPlaylistService.LIKED_SONGS).isEmpty());
+        assertFalse(service.removeFirstMatchingTrack(1L, UserPlaylistService.LIKED_SONGS, "missing").isPresent());
+    }
+
+    @Test
     public void copyShareCreatesEditableIndependentPlaylist() throws Exception
     {
         UserPlaylistService service = newService();
