@@ -30,8 +30,13 @@ import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
-import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
+import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Message;
@@ -277,32 +282,111 @@ public class PlayCmd extends MusicCommand
                 event.reply(event.getClient().getError()+" Please include a playlist name.");
                 return;
             }
-            Playlist playlist = bot.getPlaylistLoader().getPlaylist(event.getArgs());
-            if(playlist==null)
+            PlaylistSummary playlist;
+            List<PlaylistTrack> items;
+            try
             {
-                event.replyError("I could not find `"+event.getArgs()+".txt` in the Playlists folder.");
+                playlist = bot.getUserPlaylistService().resolveVisible(event.getAuthor().getIdLong(), event.getArgs())
+                        .orElseThrow(() -> new PlaylistException("Playlist `" + event.getArgs() + "` does not exist."));
+                items = bot.getUserPlaylistService().listItems(playlist.getId());
+                if(playlist.isLegacyShuffle())
+                    Collections.shuffle(items);
+            }
+            catch(PlaylistException ex)
+            {
+                event.replyError(ex.getMessage());
                 return;
             }
-            event.getChannel().sendMessage(loadingEmoji+" Loading playlist **"+event.getArgs()+"**... ("+playlist.getItems().size()+" items)").queue(m -> 
+            if(items.isEmpty())
             {
-                LOG.info("Loading saved playlist '{}' in guild {} ({}) with {} configured entries",
-                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), playlist.getItems().size());
+                event.reply(event.getClient().getWarning()+" Playlist `"+playlist.getName()+"` is empty.");
+                return;
+            }
+            event.getChannel().sendMessage(loadingEmoji+" Loading playlist **"+playlist.getName()+"**... ("+items.size()+" items)").queue(m ->
+            {
+                LOG.info("Loading user playlist '{}' in guild {} ({}) with {} configured entries",
+                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), items.size());
                 AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-                playlist.loadTracks(bot.getPlayerManager(), (at)->handler.addTrack(new QueuedTrack(at, RequestMetadata.fromResultHandler(at, event))), () -> {
-                    LOG.info("Saved playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}",
-                            playlist.getName(), event.getGuild().getName(), event.getGuild().getId(),
-                            playlist.getTracks().size(), playlist.getErrors().size());
-                    StringBuilder builder = new StringBuilder(playlist.getTracks().isEmpty() 
-                            ? event.getClient().getWarning()+" No tracks were loaded!" 
-                            : event.getClient().getSuccess()+" Loaded **"+playlist.getTracks().size()+"** tracks!");
-                    if(!playlist.getErrors().isEmpty())
-                        builder.append("\nThe following tracks failed to load:");
-                    playlist.getErrors().forEach(err -> builder.append("\n`[").append(err.getIndex()+1).append("]` **").append(err.getItem()).append("**: ").append(err.getReason()));
-                    String str = builder.toString();
-                    if(str.length()>2000)
-                        str = str.substring(0,1994)+" (...)";
-                    m.editMessage(FormatUtil.filter(str)).queue();
-                });
+                AtomicInteger remaining = new AtomicInteger(items.size());
+                AtomicInteger loaded = new AtomicInteger();
+                AtomicInteger failed = new AtomicInteger();
+                for(PlaylistTrack item : items)
+                {
+                    bot.getPlayerManager().loadItemOrdered(event.getGuild(), item.getLoadQuery(), new AudioLoadResultHandler()
+                    {
+                        private void done()
+                        {
+                            if(remaining.decrementAndGet() == 0)
+                            {
+                                LOG.info("User playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}",
+                                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), loaded.get(), failed.get());
+                                String str = event.getClient().getSuccess()+" Loaded **"+loaded.get()+"** tracks!"
+                                        +(failed.get() == 0 ? "" : "\n"+event.getClient().getWarning()+" `"+failed.get()+"` entries failed.");
+                                m.editMessage(FormatUtil.filter(str)).queue();
+                            }
+                        }
+
+                        private void addTrack(AudioTrack track)
+                        {
+                            if(bot.getConfig().isTooLong(track))
+                            {
+                                failed.incrementAndGet();
+                                return;
+                            }
+                            handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
+                            loaded.incrementAndGet();
+                        }
+
+                        @Override
+                        public void trackLoaded(AudioTrack track)
+                        {
+                            addTrack(track);
+                            done();
+                        }
+
+                        @Override
+                        public void playlistLoaded(AudioPlaylist audioPlaylist)
+                        {
+                            if(audioPlaylist.isSearchResult())
+                            {
+                                if(audioPlaylist.getTracks().isEmpty())
+                                    failed.incrementAndGet();
+                                else
+                                    addTrack(audioPlaylist.getTracks().get(0));
+                            }
+                            else if(audioPlaylist.getSelectedTrack() != null)
+                            {
+                                addTrack(audioPlaylist.getSelectedTrack());
+                            }
+                            else
+                            {
+                                int before = loaded.get();
+                                for(AudioTrack track : audioPlaylist.getTracks())
+                                    addTrack(track);
+                                if(loaded.get() == before)
+                                    failed.incrementAndGet();
+                            }
+                            done();
+                        }
+
+                        @Override
+                        public void noMatches()
+                        {
+                            failed.incrementAndGet();
+                            done();
+                        }
+
+                        @Override
+                        public void loadFailed(FriendlyException throwable)
+                        {
+                            failed.incrementAndGet();
+                            LOG.warn("Prefix playlist item load failed in guild {} ({}); playlist='{}'; query='{}'; severity={}; message={}",
+                                    event.getGuild().getName(), event.getGuild().getId(), playlist.getName(), item.getLoadQuery(),
+                                    throwable.severity, throwable.getMessage(), throwable);
+                            done();
+                        }
+                    });
+                }
             });
         }
     }

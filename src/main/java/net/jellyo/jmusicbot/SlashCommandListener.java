@@ -37,7 +37,13 @@ import com.jagrosh.jmusicbot.commands.music.RemoveCmd;
 import com.jagrosh.jmusicbot.commands.music.SeekCmd;
 import com.jagrosh.jmusicbot.commands.music.ShuffleCmd;
 import com.jagrosh.jmusicbot.commands.music.SkipCmd;
-import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
+import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.AddResult;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.Share;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.ShareMode;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
@@ -76,6 +82,7 @@ import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
+import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,6 +97,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -228,8 +236,57 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(songQueryOption()));
         commands.add(slashCommand("playtop", "Play a song at the top of the queue")
                 .addOptions(songQueryOption()));
-        commands.add(slashCommand("playplaylist", "Play a saved playlist")
+        commands.add(slashCommand("playplaylist", "Play one of your playlists")
                 .addOptions(playlistNameOption()));
+        commands.add(slashCommand("playlist", "Manage your playlists")
+                .addSubcommands(
+                        new SubcommandData("list", "List your playlists"),
+                        new SubcommandData("create", "Create a playlist")
+                                .addOptions(new OptionData(OptionType.STRING, "name", "Playlist name", true)),
+                        new SubcommandData("rename", "Rename one of your playlists")
+                                .addOptions(playlistNameOption(), new OptionData(OptionType.STRING, "new_name", "New playlist name", true)),
+                        new SubcommandData("delete", "Delete one of your playlists")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("view", "View playlist songs by index")
+                                .addOptions(playlistNameOption(), new OptionData(OptionType.INTEGER, "page", "Page number", false)),
+                        new SubcommandData("play", "Add a playlist to the queue")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("add", "Add a song or URL to a playlist")
+                                .addOptions(playlistNameOption(), songQueryOption()),
+                        new SubcommandData("addcurrent", "Add the current song to a playlist")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("addqueue", "Add the current and queued songs to a playlist")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("remove", "Remove a song from a playlist by index")
+                                .addOptions(playlistNameOption(), new OptionData(OptionType.INTEGER, "index", "Song index", true)),
+                        new SubcommandData("move", "Move a playlist song to another index")
+                                .addOptions(playlistNameOption(),
+                                        new OptionData(OptionType.INTEGER, "from", "Current index", true),
+                                        new OptionData(OptionType.INTEGER, "to", "New index", true)),
+                        new SubcommandData("clear", "Remove every song from a playlist")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("share", "Create a share code")
+                                .addOptions(playlistNameOption(), shareModeOption()),
+                        new SubcommandData("addshared", "Add a shared playlist by code")
+                                .addOptions(new OptionData(OptionType.STRING, "code", "Share code", true),
+                                        new OptionData(OptionType.STRING, "name", "Name in your library", false)),
+                        new SubcommandData("unshare", "Revoke one of your share codes")
+                                .addOptions(new OptionData(OptionType.STRING, "code", "Share code", true)),
+                        new SubcommandData("unfollow", "Remove a followed playlist from your library")
+                                .addOptions(playlistNameOption()),
+                        new SubcommandData("copy", "Copy a visible playlist into an editable playlist")
+                                .addOptions(playlistNameOption(), new OptionData(OptionType.STRING, "new_name", "New playlist name", true))));
+        commands.add(slashCommand("like", "Add music to your Liked Songs")
+                .addOptions(new OptionData(OptionType.STRING, "source", "What to like", true)
+                                .addChoice("current", "current")
+                                .addChoice("queue", "queue")
+                                .addChoice("query", "query"),
+                        songQueryOption().setRequired(false)));
+        commands.add(slashCommand("liked", "View or play your Liked Songs")
+                .addOptions(new OptionData(OptionType.STRING, "action", "Action", true)
+                                .addChoice("view", "view")
+                                .addChoice("play", "play"),
+                        new OptionData(OptionType.INTEGER, "page", "Page number", false)));
         commands.add(slashCommand("nowplaying", "Shows the currently playing song"));
         commands.add(slashCommand("queue", "Shows the current queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "page", "Page number", false)));
@@ -245,7 +302,7 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(
                         new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true),
                         new OptionData(OptionType.STRING, "query", "Song to correct", true)));
-        commands.add(slashCommand("playlists", "Shows available playlists"));
+        commands.add(slashCommand("playlists", "Shows your playlists"));
         commands.add(slashCommand("search", "Search YouTube and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
         commands.add(slashCommand("scsearch", "Search SoundCloud and choose a result")
@@ -325,6 +382,13 @@ public class SlashCommandListener extends ListenerAdapter
                 .setAutoComplete(true);
     }
 
+    private static OptionData shareModeOption()
+    {
+        return new OptionData(OptionType.STRING, "mode", "Share mode", true)
+                .addChoice("copy", "copy")
+                .addChoice("follow", "follow");
+    }
+
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event)
     {
@@ -349,6 +413,9 @@ public class SlashCommandListener extends ListenerAdapter
             case "play": handlePlay(event, false); break;
             case "playtop": handlePlay(event, true); break;
             case "playplaylist": handlePlayPlaylist(event); break;
+            case "playlist": handlePlaylist(event); break;
+            case "like": handleLike(event); break;
+            case "liked": handleLiked(event); break;
             case "nowplaying": handleNowPlaying(event); break;
             case "queue": handleQueue(event); break;
             case "skip": handleSharedMusicCommand(event, skipCmd, "", false, true, true); break;
@@ -433,12 +500,12 @@ public class SlashCommandListener extends ListenerAdapter
     {
         try
         {
-            if ("name".equals(event.getFocusedOption().getName()) && "playplaylist".equals(event.getName()))
+            if ("name".equals(event.getFocusedOption().getName()) && isPlaylistNameCommand(event))
             {
                 event.replyChoices(getPlaylistNameChoices(event)).queue();
                 return;
             }
-            if ("query".equals(event.getFocusedOption().getName()) && isSongQueryCommand(event.getName()))
+            if ("query".equals(event.getFocusedOption().getName()) && isSongQueryCommand(event))
             {
                 event.replyChoices(getSongQueryChoices(event)).queue();
                 return;
@@ -452,8 +519,20 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
-    private boolean isSongQueryCommand(String commandName)
+    private boolean isPlaylistNameCommand(CommandAutoCompleteInteractionEvent event)
     {
+        return "playplaylist".equals(event.getName())
+                || ("playlist".equals(event.getName()) && !"create".equals(event.getSubcommandName())
+                        && !"addshared".equals(event.getSubcommandName()));
+    }
+
+    private boolean isSongQueryCommand(CommandAutoCompleteInteractionEvent event)
+    {
+        String commandName = event.getName();
+        if("playlist".equals(commandName) && "add".equals(event.getSubcommandName()))
+            return true;
+        if("like".equals(commandName))
+            return true;
         return "play".equals(commandName) || "playtop".equals(commandName) || "playnext".equals(commandName);
     }
 
@@ -487,8 +566,9 @@ public class SlashCommandListener extends ListenerAdapter
     {
         String query = event.getFocusedOption().getValue().trim().toLowerCase(Locale.ROOT);
         List<Command.Choice> choices = new ArrayList<>();
-        for (String name : bot.getPlaylistLoader().getPlaylistNames())
+        for (PlaylistSummary playlist : bot.getUserPlaylistService().listPlaylists(event.getUser().getIdLong()))
         {
+            String name = playlist.getName();
             if (choices.size() >= MAX_AUTOCOMPLETE_CHOICES)
                 break;
             if (name.length() > MAX_AUTOCOMPLETE_LENGTH)
@@ -738,9 +818,14 @@ public class SlashCommandListener extends ListenerAdapter
         }, prefix);
         addHelpFields(eb, "Music", new String[][]{
                 {"play <title|URL>", "play query:<title|URL>", "Play a song or URL"},
-                {"play playlist <name>", "playplaylist name:<name>", "Play a saved playlist"},
+                {"play playlist <name>", "playplaylist name:<name>", "Play one of your playlists"},
+                {"", "playlist list", "List your playlists privately"},
+                {"", "playlist create name:<name>", "Create a playlist"},
+                {"", "playlist view name:<name>", "View playlist songs by index"},
+                {"", "like source:<current|queue|query>", "Add music to Liked Songs"},
+                {"", "liked action:<view|play>", "View or play Liked Songs"},
                 {"playtop <title|URL>", "playtop query:<title|URL>", "Add a song to the top of the queue"},
-                {"playlists", "playlists", "List saved playlists"},
+                {"playlists", "playlists", "List your playlists"},
                 {"nowplaying", "nowplaying", "Show the current song"},
                 {"queue [page]", "queue [page]", "Show the queue"},
                 {"search <query>", "search query:<query>", "Search YouTube and choose a result"},
@@ -822,8 +907,7 @@ public class SlashCommandListener extends ListenerAdapter
                         "\n**DJ Role:** " + (role == null ? "None" : role.getAsMention()) +
                         "\n**Prefix:** " + (s.getPrefix() == null ? "Default" : "`" + s.getPrefix() + "`") +
                         "\n**Repeat Mode:** " + s.getRepeatMode().getUserFriendlyName() +
-                        "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName() +
-                        "\n**Default Playlist:** " + (s.getDefaultPlaylist() == null ? "None" : s.getDefaultPlaylist()))
+                        "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName())
                 .setFooter(event.getJDA().getGuilds().size() + " servers");
         event.replyEmbeds(eb.build()).queue();
     }
@@ -847,41 +931,492 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlayPlaylist(SlashCommandInteractionEvent event)
     {
+        try
+        {
+            String name = event.getOption("name").getAsString();
+            handlePlaylistPlay(event, name);
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private void handlePlaylist(SlashCommandInteractionEvent event)
+    {
+        String subcommand = event.getSubcommandName();
+        if(subcommand == null)
+        {
+            event.reply(bot.getConfig().getError() + " Unknown playlist command.").setEphemeral(true).queue();
+            return;
+        }
+
+        try
+        {
+            switch(subcommand)
+            {
+                case "list": handlePlaylistList(event); break;
+                case "create": handlePlaylistCreate(event); break;
+                case "rename": handlePlaylistRename(event); break;
+                case "delete": handlePlaylistDelete(event); break;
+                case "view": handlePlaylistView(event, event.getOption("name").getAsString()); break;
+                case "play": handlePlaylistPlay(event, event.getOption("name").getAsString()); break;
+                case "add": handlePlaylistAddQuery(event); break;
+                case "addcurrent": handlePlaylistAddCurrent(event, event.getOption("name").getAsString()); break;
+                case "addqueue": handlePlaylistAddQueue(event, event.getOption("name").getAsString()); break;
+                case "remove": handlePlaylistRemove(event); break;
+                case "move": handlePlaylistMove(event); break;
+                case "clear": handlePlaylistClear(event); break;
+                case "share": handlePlaylistShare(event); break;
+                case "addshared": handlePlaylistAddShared(event); break;
+                case "unshare": handlePlaylistUnshare(event); break;
+                case "unfollow": handlePlaylistUnfollow(event); break;
+                case "copy": handlePlaylistCopy(event); break;
+                default:
+                    event.reply(bot.getConfig().getError() + " Unknown playlist command.").setEphemeral(true).queue();
+            }
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private void handleLike(SlashCommandInteractionEvent event)
+    {
+        String source = event.getOption("source").getAsString();
+        String liked = UserPlaylistService.LIKED_SONGS;
+        try
+        {
+            bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+            if("current".equals(source))
+            {
+                handlePlaylistAddCurrent(event, liked);
+            }
+            else if("queue".equals(source))
+            {
+                handlePlaylistAddQueue(event, liked);
+            }
+            else
+            {
+                if(event.getOption("query") == null || event.getOption("query").getAsString().trim().isEmpty())
+                {
+                    event.reply(bot.getConfig().getError() + " Please provide a query when liking by query.").setEphemeral(true).queue();
+                    return;
+                }
+                addQueryToPlaylist(event, liked, event.getOption("query").getAsString(), true);
+            }
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private void handleLiked(SlashCommandInteractionEvent event)
+    {
+        try
+        {
+            bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+            String action = event.getOption("action").getAsString();
+            if("play".equals(action))
+                handlePlaylistPlay(event, UserPlaylistService.LIKED_SONGS);
+            else
+                handlePlaylistView(event, UserPlaylistService.LIKED_SONGS);
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private void handlePlaylistList(SlashCommandInteractionEvent event)
+    {
+        List<PlaylistSummary> playlists = bot.getUserPlaylistService().listPlaylists(event.getUser().getIdLong());
+        if(playlists.isEmpty())
+        {
+            event.reply(bot.getConfig().getWarning() + " You do not have any playlists yet.").setEphemeral(true).queue();
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder(bot.getConfig().getSuccess()).append(" Your playlists:\n");
+        for(PlaylistSummary playlist : playlists)
+        {
+            sb.append("`").append(playlist.getName()).append("`")
+                    .append(" - ").append(playlist.getItemCount()).append(" songs");
+            if(playlist.isFollowed())
+                sb.append(" (followed, read-only)");
+            if(playlist.isLiked())
+                sb.append(" (liked)");
+            sb.append('\n');
+        }
+        event.reply(truncateMessage(sb.toString())).setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistCreate(SlashCommandInteractionEvent event)
+    {
+        PlaylistSummary playlist = bot.getUserPlaylistService().createPlaylist(event.getUser().getIdLong(), event.getOption("name").getAsString());
+        event.reply(bot.getConfig().getSuccess() + " Created playlist `" + playlist.getName() + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistRename(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        String newName = event.getOption("new_name").getAsString();
+        bot.getUserPlaylistService().renamePlaylist(event.getUser().getIdLong(), name, newName);
+        event.reply(bot.getConfig().getSuccess() + " Renamed `" + name + "` to `" + UserPlaylistService.sanitizeName(newName) + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistDelete(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        bot.getUserPlaylistService().deletePlaylist(event.getUser().getIdLong(), name);
+        event.reply(bot.getConfig().getSuccess() + " Deleted playlist `" + name + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistView(SlashCommandInteractionEvent event, String name)
+    {
+        PlaylistSummary playlist = bot.getUserPlaylistService().resolveVisible(event.getUser().getIdLong(), name)
+                .orElseThrow(() -> new PlaylistException("Playlist `" + name + "` does not exist."));
+        List<PlaylistTrack> items = bot.getUserPlaylistService().listItems(playlist.getId());
+        if(items.isEmpty())
+        {
+            event.reply(bot.getConfig().getWarning() + " Playlist `" + playlist.getName() + "` is empty.").setEphemeral(true).queue();
+            return;
+        }
+
+        int page = event.getOption("page") != null ? (int)event.getOption("page").getAsLong() : 1;
+        int itemsPerPage = 10;
+        int pages = (int)Math.ceil((double)items.size() / itemsPerPage);
+        page = Math.max(1, Math.min(page, pages));
+        int start = (page - 1) * itemsPerPage;
+        int end = Math.min(start + itemsPerPage, items.size());
+        StringBuilder sb = new StringBuilder();
+        for(int i = start; i < end; i++)
+            sb.append(formatPlaylistItem(i + 1, items.get(i))).append('\n');
+
+        EmbedBuilder eb = new EmbedBuilder()
+                .setColor(event.getGuild().getSelfMember().getColor())
+                .setTitle(playlist.getName() + " | " + items.size() + " songs")
+                .setDescription(sb.toString())
+                .setFooter("Page " + page + "/" + pages + (playlist.isFollowed() ? " | followed read-only" : ""));
+        event.replyEmbeds(eb.build()).setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistPlay(SlashCommandInteractionEvent event, String name)
+    {
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
 
-        String name = event.getOption("name").getAsString();
-        Playlist playlist = bot.getPlaylistLoader().getPlaylist(name);
-        if (playlist == null && name.contains(" "))
+        PlaylistSummary playlist = bot.getUserPlaylistService().resolveVisible(event.getUser().getIdLong(), name)
+                .orElseThrow(() -> new PlaylistException("Playlist `" + name + "` does not exist."));
+        List<PlaylistTrack> items = new ArrayList<>(bot.getUserPlaylistService().listItems(playlist.getId()));
+        if(items.isEmpty())
         {
-            name = name.replaceAll("\\s+", "_");
-            playlist = bot.getPlaylistLoader().getPlaylist(name);
-        }
-        if (playlist == null)
-        {
-            event.reply(bot.getConfig().getError() + " I could not find `" + name + ".txt` in the Playlists folder.").setEphemeral(true).queue();
+            event.reply(bot.getConfig().getWarning() + " Playlist `" + playlist.getName() + "` is empty.").setEphemeral(true).queue();
             return;
         }
-        if (playlist.getItems().isEmpty())
+        if(playlist.isLegacyShuffle())
+            Collections.shuffle(items);
+
+        bot.getPlayerManager().setUpHandler(event.getGuild());
+        event.deferReply().queue(hook -> queuePlaylistItems(event, hook, playlist, items));
+    }
+
+    private void handlePlaylistAddQuery(SlashCommandInteractionEvent event)
+    {
+        addQueryToPlaylist(event, event.getOption("name").getAsString(), event.getOption("query").getAsString(), false);
+    }
+
+    private void handlePlaylistAddCurrent(SlashCommandInteractionEvent event, String name)
+    {
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        if(handler == null || handler.getPlayer().getPlayingTrack() == null)
         {
-            event.reply(bot.getConfig().getWarning() + " Playlist `" + playlist.getName() + "` has no entries.").setEphemeral(true).queue();
+            event.reply(bot.getConfig().getWarning() + " Nothing is currently playing.").setEphemeral(true).queue();
+            return;
+        }
+        PlaylistTrack track = PlaylistTrack.fromAudioTrack(handler.getPlayer().getPlayingTrack(), handler.getPlayer().getPlayingTrack().getInfo().uri);
+        AddResult result = bot.getUserPlaylistService().addTrack(event.getUser().getIdLong(), name, track);
+        event.reply(formatPlaylistAddResult(name, result, UserPlaylistService.LIKED_SONGS.equals(name))).setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistAddQueue(SlashCommandInteractionEvent event, String name)
+    {
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        if(handler == null)
+        {
+            event.reply(bot.getConfig().getWarning() + " There is no music in the queue.").setEphemeral(true).queue();
             return;
         }
 
-        Playlist selectedPlaylist = playlist;
-        bot.getPlayerManager().setUpHandler(event.getGuild());
-        event.deferReply().queue(hook -> {
-            AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            int[] loaded = {0};
-            selectedPlaylist.loadTracks(bot.getPlayerManager(),
-                    track -> {
-                        handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), "playlist:" + selectedPlaylist.getName(), track)));
-                        loaded[0]++;
-                    },
-                    () -> hook.editOriginal(bot.getConfig().getSuccess() + " Loaded playlist **" + selectedPlaylist.getName()
-                            + "** with `" + loaded[0] + "` tracks"
-                            + (selectedPlaylist.getErrors().isEmpty() ? "." : " (`" + selectedPlaylist.getErrors().size() + "` entries failed).")).queue());
-        });
+        List<PlaylistTrack> tracks = new ArrayList<>();
+        AudioTrack current = handler.getPlayer().getPlayingTrack();
+        if(current != null)
+            tracks.add(PlaylistTrack.fromAudioTrack(current, current.getInfo().uri));
+        tracks.addAll(handler.getQueue().getList().stream()
+                .map(queued -> PlaylistTrack.fromAudioTrack(queued.getTrack(), queued.getTrack().getInfo().uri))
+                .collect(Collectors.toList()));
+        if(tracks.isEmpty())
+        {
+            event.reply(bot.getConfig().getWarning() + " There is no music in the queue.").setEphemeral(true).queue();
+            return;
+        }
+
+        AddResult result = bot.getUserPlaylistService().addTracksToOwned(event.getUser().getIdLong(), name, tracks);
+        event.reply(formatPlaylistAddResult(name, result, UserPlaylistService.LIKED_SONGS.equals(name))).setEphemeral(true).queue();
+    }
+
+    private String formatPlaylistAddResult(String name, AddResult result, boolean liked)
+    {
+        String target = liked ? "Liked Songs" : "`" + name + "`";
+        if(result.getAdded() == 0 && result.getSkippedDuplicates() > 0)
+            return bot.getConfig().getWarning() + " No new songs were added to " + target
+                    + "; `" + result.getSkippedDuplicates() + "` duplicate(s) skipped.";
+
+        String message = bot.getConfig().getSuccess() + " Added `" + result.getAdded() + "` song(s) to " + target + ".";
+        if(result.getSkippedDuplicates() > 0)
+            message += " Skipped `" + result.getSkippedDuplicates() + "` duplicate(s).";
+        return message;
+    }
+
+    private void handlePlaylistRemove(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        int index = (int)event.getOption("index").getAsLong();
+        bot.getUserPlaylistService().removeItem(event.getUser().getIdLong(), name, index);
+        event.reply(bot.getConfig().getSuccess() + " Removed song `" + index + "` from `" + name + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistMove(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        int from = (int)event.getOption("from").getAsLong();
+        int to = (int)event.getOption("to").getAsLong();
+        bot.getUserPlaylistService().moveItem(event.getUser().getIdLong(), name, from, to);
+        event.reply(bot.getConfig().getSuccess() + " Moved song `" + from + "` to `" + to + "` in `" + name + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistClear(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        int count = bot.getUserPlaylistService().clearPlaylist(event.getUser().getIdLong(), name);
+        event.reply(bot.getConfig().getSuccess() + " Removed `" + count + "` songs from `" + name + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistShare(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        ShareMode mode = ShareMode.valueOf(event.getOption("mode").getAsString().toUpperCase(Locale.ROOT));
+        Share share = bot.getUserPlaylistService().createShare(event.getUser().getIdLong(), name, mode);
+        event.reply(bot.getConfig().getSuccess() + " Share code for `" + share.getPlaylistName() + "`: `" + share.getCode()
+                + "` (" + share.getMode().name().toLowerCase(Locale.ROOT) + ").").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistAddShared(SlashCommandInteractionEvent event)
+    {
+        String code = event.getOption("code").getAsString();
+        String name = event.getOption("name") == null ? null : event.getOption("name").getAsString();
+        PlaylistSummary playlist = bot.getUserPlaylistService().addShared(event.getUser().getIdLong(), code, name);
+        event.reply(bot.getConfig().getSuccess() + " Added shared playlist as `" + playlist.getName() + "`"
+                + (playlist.isFollowed() ? " (followed read-only)." : ".")).setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistUnshare(SlashCommandInteractionEvent event)
+    {
+        int count = bot.getUserPlaylistService().revokeShare(event.getUser().getIdLong(), event.getOption("code").getAsString());
+        if(count == 0)
+            event.reply(bot.getConfig().getWarning() + " No active share code was found for your playlists.").setEphemeral(true).queue();
+        else
+            event.reply(bot.getConfig().getSuccess() + " Revoked that share code.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistUnfollow(SlashCommandInteractionEvent event)
+    {
+        String name = event.getOption("name").getAsString();
+        bot.getUserPlaylistService().unfollow(event.getUser().getIdLong(), name);
+        event.reply(bot.getConfig().getSuccess() + " Unfollowed `" + name + "`.").setEphemeral(true).queue();
+    }
+
+    private void handlePlaylistCopy(SlashCommandInteractionEvent event)
+    {
+        PlaylistSummary playlist = bot.getUserPlaylistService().copyVisible(event.getUser().getIdLong(),
+                event.getOption("name").getAsString(), event.getOption("new_name").getAsString());
+        event.reply(bot.getConfig().getSuccess() + " Copied playlist to `" + playlist.getName() + "`.").setEphemeral(true).queue();
+    }
+
+    private void addQueryToPlaylist(SlashCommandInteractionEvent event, String playlistName, String query, boolean liked)
+    {
+        PlaylistSummary playlist = bot.getUserPlaylistService().resolveVisible(event.getUser().getIdLong(), playlistName)
+                .orElseThrow(() -> new PlaylistException("Playlist `" + playlistName + "` does not exist."));
+        if(!playlist.isEditable())
+            throw new PlaylistException("`" + playlist.getName() + "` is followed read-only. Copy it before editing.");
+
+        event.deferReply(true).queue(hook -> bot.getPlayerManager().loadItemOrdered(
+                "playlist-add:" + event.getUser().getId(),
+                query,
+                new AudioLoadResultHandler()
+                {
+                    private void store(List<AudioTrack> loadedTracks)
+                    {
+                        List<PlaylistTrack> tracks = loadedTracks.stream()
+                                .filter(track -> !bot.getConfig().isTooLong(track))
+                                .map(track -> PlaylistTrack.fromAudioTrack(track, track.getInfo().uri))
+                                .collect(Collectors.toList());
+                        if(tracks.isEmpty())
+                        {
+                            hook.editOriginal(bot.getConfig().getWarning() + " No acceptable tracks were found.").queue();
+                            return;
+                        }
+                        try
+                        {
+                            AddResult result = bot.getUserPlaylistService().addTracksToOwned(event.getUser().getIdLong(), playlist.getName(), tracks);
+                            hook.editOriginal(formatPlaylistAddResult(playlist.getName(), result, liked)).queue();
+                        }
+                        catch(PlaylistException ex)
+                        {
+                            hook.editOriginal(bot.getConfig().getError() + " " + ex.getMessage()).queue();
+                        }
+                    }
+
+                    @Override
+                    public void trackLoaded(AudioTrack track)
+                    {
+                        store(List.of(track));
+                    }
+
+                    @Override
+                    public void playlistLoaded(AudioPlaylist playlist)
+                    {
+                        if(playlist.isSearchResult())
+                        {
+                            store(playlist.getTracks().isEmpty() ? Collections.emptyList() : List.of(playlist.getTracks().get(0)));
+                        }
+                        else if(playlist.getSelectedTrack() != null)
+                        {
+                            store(List.of(playlist.getSelectedTrack()));
+                        }
+                        else
+                        {
+                            store(playlist.getTracks());
+                        }
+                    }
+
+                    @Override
+                    public void noMatches()
+                    {
+                        hook.editOriginal(bot.getConfig().getWarning() + " No results found for `" + query + "`.").queue();
+                    }
+
+                    @Override
+                    public void loadFailed(FriendlyException exception)
+                    {
+                        LOG.warn("Failed to load playlist add query '{}'", query, exception);
+                        hook.editOriginal(bot.getConfig().getError() + " Error loading track.").queue();
+                    }
+                }));
+    }
+
+    private void queuePlaylistItems(SlashCommandInteractionEvent event, InteractionHook hook,
+                                    PlaylistSummary playlist, List<PlaylistTrack> items)
+    {
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        AtomicInteger remaining = new AtomicInteger(items.size());
+        AtomicInteger loaded = new AtomicInteger();
+        AtomicInteger failed = new AtomicInteger();
+
+        for(PlaylistTrack item : items)
+        {
+            bot.getPlayerManager().loadItemOrdered(event.getGuild(), item.getLoadQuery(), new AudioLoadResultHandler()
+            {
+                private void done()
+                {
+                    if(remaining.decrementAndGet() == 0)
+                    {
+                        hook.editOriginal(bot.getConfig().getSuccess() + " Loaded playlist **" + playlist.getName()
+                                + "** with `" + loaded.get() + "` tracks"
+                                + (failed.get() == 0 ? "." : " (`" + failed.get() + "` entries failed).")).queue();
+                    }
+                }
+
+                private void addTrack(AudioTrack track)
+                {
+                    if(bot.getConfig().isTooLong(track))
+                    {
+                        failed.incrementAndGet();
+                        return;
+                    }
+                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), "playlist:" + playlist.getName(), track)));
+                    loaded.incrementAndGet();
+                }
+
+                @Override
+                public void trackLoaded(AudioTrack track)
+                {
+                    addTrack(track);
+                    done();
+                }
+
+                @Override
+                public void playlistLoaded(AudioPlaylist audioPlaylist)
+                {
+                    if(audioPlaylist.isSearchResult())
+                    {
+                        if(audioPlaylist.getTracks().isEmpty())
+                            failed.incrementAndGet();
+                        else
+                            addTrack(audioPlaylist.getTracks().get(0));
+                    }
+                    else if(audioPlaylist.getSelectedTrack() != null)
+                    {
+                        addTrack(audioPlaylist.getSelectedTrack());
+                    }
+                    else
+                    {
+                        int before = loaded.get();
+                        for(AudioTrack track : audioPlaylist.getTracks())
+                            addTrack(track);
+                        if(loaded.get() == before)
+                            failed.incrementAndGet();
+                    }
+                    done();
+                }
+
+                @Override
+                public void noMatches()
+                {
+                    failed.incrementAndGet();
+                    done();
+                }
+
+                @Override
+                public void loadFailed(FriendlyException exception)
+                {
+                    failed.incrementAndGet();
+                    LOG.warn("Failed to load playlist item '{}' from '{}'", item.getLoadQuery(), playlist.getName(), exception);
+                    done();
+                }
+            });
+        }
+    }
+
+    private String formatPlaylistItem(int index, PlaylistTrack item)
+    {
+        String duration = item.getDuration() > 0 ? "`[" + TimeUtil.formatTime(item.getDuration()) + "]` " : "";
+        String title = item.getDisplayTitle();
+        if(item.getUrl() != null && item.getUrl().startsWith("http"))
+            title = "[**" + title + "**](" + item.getUrl() + ")";
+        else
+            title = "**" + title + "**";
+        String author = item.getAuthor() == null || item.getAuthor().isBlank() ? "" : " - " + item.getAuthor();
+        return "`" + index + ".` " + duration + title + author;
+    }
+
+    private String truncateMessage(String message)
+    {
+        if(message.length() <= 2000)
+            return message;
+        return message.substring(0, 1994) + " (...)";
     }
 
     private void handleNowPlaying(SlashCommandInteractionEvent event)
@@ -1026,15 +1561,14 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlaylists(SlashCommandInteractionEvent event)
     {
-        List<String> playlists = bot.getPlaylistLoader().getPlaylistNames();
-        if (playlists == null || playlists.isEmpty())
+        try
         {
-            event.reply(bot.getConfig().getWarning() + " No playlists available.").queue();
-            return;
+            handlePlaylistList(event);
         }
-        StringBuilder sb = new StringBuilder(bot.getConfig().getSuccess() + " Available playlists:\n");
-        playlists.forEach(name -> sb.append("`").append(name).append("`\n"));
-        event.reply(sb.toString()).queue();
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
     }
 
     private void handleSearch(SlashCommandInteractionEvent event, String searchPrefix, String provider)

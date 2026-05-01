@@ -22,7 +22,6 @@ import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.User;
-import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.events.guild.GuildJoinEvent;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
 import net.dv8tion.jda.api.events.message.MessageDeleteEvent;
@@ -60,30 +59,6 @@ public class Listener extends ListenerAdapter
             LOG.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
         }
         credit(event.getJDA());
-        event.getJDA().getGuilds().forEach((guild) -> 
-        {
-            try
-            {
-                String defpl = bot.getSettingsManager().getSettings(guild).getDefaultPlaylist();
-                VoiceChannel vc = bot.getSettingsManager().getSettings(guild).getVoiceChannel(guild);
-                if(defpl!=null && vc!=null && bot.getPlayerManager().setUpHandler(guild).playFromDefault())
-                {
-                    LOG.info("Auto-joining configured voice channel {} ({}) in guild {} ({}) for default playlist '{}'",
-                            vc.getName(), vc.getId(), guild.getName(), guild.getId(), defpl);
-                    guild.getAudioManager().openAudioConnection(vc);
-                }
-                else
-                {
-                    LOG.debug("No startup voice auto-join for guild {} ({}); defaultPlaylist={}; voiceChannel={}",
-                            guild.getName(), guild.getId(), defpl, vc == null ? "none" : vc.getId());
-                }
-            }
-            catch(Exception ex)
-            {
-                LOG.warn("Failed startup default-playlist voice join for guild {} ({})",
-                        guild.getName(), guild.getId(), ex);
-            }
-        });
         if(bot.getConfig().useUpdateAlerts())
         {
             LOG.debug("Update alerts enabled; scheduling update check");

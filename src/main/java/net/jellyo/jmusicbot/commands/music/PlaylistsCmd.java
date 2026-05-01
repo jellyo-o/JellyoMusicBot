@@ -19,6 +19,7 @@ import java.util.List;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 
 /**
  *
@@ -40,24 +41,19 @@ public class PlaylistsCmd extends MusicCommand
     @Override
     public void doCommand(CommandEvent event) 
     {
-        if(!bot.getPlaylistLoader().folderExists())
-            bot.getPlaylistLoader().createFolder();
-        if(!bot.getPlaylistLoader().folderExists())
-        {
-            event.reply(event.getClient().getWarning()+" Playlists folder does not exist and could not be created!");
-            return;
-        }
-        List<String> list = bot.getPlaylistLoader().getPlaylistNames();
-        if(list==null)
-            event.reply(event.getClient().getError()+" Failed to load available playlists!");
-        else if(list.isEmpty())
-            event.reply(event.getClient().getWarning()+" There are no playlists in the Playlists folder!");
+        List<PlaylistSummary> list = bot.getUserPlaylistService().listPlaylists(event.getAuthor().getIdLong());
+        if(list.isEmpty())
+            event.replyInDm(event.getClient().getWarning()+" You do not have any playlists yet.");
         else
         {
-            StringBuilder builder = new StringBuilder(event.getClient().getSuccess()+" Available playlists:\n");
-            list.forEach(str -> builder.append("`").append(str).append("` "));
+            StringBuilder builder = new StringBuilder(event.getClient().getSuccess()+" Your playlists:\n");
+            list.forEach(playlist -> builder.append("`").append(playlist.getName()).append("` - ")
+                    .append(playlist.getItemCount()).append(" songs")
+                    .append(playlist.isFollowed() ? " (followed, read-only)" : "")
+                    .append(playlist.isLiked() ? " (liked)" : "")
+                    .append("\n"));
             builder.append("\nType `").append(event.getClient().getTextualPrefix()).append("play playlist <name>` to play a playlist");
-            event.reply(builder.toString());
+            event.replyInDm(builder.toString());
         }
     }
 }
