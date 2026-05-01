@@ -45,6 +45,7 @@ import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.Share;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.ShareMode;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
@@ -698,7 +699,7 @@ public class SlashCommandListener extends ListenerAdapter
         AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
         if (handler == null)
             handler = bot.getPlayerManager().setUpHandler(event.getGuild());
-        int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), state.query, track))) + 1;
+        int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), state.query, track, event.getChannel().getIdLong()))) + 1;
         LOG.info("Selected slash search result added in guild {} ({}); query='{}'; position={}; track={}",
                 event.getGuild().getName(), event.getGuild().getId(), state.query, pos, describeTrack(track));
         searchMenus.remove(componentId);
@@ -865,7 +866,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"volume [0-150]", "volume [level]", "Show or set volume"},
                 {"repeat [off|all|single]", "repeat [mode]", "Set repeat mode"},
                 {"loop [off|all|single]", "loop [mode]", "Alias for repeat"},
-                {"autoplay [off|smart|related|artist|playlist|server]", "autoplay [mode]", "Set autoplay radio mode"},
+                {"autoplay [off|smart|related|artist|playlist|server]", "autoplay [mode]", "Set autoplay mode"},
                 {"radio [off|smart|related|artist|playlist|server]", "radio [mode]", "Alias for autoplay"},
                 {"skipto <position>", "skipto position:<position>", "Skip to a queue position"},
                 {"movetrack <from> <to>", "move from:<from> to:<to>", "Move a queued track"},
@@ -929,10 +930,15 @@ public class SlashCommandListener extends ListenerAdapter
                         "\n**DJ Role:** " + (role == null ? "None" : role.getAsMention()) +
                         "\n**Prefix:** " + (s.getPrefix() == null ? "Default" : "`" + s.getPrefix() + "`") +
                         "\n**Repeat Mode:** " + s.getRepeatMode().getUserFriendlyName() +
-                        "\n**Autoplay Mode:** " + s.getAutoplayMode().getUserFriendlyName() +
+                        "\n**Autoplay Mode:** " + formatAutoplayMode(s.getAutoplayMode()) +
                         "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName())
                 .setFooter(event.getJDA().getGuilds().size() + " servers");
         event.replyEmbeds(eb.build()).queue();
+    }
+
+    private static String formatAutoplayMode(AutoplayMode mode)
+    {
+        return mode == null ? AutoplayMode.OFF.getUserFriendlyName() : mode.getUserFriendlyName();
     }
 
     // ========================
@@ -1369,7 +1375,8 @@ public class SlashCommandListener extends ListenerAdapter
                         failed.incrementAndGet();
                         return;
                     }
-                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getUser(), playlist.getId(), playlist.getName(), track)));
+                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getUser(), playlist.getId(),
+                            playlist.getName(), track, event.getChannel().getIdLong())));
                     loaded.incrementAndGet();
                 }
 
@@ -1444,21 +1451,9 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handleNowPlaying(SlashCommandInteractionEvent event)
     {
-        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (handler == null)
-        {
-            event.reply(bot.getConfig().getWarning() + " Nothing is currently playing.").queue();
-            return;
-        }
-        MessageCreateData m = handler.getNowPlaying(event.getJDA());
-        if (m == null)
-        {
-            event.reply(handler.getNoMusicPlaying(event.getJDA()).getContent()).queue();
-        }
-        else
-        {
-            event.reply(m.getContent()).addEmbeds(m.getEmbeds()).queue(ih -> ih.retrieveOriginal().queue(msg -> bot.getNowplayingHandler().setLastNPMessage(msg)));
-        }
+        event.deferReply(true).queue(hook -> bot.getNowplayingHandler().showPanel(event.getGuild(), event.getChannel(), true,
+                msg -> hook.editOriginal(bot.getConfig().getSuccess() + " Music panel posted.").queue(),
+                error -> hook.editOriginal(bot.getConfig().getError() + " I could not post the music panel in this channel.").queue()));
     }
 
     private void handleQueue(SlashCommandInteractionEvent event)
@@ -1936,7 +1931,7 @@ public class SlashCommandListener extends ListenerAdapter
                 return;
             }
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), query, track))) + 1;
+            int pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), query, track, event.getChannel().getIdLong()))) + 1;
             LOG.info("Slash search track loaded in guild {} ({}); provider={}; query='{}'; position={}; track={}",
                     event.getGuild().getName(), event.getGuild().getId(), provider, query, pos, describeTrack(track));
             hook.editOriginal(FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title
@@ -2043,9 +2038,9 @@ public class SlashCommandListener extends ListenerAdapter
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             int pos;
             if (playTop)
-                pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
+                pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track, event.getChannel().getIdLong()))) + 1;
             else
-                pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
+                pos = handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track, event.getChannel().getIdLong()))) + 1;
             LOG.info("Slash /{} track loaded in guild {} ({}); playTop={}; query='{}'; position={}; track={}",
                     event.getName(), event.getGuild().getName(), event.getGuild().getId(), playTop, args, pos, describeTrack(track));
             String addMsg = FormatUtil.filter(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title +
@@ -2060,7 +2055,7 @@ public class SlashCommandListener extends ListenerAdapter
                 if (!bot.getConfig().isTooLong(track) && !track.equals(exclude))
                 {
                     AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track)));
+                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track, event.getChannel().getIdLong())));
                     count[0]++;
                 }
             });
@@ -2156,7 +2151,7 @@ public class SlashCommandListener extends ListenerAdapter
                 return;
             }
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track))) + 1;
+            int pos = handler.addTrackToFront(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(), args, track, event.getChannel().getIdLong()))) + 1;
             LOG.info("Slash /playnext track loaded in guild {} ({}); query='{}'; position={}; track={}",
                     event.getGuild().getName(), event.getGuild().getId(), args, pos, describeTrack(track));
             hook.editOriginal(bot.getConfig().getSuccess() + " Added **" + track.getInfo().title + "** to play next" + (pos == 0 ? "" : " (position " + pos + ")")).queue();

@@ -76,6 +76,7 @@ public class VolumeCmd extends DJCommand implements UnifiedCommand
             }
             handler.getPlayer().setVolume(nvolume);
             settings.setVolume(nvolume);
+            handler.updateMusicPanels();
             event.reply(FormatUtil.volumeIcon(nvolume)+" Volume changed from `"+volume+"` to `"+nvolume+"`");
         }
     }

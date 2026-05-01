@@ -80,7 +80,10 @@ public class QueueTypeCmd extends AdminCommand implements UnifiedCommand
 
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             if (handler != null)
+            {
                 handler.setQueueType(value);
+                handler.updateMusicPanels();
+            }
         }
 
         event.reply(value.getEmoji() + " Queue type was set to `" + value.getUserFriendlyName() + "`.");

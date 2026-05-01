@@ -81,11 +81,7 @@ public class QueueCmd extends MusicCommand
             MessageCreateData built = new MessageCreateBuilder()
                     .setContent(event.getClient().getWarning() + " There is no music in the queue!")
                     .setEmbeds((nowp==null ? nonowp : nowp).getEmbeds().get(0)).build();
-            event.reply(built, m -> 
-            {
-                if(nowp!=null)
-                    bot.getNowplayingHandler().setLastNPMessage(m);
-            });
+            event.reply(built);
             return;
         }
         String[] songs = new String[list.size()];

@@ -76,6 +76,7 @@ public class MoveTrackCmd extends DJCommand implements UnifiedCommand
 
         // Move the track
         QueuedTrack track = queue.moveItem(from - 1, to - 1);
+        handler.updateMusicPanels();
         String trackTitle = track.getTrack().getInfo().title;
         String reply = String.format("Moved **%s** from position `%d` to `%d`.", trackTitle, from, to);
         event.replySuccess(reply);

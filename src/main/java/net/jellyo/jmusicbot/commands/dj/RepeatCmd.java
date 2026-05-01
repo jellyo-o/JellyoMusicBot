@@ -68,6 +68,7 @@ public class RepeatCmd extends DJCommand implements UnifiedCommand
             return;
         }
         settings.setRepeatMode(value);
+        bot.getNowplayingHandler().updatePanels(event.getGuild());
         event.replySuccess("Repeat mode is now `"+value.getUserFriendlyName()+"`");
     }
 

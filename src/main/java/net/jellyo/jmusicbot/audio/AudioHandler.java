@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot.audio;
 
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
@@ -34,9 +35,12 @@ import com.jagrosh.jmusicbot.utils.FormatUtil;
 import java.nio.ByteBuffer;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.audio.AudioSendHandler;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.User;
+import net.dv8tion.jda.api.entities.emoji.Emoji;
 import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import org.slf4j.Logger;
@@ -53,6 +57,10 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public final static String PLAY_EMOJI  = "\u25B6"; // ▶
     public final static String PAUSE_EMOJI = "\u23F8"; // ⏸
     public final static String STOP_EMOJI  = "\u23F9"; // ⏹
+    public final static String PLAY_PAUSE_EMOJI = "\u23EF"; // ⏯
+    public final static String SKIP_EMOJI = "\u23ED"; // ⏭
+    public final static String REPEAT_EMOJI = "\uD83D\uDD01"; // 🔁
+    public final static String LYRICS_EMOJI = "\uD83C\uDFA4"; // 🎤
     private final static Pattern YOUTUBE_VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
     private final static int RECENT_TRACK_LIMIT = 25;
 
@@ -108,6 +116,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         {
             queue.addAt(0, qtrack);
             LOG.debug("Queued track at front for guild {}: {}; queueSize={}", guildId, trackSummary(qtrack.getTrack()), queue.size());
+            updateMusicPanels();
             return 0;
         }
     }
@@ -133,6 +142,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         {
             int position = queue.add(qtrack);
             LOG.debug("Queued track for guild {}: {}; position={}; queueSize={}", guildId, trackSummary(qtrack.getTrack()), position + 1, queue.size());
+            updateMusicPanels();
             return position;
         }
     }
@@ -152,6 +162,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         autoplayStopQueued = false;
         suppressAutoplayOnce = playing != null;
         audioPlayer.stopTrack();
+        updateMusicPanels();
         //current = null;
     }
     
@@ -235,7 +246,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(suppressAutoplayOnce)
             {
                 suppressAutoplayOnce = false;
-                manager.getBot().getNowplayingHandler().onTrackUpdate(null);
+                manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
                 player.setPaused(false);
                 return;
             }
@@ -281,11 +292,17 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         manager.getBot().getAutoplayService().recordIfEligible(guildId, track);
         LOG.info("Track started for guild {}; volume={}; queueSize={}; track={}",
                 guildId, player.getVolume(), queue.size(), trackSummary(track));
-        manager.getBot().getNowplayingHandler().onTrackUpdate(track);
+        manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, track);
     }
 
     
     // Formatting
+    public MessageCreateData getMusicPanel(JDA jda)
+    {
+        MessageCreateData nowPlaying = getNowPlaying(jda);
+        return nowPlaying == null ? getNoMusicPlaying(jda) : nowPlaying;
+    }
+
     public MessageCreateData getNowPlaying(JDA jda)
     {
         if(isMusicPlaying(jda))
@@ -335,8 +352,19 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                     + " "+FormatUtil.progressBar(progress)
                     + " `[" + TimeUtil.formatTime(track.getPosition()) + "/" + TimeUtil.formatTime(track.getDuration()) + "]` "
                     + FormatUtil.volumeIcon(audioPlayer.getVolume()));
-            
-            return mb.setEmbeds(eb.build()).build();
+            RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
+            AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
+            eb.addField("Position", getQueuePositionText(queue.size()), true);
+            eb.addField("Queue", getQueueSummary(), true);
+            eb.addField("Repeat", formatRepeatMode(repeatMode), true);
+            eb.addField("Autoplay", formatAutoplayMode(autoplayMode), true);
+            eb.addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true);
+            if(!votes.isEmpty())
+                eb.addField("Skip Votes", "`" + votes.size() + "` vote" + (votes.size() == 1 ? "" : "s"), true);
+
+            return mb.setEmbeds(eb.build())
+                    .setComponents(nowPlayingButtons(true))
+                    .build();
         }
         else return null;
     }
@@ -355,6 +383,37 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return null;
     }
 
+    static String getQueuePositionText(int queuedTracks)
+    {
+        int totalTracks = Math.max(1, queuedTracks + 1);
+        if(totalTracks == 1)
+            return "Now `#1`";
+        return "Now `#1` of `" + totalTracks + "`";
+    }
+
+    private String getQueueSummary()
+    {
+        int queuedTracks = queue.size();
+        if(queuedTracks == 0)
+            return "`0` waiting";
+
+        long total = 0L;
+        for(QueuedTrack queuedTrack : queue.getList())
+            total += Math.max(0L, queuedTrack.getTrack().getDuration());
+        return "`" + queuedTracks + "` waiting | `" + TimeUtil.formatTime(total) + "`";
+    }
+
+    private static String formatRepeatMode(RepeatMode repeatMode)
+    {
+        String emoji = repeatMode.getEmoji();
+        return (emoji == null ? "" : emoji + " ") + "`" + repeatMode.getUserFriendlyName() + "`";
+    }
+
+    private static String formatAutoplayMode(AutoplayMode autoplayMode)
+    {
+        return "`" + autoplayMode.getUserFriendlyName() + "`";
+    }
+
     private static boolean isYouTubeTrack(AudioTrack track)
     {
         return track.getSourceManager() != null
@@ -370,12 +429,45 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 .setTitle("No music playing")
                 .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1)+" "+FormatUtil.volumeIcon(audioPlayer.getVolume()))
                 .setColor(guild.getSelfMember().getColor())
-                .build()).build();
+                .addField("Queue", "`0` waiting", true)
+                .addField("Repeat", formatRepeatMode(manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode()), true)
+                .addField("Autoplay", formatAutoplayMode(manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode()), true)
+                .addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true)
+                .build())
+                .setComponents(nowPlayingButtons(false))
+                .build();
     }
 
     public String getStatusEmoji()
     {
         return audioPlayer.isPaused() ? PAUSE_EMOJI : PLAY_EMOJI;
+    }
+
+    public void updateMusicPanels()
+    {
+        manager.getBot().getNowplayingHandler().updatePanels(guildId);
+    }
+
+    private List<ActionRow> nowPlayingButtons(boolean enabled)
+    {
+        String playPauseLabel = audioPlayer.isPaused() ? "Resume" : "Pause";
+        return List.of(ActionRow.of(
+                Button.primary(NowplayingHandler.BUTTON_PLAY_PAUSE, playPauseLabel)
+                        .withEmoji(Emoji.fromUnicode(PLAY_PAUSE_EMOJI))
+                        .withDisabled(!enabled),
+                Button.secondary(NowplayingHandler.BUTTON_SKIP, "Skip")
+                        .withEmoji(Emoji.fromUnicode(SKIP_EMOJI))
+                        .withDisabled(!enabled),
+                Button.secondary(NowplayingHandler.BUTTON_LOOP, "Loop")
+                        .withEmoji(Emoji.fromUnicode(REPEAT_EMOJI))
+                        .withDisabled(!enabled),
+                Button.secondary(NowplayingHandler.BUTTON_LYRICS, "Lyrics")
+                        .withEmoji(Emoji.fromUnicode(LYRICS_EMOJI))
+                        .withDisabled(!enabled),
+                Button.danger(NowplayingHandler.BUTTON_STOP, "Stop")
+                        .withEmoji(Emoji.fromUnicode(STOP_EMOJI))
+                        .withDisabled(!enabled)
+        ));
     }
     
     // Audio Send Handler methods
@@ -438,7 +530,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private void finishEmptyQueue(AudioPlayer player)
     {
-        manager.getBot().getNowplayingHandler().onTrackUpdate(null);
+        manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
         if(!manager.getBot().getConfig().getStay())
         {
             LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
@@ -448,8 +540,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         {
             LOG.info("Queue empty for guild {}; staying connected because stayinchannel=true", guildId);
         }
-        // unpause, in the case when the player was paused and the track has been skipped.
-        // this is to prevent the player being paused next time it's being used.
+        // Unpause in case the player was paused when the track was skipped.
         player.setPaused(false);
     }
 

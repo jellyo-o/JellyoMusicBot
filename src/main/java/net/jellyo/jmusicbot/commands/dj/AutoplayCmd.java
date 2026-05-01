@@ -63,6 +63,7 @@ public class AutoplayCmd extends DJCommand implements UnifiedCommand
         }
 
         settings.setAutoplayMode(value);
+        bot.getNowplayingHandler().updatePanels(event.getGuild());
         event.replySuccess("Autoplay mode is now `" + value.getUserFriendlyName() + "`");
     }
 
