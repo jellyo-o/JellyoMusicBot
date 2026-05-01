@@ -60,7 +60,7 @@ class LrclibLyricsProvider implements LyricsProvider
                 LyricsResult candidate = toResult(item);
                 if(candidate == null || !candidate.hasLyrics())
                     continue;
-                double score = score(scoringQuery, candidate);
+                double score = Math.max(score(scoringQuery, candidate), score(providerQuery, candidate));
                 if(score > bestScore)
                 {
                     bestScore = score;

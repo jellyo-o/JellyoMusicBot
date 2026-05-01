@@ -13,6 +13,9 @@ public final class InputValidator
     private static final Pattern CONTROL_CHARS = Pattern.compile("[\\p{Cntrl}&&[^\n\r\t]]");
     private static final Pattern DIACRITICS = Pattern.compile("\\p{M}+");
     private static final Pattern BRACKETED_TEXT = Pattern.compile("\\s*[\\[(][^\\])]*(official|video|audio|lyrics?|lyric video|visualizer|remaster|remastered|4k|hd|mv)[^\\])]*[\\])]\\s*", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SECONDARY_DELIMITER = Pattern.compile("\\s+[|\\u2022\\u00B7]\\s+");
+    private static final Pattern TRAILING_COVER_ATTRIBUTION = Pattern.compile("(?i)\\s+\\(?\\s*(cover(?:ed)?(?:\\s+by)?|originally\\s+by|version\\s+by)\\b.*$");
+    private static final Pattern BRACKETED_COVER_ARTIST = Pattern.compile("[\\[(]([^\\])]{2,80}?)\\s+(cover|covered)[^\\])]*[\\])]", Pattern.CASE_INSENSITIVE);
     private static final Pattern GENIUS_URL = Pattern.compile("^(https?://)?(www\\.)?genius\\.com/[-a-zA-Z0-9_/.]*?-lyrics/?$", Pattern.CASE_INSENSITIVE);
     private static final Pattern GENIUS_PATH = Pattern.compile("^/[-a-zA-Z0-9_/.]*?-lyrics/?$", Pattern.CASE_INSENSITIVE);
     private static final String[] NOISE_PHRASES = {
@@ -100,6 +103,7 @@ public final class InputValidator
         for(String phrase : NOISE_PHRASES)
             q = q.replaceAll("(?i)\\b" + Pattern.quote(phrase) + "\\b", " ");
         q = q.replaceAll("(?i)\\b(feat\\.?|ft\\.?|featuring)\\b.*$", " ");
+        q = trimAtSecondaryDelimiter(q);
         q = q.replaceAll("[\"'`]", " ");
         q = q.replaceAll(" +", " ").trim();
         return q.isEmpty() ? null : q;
@@ -126,6 +130,8 @@ public final class InputValidator
         addLookupTerm(terms, query);
         String cleaned = cleanSongQuery(query);
         addLookupTerm(terms, cleaned);
+        for(String candidate : attributionCandidates(query))
+            addLookupTerm(terms, candidate);
 
         String[] artistTitle = splitArtistTitle(query);
         if(artistTitle != null)
@@ -143,6 +149,8 @@ public final class InputValidator
         LinkedHashSet<String> queries = new LinkedHashSet<>();
         addProviderQuery(queries, sanitizeQuery(query));
         addProviderQuery(queries, cleanSongQuery(query));
+        for(String candidate : attributionCandidates(query))
+            addProviderQuery(queries, candidate);
 
         String[] artistTitle = splitArtistTitle(query);
         if(artistTitle != null)
@@ -165,5 +173,91 @@ public final class InputValidator
     {
         if(raw != null && !raw.isBlank())
             queries.add(raw.trim());
+    }
+
+    private static Set<String> attributionCandidates(String raw)
+    {
+        LinkedHashSet<String> candidates = new LinkedHashSet<>();
+        addAttributionCandidates(candidates, sanitizeQuery(raw));
+        addAttributionCandidates(candidates, cleanSongQuery(raw));
+        addBracketedCoverCandidates(candidates, sanitizeQuery(raw));
+        return candidates;
+    }
+
+    private static void addAttributionCandidates(Set<String> candidates, String raw)
+    {
+        if(raw == null || raw.isBlank())
+            return;
+
+        String base = trimAtSecondaryDelimiter(raw);
+        addProviderQuery(candidates, base);
+
+        String[] parts = splitDashPair(base);
+        if(parts == null)
+            return;
+
+        String left = cleanAttributionSide(parts[0]);
+        String right = cleanAttributionSide(parts[1]);
+        if(left.isEmpty() || right.isEmpty())
+            return;
+
+        addProviderQuery(candidates, left + " " + right);
+        addProviderQuery(candidates, right + " " + left);
+        addProviderQuery(candidates, right + " - " + left);
+    }
+
+    private static void addBracketedCoverCandidates(Set<String> candidates, String raw)
+    {
+        if(raw == null || raw.isBlank())
+            return;
+
+        java.util.regex.Matcher matcher = BRACKETED_COVER_ARTIST.matcher(raw);
+        while(matcher.find())
+        {
+            String coverArtist = cleanAttributionSide(matcher.group(1));
+            if(coverArtist.isEmpty())
+                continue;
+
+            String withoutBracket = BRACKETED_COVER_ARTIST.matcher(raw).replaceAll(" ").replaceAll(" +", " ").trim();
+            String[] parts = splitDashPair(withoutBracket);
+            String title = parts == null ? cleanAttributionSide(withoutBracket) : cleanAttributionSide(parts[1]);
+            if(!title.isEmpty())
+            {
+                addProviderQuery(candidates, coverArtist + " " + title);
+                addProviderQuery(candidates, coverArtist + " - " + title);
+            }
+        }
+    }
+
+    private static String trimAtSecondaryDelimiter(String raw)
+    {
+        if(raw == null)
+            return null;
+        String[] parts = SECONDARY_DELIMITER.split(raw, 2);
+        return parts[0].trim();
+    }
+
+    private static String[] splitDashPair(String raw)
+    {
+        if(raw == null || !raw.contains(" - "))
+            return null;
+        String[] parts = raw.split("\\s+-\\s+", 2);
+        if(parts.length != 2)
+            return null;
+        String left = parts[0].trim();
+        String right = parts[1].trim();
+        if(left.isEmpty() || right.isEmpty())
+            return null;
+        return new String[]{left, right};
+    }
+
+    private static String cleanAttributionSide(String raw)
+    {
+        if(raw == null)
+            return "";
+        String side = TRAILING_COVER_ATTRIBUTION.matcher(raw).replaceAll(" ");
+        side = side.replaceAll("[\"'`]", " ");
+        side = side.replaceAll(" +", " ").trim();
+        return side;
     }
 }

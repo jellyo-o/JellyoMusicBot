@@ -26,6 +26,19 @@ public class LyricsCacheTest
     }
 
     @Test
+    public void coverAttributionTitleFindsOriginalArtistCachedSong() throws Exception
+    {
+        LyricsCache cache = newCache();
+        cache.insertOrUpdate(result("lrclib", "1", "lrclib:1", "OneRepublic", "Counting Stars"),
+                Set.of("OneRepublic - Counting Stars"));
+
+        Optional<LyricsCache.CachedLyrics> match = cache.findBestMatch("Counting Stars - OneRepublic | Alex Goot, Chrissy Costanza, KHS");
+
+        assertTrue(match.isPresent());
+        assertEquals("lrclib:1", match.get().path());
+    }
+
+    @Test
     public void titleOnlyLookupDoesNotPickAmbiguousArtistCollision() throws Exception
     {
         LyricsCache cache = newCache();
