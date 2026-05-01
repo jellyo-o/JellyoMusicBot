@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>net.jellyo</groupId>
     <artifactId>JMusicBot</artifactId>
-    <version>2026.5.0-a3</version>
+    <version>2026.5.0-b1</version>
     <packaging>jar</packaging>
 
     <repositories>
