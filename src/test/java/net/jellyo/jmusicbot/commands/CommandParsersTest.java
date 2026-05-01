@@ -17,6 +17,7 @@ package com.jagrosh.jmusicbot.commands;
 
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -87,6 +88,27 @@ public class CommandParsersTest
     public void queueTypeRejectsInvalidName()
     {
         CommandParsers.parseQueueType("random");
+    }
+
+    @Test
+    public void autoplayModeAcceptsPrefixAndSlashAliases()
+    {
+        assertEquals(AutoplayMode.SMART, CommandParsers.parseAutoplayMode("", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.OFF, CommandParsers.parseAutoplayMode("", AutoplayMode.SMART));
+        assertEquals(AutoplayMode.OFF, CommandParsers.parseAutoplayMode("off", AutoplayMode.SMART));
+        assertEquals(AutoplayMode.SMART, CommandParsers.parseAutoplayMode("on", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.SMART, CommandParsers.parseAutoplayMode("true", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.SMART, CommandParsers.parseAutoplayMode("radio", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.RELATED, CommandParsers.parseAutoplayMode("related", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.ARTIST, CommandParsers.parseAutoplayMode("artist", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.PLAYLIST, CommandParsers.parseAutoplayMode("playlist", AutoplayMode.OFF));
+        assertEquals(AutoplayMode.SERVER, CommandParsers.parseAutoplayMode("server", AutoplayMode.OFF));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void autoplayModeRejectsInvalidMode()
+    {
+        CommandParsers.parseAutoplayMode("random", AutoplayMode.OFF);
     }
 
     @Test

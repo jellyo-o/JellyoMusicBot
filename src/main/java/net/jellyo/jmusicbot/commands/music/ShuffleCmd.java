@@ -59,6 +59,7 @@ public class ShuffleCmd extends MusicCommand implements UnifiedCommand
                 event.replyWarning("You only have one song in the queue!");
                 break;
             default:
+                handler.updateMusicPanels();
                 event.replySuccess("You successfully shuffled your "+s+" entries.");
                 break;
         }

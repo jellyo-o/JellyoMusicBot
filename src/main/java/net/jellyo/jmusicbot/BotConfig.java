@@ -37,6 +37,8 @@ import net.dv8tion.jda.api.entities.Activity;
  */
 public class BotConfig
 {
+    public static final long DEFAULT_AUTOPLAY_MAX_DURATION_MS = 10 * 60 * 1000L;
+
     private final Prompt prompt;
     private final static String CONTEXT = "Config";
     private final static String START_TOKEN = "/// START OF JMUSICBOT CONFIG ///";
@@ -49,7 +51,7 @@ public class BotConfig
     private YouTubeUtil.RoutingPlanner ytRoutingPlanner;
     private List<IpBlock> ytIpBlocks;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots;
-    private long owner, maxSeconds, aloneTimeUntilStop;
+    private long owner, maxSeconds, autoplayMaxDurationMillis, aloneTimeUntilStop;
     private int maxYTPlaylistPages;
     private double skipratio;
     private OnlineStatus status;
@@ -101,6 +103,9 @@ public class BotConfig
             useEval = config.getBoolean("eval");
             evalEngine = config.getString("evalengine");
             maxSeconds = config.getLong("maxtime");
+            autoplayMaxDurationMillis = parseAutoplayMaxDuration(config.hasPath("autoplaymaxtime")
+                    ? config.getValue("autoplaymaxtime").unwrapped()
+                    : null);
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
@@ -378,6 +383,16 @@ public class BotConfig
     {
         return maxSeconds;
     }
+
+    public long getAutoplayMaxDurationMillis()
+    {
+        return autoplayMaxDurationMillis;
+    }
+
+    public String getAutoplayMaxTime()
+    {
+        return TimeUtil.formatTime(autoplayMaxDurationMillis);
+    }
     
     public int getMaxYTPlaylistPages()
     {
@@ -399,6 +414,21 @@ public class BotConfig
         if(maxSeconds<=0)
             return false;
         return Math.round(track.getDuration()/1000.0) > maxSeconds;
+    }
+
+    static long parseAutoplayMaxDuration(Object value)
+    {
+        if(value == null)
+            return DEFAULT_AUTOPLAY_MAX_DURATION_MS;
+
+        String raw = value.toString().trim();
+        if(raw.isEmpty())
+            return DEFAULT_AUTOPLAY_MAX_DURATION_MS;
+
+        TimeUtil.SeekTime time = TimeUtil.parseTime(raw);
+        if(time == null || time.relative || time.milliseconds <= 0)
+            return DEFAULT_AUTOPLAY_MAX_DURATION_MS;
+        return time.milliseconds;
     }
 
     public String[] getAliases(String command)

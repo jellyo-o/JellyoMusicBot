@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot.commands;
 
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 
@@ -63,6 +64,18 @@ public final class CommandParsers
     public static QueueType parseQueueType(String args)
     {
         return QueueType.valueOf(normalize(args).toUpperCase());
+    }
+
+    public static AutoplayMode parseAutoplayMode(String args, AutoplayMode currentMode)
+    {
+        String normalized = normalize(args);
+        if(normalized.isEmpty())
+            return currentMode == AutoplayMode.OFF ? AutoplayMode.SMART : AutoplayMode.OFF;
+        if(normalized.equals("false") || normalized.equals("off") || normalized.equals("disable") || normalized.equals("disabled"))
+            return AutoplayMode.OFF;
+        if(normalized.equals("true") || normalized.equals("on") || normalized.equals("radio"))
+            return AutoplayMode.SMART;
+        return AutoplayMode.valueOf(normalized.toUpperCase());
     }
 
     public static int parsePosition(String args)

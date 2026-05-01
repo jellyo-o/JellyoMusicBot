@@ -24,6 +24,7 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.events.guild.GuildJoinEvent;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
+import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageDeleteEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.events.session.ShutdownEvent;
@@ -106,6 +107,12 @@ public class Listener extends ListenerAdapter
     public void onMessageDelete(MessageDeleteEvent event)
     {
         bot.getNowplayingHandler().onMessageDelete(event.getGuild(), event.getMessageIdLong());
+    }
+
+    @Override
+    public void onButtonInteraction(ButtonInteractionEvent event)
+    {
+        bot.getNowplayingHandler().onButtonInteraction(event);
     }
 
     @Override

@@ -333,7 +333,8 @@ public class PlayCmd extends MusicCommand
                                 failed.incrementAndGet();
                                 return;
                             }
-                            handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
+                            handler.addTrack(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getAuthor(), playlist.getId(),
+                                    playlist.getName(), track, event.getTextChannel().getIdLong())));
                             loaded.incrementAndGet();
                         }
 

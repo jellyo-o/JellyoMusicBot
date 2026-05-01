@@ -83,6 +83,10 @@ public class SkipCmd extends MusicCommand implements UnifiedCommand
                     + "** " + (rm.getOwner() == 0L ? "(autoplay)" : "(requested by **" + FormatUtil.formatUsername(rm.user) + "**)");
                 handler.getPlayer().stopTrack();
             }
+            else
+            {
+                handler.updateMusicPanels();
+            }
             event.reply(msg);
         }
     }

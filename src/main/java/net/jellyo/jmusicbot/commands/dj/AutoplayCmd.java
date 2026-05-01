@@ -1,5 +1,5 @@
 /*
- * Copyright 2018 John Grosh <john.a.grosh@gmail.com>.
+ * Copyright 2026 Jellyo.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,32 +22,27 @@ import com.jagrosh.jmusicbot.commands.CommandParsers;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.UnifiedCommand;
-import com.jagrosh.jmusicbot.settings.RepeatMode;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 
-/**
- *
- * @author John Grosh <john.a.grosh@gmail.com>
- */
-public class RepeatCmd extends DJCommand implements UnifiedCommand
+public class AutoplayCmd extends DJCommand implements UnifiedCommand
 {
-    public RepeatCmd(Bot bot)
+    public AutoplayCmd(Bot bot)
     {
         super(bot);
-        this.name = "repeat";
-        this.help = "re-adds music to the queue when finished";
-        this.arguments = "[off|all|single]";
+        this.name = "autoplay";
+        this.help = "sets automatic radio playback when the queue ends";
+        this.arguments = "[off|smart|related|artist|playlist|server]";
         this.aliases = java.util.stream.Stream.concat(
                 java.util.Arrays.stream(bot.getConfig().getAliases(this.name)),
-                java.util.stream.Stream.of("loop"))
+                java.util.stream.Stream.of("radio"))
                 .distinct()
                 .toArray(String[]::new);
         this.guildOnly = true;
     }
-    
-    // override musiccommand's execute because we don't actually care where this is used
+
     @Override
-    protected void execute(CommandEvent event) 
+    protected void execute(CommandEvent event)
     {
         doCommand(new MessageCommandContext(event));
     }
@@ -55,21 +50,21 @@ public class RepeatCmd extends DJCommand implements UnifiedCommand
     @Override
     public void doCommand(CommandContext event)
     {
-        String args = event.getArgs();
-        RepeatMode value;
         Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
+        AutoplayMode value;
         try
         {
-            value = CommandParsers.parseRepeatMode(args, settings.getRepeatMode());
+            value = CommandParsers.parseAutoplayMode(event.getArgs(), settings.getAutoplayMode());
         }
         catch(IllegalArgumentException ex)
         {
-            event.replyError("Valid options are `off`, `all` or `single` (or leave empty to toggle between `off` and `all`)");
+            event.replyError("Valid options are `" + String.join("`, `", AutoplayMode.getNames()) + "` (or leave empty to toggle smart mode)");
             return;
         }
-        settings.setRepeatMode(value);
+
+        settings.setAutoplayMode(value);
         bot.getNowplayingHandler().updatePanels(event.getGuild());
-        event.replySuccess("Repeat mode is now `"+value.getUserFriendlyName()+"`");
+        event.replySuccess("Autoplay mode is now `" + value.getUserFriendlyName() + "`");
     }
 
     @Override

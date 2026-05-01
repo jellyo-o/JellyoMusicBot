@@ -64,7 +64,10 @@ public class RemoveCmd extends MusicCommand implements UnifiedCommand
             if(count==0)
                 event.replyWarning("You don't have any songs in the queue!");
             else
+            {
+                handler.updateMusicPanels();
                 event.replySuccess("Successfully removed your "+count+" entries.");
+            }
             return;
         }
         int pos;
@@ -83,11 +86,13 @@ public class RemoveCmd extends MusicCommand implements UnifiedCommand
         if(qt.getIdentifier()==event.getAuthor().getIdLong())
         {
             handler.getQueue().remove(pos-1);
+            handler.updateMusicPanels();
             event.replySuccess("Removed **"+qt.getTrack().getInfo().title+"** from the queue");
         }
         else if(isDJ)
         {
             handler.getQueue().remove(pos-1);
+            handler.updateMusicPanels();
             User u;
             try {
                 u = event.getJDA().getUserById(qt.getIdentifier());

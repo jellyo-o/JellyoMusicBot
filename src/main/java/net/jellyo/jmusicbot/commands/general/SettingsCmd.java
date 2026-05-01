@@ -18,6 +18,7 @@ package com.jagrosh.jmusicbot.commands.general;
 import com.jagrosh.jdautilities.command.Command;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
@@ -64,6 +65,9 @@ public class SettingsCmd extends Command
                         + "\nRepeat Mode: " + (s.getRepeatMode() == RepeatMode.OFF
                                                 ? s.getRepeatMode().getUserFriendlyName()
                                                 : "**"+s.getRepeatMode().getUserFriendlyName()+"**")
+                        + "\nAutoplay Mode: " + (s.getAutoplayMode() == AutoplayMode.OFF
+                                                ? s.getAutoplayMode().getUserFriendlyName()
+                                                : "**"+s.getAutoplayMode().getUserFriendlyName()+"**")
                         + "\nQueue Type: " + (s.getQueueType() == QueueType.FAIR
                                                 ? s.getQueueType().getUserFriendlyName()
                                                 : "**"+s.getQueueType().getUserFriendlyName()+"**")
