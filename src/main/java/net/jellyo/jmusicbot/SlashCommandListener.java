@@ -82,7 +82,7 @@ public class SlashCommandListener extends ListenerAdapter
     private final static Logger LOG = LoggerFactory.getLogger(SlashCommandListener.class);
     private static final int MAX_AUTOCOMPLETE_CHOICES = 25;
     private static final int MAX_AUTOCOMPLETE_LENGTH = 100;
-    private static final int MAX_SEARCH_RESULTS = 4;
+    private static final int MAX_SEARCH_RESULTS = 5;
     private static final long SEARCH_MENU_EXPIRATION_MS = 15 * 60 * 1000L;
     private static final String SEARCH_MENU_PREFIX = "jmb-search:";
     private final Bot bot;
@@ -118,6 +118,7 @@ public class SlashCommandListener extends ListenerAdapter
 
         // General commands
         commands.add(Commands.slash("about", "Shows information about the bot"));
+        commands.add(Commands.slash("help", "Shows available commands"));
         commands.add(Commands.slash("ping", "Checks the bot latency"));
         commands.add(Commands.slash("settings", "Shows the bot settings"));
 
@@ -150,10 +151,16 @@ public class SlashCommandListener extends ListenerAdapter
         // DJ commands
         commands.add(Commands.slash("forceskip", "Force skip the current song"));
         commands.add(Commands.slash("pause", "Pause or resume the current song"));
+        commands.add(Commands.slash("resume", "Resume the current song if paused"));
         commands.add(Commands.slash("stop", "Stop playback and clear the queue"));
         commands.add(Commands.slash("volume", "Set or show the volume")
                 .addOptions(new OptionData(OptionType.INTEGER, "level", "Volume level (0-150)", false)));
         commands.add(Commands.slash("repeat", "Toggle repeat mode")
+                .addOptions(new OptionData(OptionType.STRING, "mode", "Repeat mode", false)
+                        .addChoice("off", "off")
+                        .addChoice("all", "all")
+                        .addChoice("single", "single")));
+        commands.add(Commands.slash("loop", "Toggle repeat mode")
                 .addOptions(new OptionData(OptionType.STRING, "mode", "Repeat mode", false)
                         .addChoice("off", "off")
                         .addChoice("all", "all")
@@ -232,6 +239,7 @@ public class SlashCommandListener extends ListenerAdapter
         switch (commandName)
         {
             case "about": handleAbout(event); break;
+            case "help": handleHelp(event); break;
             case "ping": handlePing(event); break;
             case "settings": handleSettings(event); break;
             case "play": handlePlay(event, false); break;
@@ -250,9 +258,11 @@ public class SlashCommandListener extends ListenerAdapter
             case "scsearch": handleSearch(event, "scsearch:", "SoundCloud"); break;
             case "forceskip": handleForceSkip(event); break;
             case "pause": handlePause(event); break;
+            case "resume": handleResume(event); break;
             case "stop": handleStop(event); break;
             case "volume": handleVolume(event); break;
             case "repeat": handleRepeat(event); break;
+            case "loop": handleRepeat(event); break;
             case "skipto": handleSkipTo(event); break;
             case "movetrack": handleMoveTrack(event); break;
             case "playnext": handlePlayNext(event); break;
@@ -537,6 +547,91 @@ public class SlashCommandListener extends ListenerAdapter
                         restPing -> hook.editOriginal("Pong! Gateway: `" + gatewayPing + "ms`, REST: `" + restPing + "ms`").queue(),
                         err -> LOG.warn("Failed to retrieve REST ping", err)
                 ));
+    }
+
+    private void handleHelp(SlashCommandInteractionEvent event)
+    {
+        String prefix = getPrefixForHelp(event);
+        EmbedBuilder eb = new EmbedBuilder()
+                .setColor(event.getGuild().getSelfMember().getColor())
+                .setTitle(event.getJDA().getSelfUser().getName() + " Commands")
+                .setDescription("Use either the prefix command or the slash command shown. Owner-only maintenance commands remain prefix-only.");
+
+        addHelpFields(eb, "General", new String[][]{
+                {"help", "help", "Show this command list"},
+                {"about", "about", "Show bot information"},
+                {"ping", "ping", "Check bot latency"},
+                {"settings", "settings", "Show bot settings"}
+        }, prefix);
+        addHelpFields(eb, "Music", new String[][]{
+                {"play <title|URL>", "play query:<title|URL>", "Play a song or URL"},
+                {"play playlist <name>", "playplaylist name:<name>", "Play a saved playlist"},
+                {"playtop <title|URL>", "playtop query:<title|URL>", "Add a song to the top of the queue"},
+                {"playlists", "playlists", "List saved playlists"},
+                {"nowplaying", "nowplaying", "Show the current song"},
+                {"queue [page]", "queue [page]", "Show the queue"},
+                {"search <query>", "search query:<query>", "Search YouTube and choose a result"},
+                {"scsearch <query>", "scsearch query:<query>", "Search SoundCloud and choose a result"},
+                {"skip", "skip", "Vote to skip"},
+                {"remove <position|all>", "remove position:<position|all>", "Remove queued songs"},
+                {"shuffle", "shuffle", "Shuffle your queued songs"},
+                {"seek <time>", "seek time:<time>", "Seek the current song"},
+                {"lyrics [song]", "lyrics [query]", "Fetch lyrics"},
+                {"correctlyrics <genius-url>", "correctlyrics url:<genius-url>", "Correct the last lyrics result"}
+        }, prefix);
+        addHelpFields(eb, "DJ", new String[][]{
+                {"forceskip", "forceskip", "Force skip"},
+                {"pause", "pause", "Pause or resume playback"},
+                {"pause", "resume", "Resume only if paused"},
+                {"stop", "stop", "Stop playback and clear the queue"},
+                {"volume [0-150]", "volume [level]", "Show or set volume"},
+                {"repeat [off|all|single]", "repeat [mode]", "Set repeat mode"},
+                {"loop [off|all|single]", "loop [mode]", "Alias for repeat"},
+                {"skipto <position>", "skipto position:<position>", "Skip to a queue position"},
+                {"movetrack <from> <to>", "movetrack from:<from> to:<to>", "Move a queued track"},
+                {"playnext <title|URL>", "playnext query:<title|URL>", "Play a song next"},
+                {"forceremove <user>", "forceremove user:<user>", "Remove a user's queued songs"}
+        }, prefix);
+        addHelpFields(eb, "Admin", new String[][]{
+                {"prefix <prefix|none>", "prefix prefix:<prefix|none>", "Set server prefix"},
+                {"setdj <role|none>", "setdj [role]", "Set DJ role"},
+                {"settc <channel|none>", "settc [channel]", "Restrict music text channel"},
+                {"setvc <channel|none>", "setvc [channel]", "Restrict music voice channel"},
+                {"setskip <0-100>", "setskip percent:<0-100>", "Set skip percentage"},
+                {"", "skipratio [ratio]", "Show or set skip ratio"},
+                {"queuetype [fair|linear]", "queuetype [type]", "Show or set queue type"}
+        }, prefix);
+
+        event.replyEmbeds(eb.build()).setEphemeral(true).queue();
+    }
+
+    private String getPrefixForHelp(SlashCommandInteractionEvent event)
+    {
+        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
+        String prefix = settings.getPrefix() == null ? bot.getConfig().getPrefix() : settings.getPrefix();
+        if ("@mention".equalsIgnoreCase(prefix))
+            return "@" + event.getJDA().getSelfUser().getName() + " ";
+        return prefix;
+    }
+
+    private void addHelpFields(EmbedBuilder eb, String category, String[][] commands, String prefix)
+    {
+        StringBuilder sb = new StringBuilder();
+        int part = 1;
+        for (String[] command : commands)
+        {
+            String line = (command[0].isEmpty() ? "" : "`" + prefix + command[0] + "` | ")
+                    + "`/" + command[1] + "` - " + command[2] + "\n";
+            if (sb.length() + line.length() > 1000)
+            {
+                eb.addField(part == 1 ? category : category + " " + part, sb.toString(), false);
+                sb.setLength(0);
+                part++;
+            }
+            sb.append(line);
+        }
+        if (sb.length() > 0)
+            eb.addField(part == 1 ? category : category + " " + part, sb.toString(), false);
     }
 
     private void handleSettings(SlashCommandInteractionEvent event)
@@ -1041,6 +1136,26 @@ public class SlashCommandListener extends ListenerAdapter
             handler.getPlayer().setPaused(true);
             event.reply(bot.getConfig().getSuccess() + " Paused **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**. Use `/pause` again to resume.").queue();
         }
+    }
+
+    private void handleResume(SlashCommandInteractionEvent event)
+    {
+        if (!checkDJPermission(event))
+        {
+            event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
+            return;
+        }
+        if (!checkVoiceState(event, true)) return;
+
+        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+        if (!handler.getPlayer().isPaused())
+        {
+            event.reply(bot.getConfig().getWarning() + " The player is not paused.").setEphemeral(true).queue();
+            return;
+        }
+
+        handler.getPlayer().setPaused(false);
+        event.reply(bot.getConfig().getSuccess() + " Resumed **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**").queue();
     }
 
     private void handleStop(SlashCommandInteractionEvent event)

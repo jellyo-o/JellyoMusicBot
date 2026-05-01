@@ -57,10 +57,10 @@ public class SlashCommandListenerTest
             names.add(command.getName());
 
         String[] expected = {
-                "about", "ping", "settings",
+                "about", "help", "ping", "settings",
                 "play", "playtop", "playplaylist", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
-                "forceskip", "pause", "stop", "volume", "repeat", "skipto", "movetrack", "playnext", "forceremove",
+                "forceskip", "pause", "resume", "stop", "volume", "repeat", "loop", "skipto", "movetrack", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
         };
 

@@ -33,7 +33,11 @@ public class RepeatCmd extends DJCommand
         this.name = "repeat";
         this.help = "re-adds music to the queue when finished";
         this.arguments = "[off|all|single]";
-        this.aliases = bot.getConfig().getAliases(this.name);
+        this.aliases = java.util.stream.Stream.concat(
+                java.util.Arrays.stream(bot.getConfig().getAliases(this.name)),
+                java.util.stream.Stream.of("loop"))
+                .distinct()
+                .toArray(String[]::new);
         this.guildOnly = true;
     }
     
