@@ -53,6 +53,6 @@ public class ForceskipCmd extends DJCommand implements UnifiedCommand
         RequestMetadata rm = handler.getRequestMetadata();
         event.reply(event.getSuccess()+" Skipped **"+handler.getPlayer().getPlayingTrack().getInfo().title
                 +"** "+(rm.isAutoplay() ? "(autoplay)" : rm.getOwner() == 0L ? "" : "(requested by **" + FormatUtil.formatUsername(rm.user) + "**)"));
-        handler.getPlayer().stopTrack();
+        handler.skipCurrentTrack(event.getAuthor(), "forceskip");
     }
 }

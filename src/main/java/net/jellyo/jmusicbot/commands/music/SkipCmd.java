@@ -59,7 +59,7 @@ public class SkipCmd extends MusicCommand implements UnifiedCommand
         if(event.getAuthor().getIdLong() == rm.getOwner() || skipRatio == 0)
         {
             event.reply(event.getSuccess()+" Skipped **"+handler.getPlayer().getPlayingTrack().getInfo().title+"**");
-            handler.getPlayer().stopTrack();
+            handler.skipCurrentTrack(event.getAuthor(), "skip");
         }
         else
         {
@@ -81,7 +81,7 @@ public class SkipCmd extends MusicCommand implements UnifiedCommand
             {
                 msg += "\n" + event.getSuccess() + " Skipped **" + handler.getPlayer().getPlayingTrack().getInfo().title
                     + "** " + (rm.getOwner() == 0L ? "(autoplay)" : "(requested by **" + FormatUtil.formatUsername(rm.user) + "**)");
-                handler.getPlayer().stopTrack();
+                handler.skipCurrentTrack(event.getAuthor(), "vote_skip");
             }
             else
             {

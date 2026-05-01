@@ -47,12 +47,13 @@ public class BotConfig
     private Path path = null;
     private String token, prefix, altprefix, helpWord, playlistsFolder, logLevel,
             successEmoji, warningEmoji, errorEmoji, loadingEmoji, searchingEmoji,
-            ytPoToken, ytVisitorData, evalEngine;
+            ytPoToken, ytVisitorData, evalEngine, dashboardBindAddress, dashboardDatabase;
     private YouTubeUtil.RoutingPlanner ytRoutingPlanner;
     private List<IpBlock> ytIpBlocks;
-    private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots;
+    private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots,
+            dashboardEnabled;
     private long owner, maxSeconds, autoplayMaxDurationMillis, aloneTimeUntilStop;
-    private int maxYTPlaylistPages;
+    private int maxYTPlaylistPages, dashboardPort;
     private double skipratio;
     private OnlineStatus status;
     private Activity game;
@@ -102,6 +103,10 @@ public class BotConfig
             logLevel = config.getString("loglevel");
             useEval = config.getBoolean("eval");
             evalEngine = config.getString("evalengine");
+            dashboardEnabled = config.getBoolean("dashboard.enabled");
+            dashboardPort = config.getInt("dashboard.port");
+            dashboardBindAddress = config.getString("dashboard.bindaddress");
+            dashboardDatabase = config.getString("dashboard.database");
             maxSeconds = config.getLong("maxtime");
             autoplayMaxDurationMillis = parseAutoplayMaxDuration(config.hasPath("autoplaymaxtime")
                     ? config.getValue("autoplaymaxtime").unwrapped()
@@ -120,6 +125,9 @@ public class BotConfig
 
             spotifyID     = config.getString("spotifyid");
             spotifySecret = config.getString("spotifysecret");
+
+            if(dashboardPort < 1 || dashboardPort > 65535)
+                throw new ConfigException.BadValue("dashboard.port", "Port must be between 1 and 65535.");
             
             // we may need to write a new config file
             boolean write = false;
@@ -450,4 +458,24 @@ public class BotConfig
 
     public String getSpotifyID()     { return spotifyID; }
     public String getSpotifySecret() { return spotifySecret; }
+
+    public boolean isDashboardEnabled()
+    {
+        return dashboardEnabled;
+    }
+
+    public int getDashboardPort()
+    {
+        return dashboardPort;
+    }
+
+    public String getDashboardBindAddress()
+    {
+        return dashboardBindAddress;
+    }
+
+    public String getDashboardDatabase()
+    {
+        return dashboardDatabase;
+    }
 }

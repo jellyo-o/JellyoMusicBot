@@ -16,6 +16,8 @@
 package com.jagrosh.jmusicbot.audio;
 
 import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
+import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
+import com.jagrosh.jmusicbot.dashboard.DashboardStatsService.SkipInfo;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
@@ -80,6 +82,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private long lastPlaylistId;
     private boolean autoplayStopQueued = false;
     private boolean suppressAutoplayOnce = false;
+    private String currentStatsSessionKey;
+    private long currentTrackStartedAt;
+    private SkipInfo pendingSkip;
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player)
     {
@@ -223,6 +228,17 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 return true;
         return false;
     }
+
+    public long getCurrentTrackStartedAt()
+    {
+        return currentTrackStartedAt;
+    }
+
+    public void skipCurrentTrack(User actor, String skipType)
+    {
+        pendingSkip = SkipInfo.fromUser(actor, skipType);
+        audioPlayer.stopTrack();
+    }
     
     public RequestMetadata getRequestMetadata()
     {
@@ -237,6 +253,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) 
     {
         RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
+        SkipInfo skipInfo = endReason == AudioTrackEndReason.STOPPED ? pendingSkip : null;
+        recordTrackEnd(track, endReason, skipInfo);
+        currentStatsSessionKey = null;
+        currentTrackStartedAt = 0L;
+        pendingSkip = null;
         LOG.info("Track ended for guild {}; reason={}; mayStartNext={}; repeatMode={}; queueSize={}; track={}",
                 guildId, endReason, endReason.mayStartNext, repeatMode, queue.size(), trackSummary(track));
         // if the track ended normally, and we're in repeat mode, re-add it to the queue
@@ -278,19 +299,24 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     @Override
     public void onTrackException(AudioPlayer player, AudioTrack track, FriendlyException exception) {
         LOG.error("Track failed to play for guild {}: {}", guildId, trackSummary(track), exception);
+        recordTrackIssue(track, "track_exception", exception.getMessage());
     }
 
     @Override
     public void onTrackStuck(AudioPlayer player, AudioTrack track, long thresholdMs)
     {
         LOG.warn("Track stuck for guild {} after {}ms: {}", guildId, thresholdMs, trackSummary(track));
+        recordTrackIssue(track, "track_stuck", "Stuck after " + thresholdMs + "ms");
     }
 
     @Override
     public void onTrackStart(AudioPlayer player, AudioTrack track) 
     {
         votes.clear();
+        pendingSkip = null;
         autoplayStopQueued = false;
+        currentTrackStartedAt = System.currentTimeMillis();
+        recordTrackStart(player, track);
         rememberRecentTrack(track);
         RequestMetadata metadata = track.getUserData(RequestMetadata.class);
         if(metadata != null && metadata.origin == RequestMetadata.Origin.SAVED_PLAYLIST)
@@ -383,7 +409,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         else return null;
     }
 
-    static String getNowPlayingThumbnail(AudioTrack track)
+    public static String getNowPlayingThumbnail(AudioTrack track)
     {
         if(track == null)
             return null;
@@ -588,6 +614,40 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(track.getInfo() != null && track.getInfo().uri != null && !track.getInfo().uri.isEmpty())
             keys.add(track.getInfo().uri);
         return keys;
+    }
+
+    private void recordTrackStart(AudioPlayer player, AudioTrack track)
+    {
+        DashboardStatsService stats = manager.getBot().getDashboardStats();
+        JDA jda = manager.getBot().getJDA();
+        if(stats == null || jda == null)
+            return;
+
+        Guild guild = guild(jda);
+        if(guild == null)
+            return;
+
+        currentStatsSessionKey = stats.recordTrackStart(guild, player, track, queue == null ? 0 : queue.size());
+    }
+
+    private void recordTrackEnd(AudioTrack track, AudioTrackEndReason endReason, SkipInfo skipInfo)
+    {
+        DashboardStatsService stats = manager.getBot().getDashboardStats();
+        if(stats == null)
+            return;
+
+        Guild guild = manager.getBot().getJDA() == null ? null : guild(manager.getBot().getJDA());
+        stats.recordTrackEnd(currentStatsSessionKey, guildId, guild == null ? null : guild.getName(), track, endReason, skipInfo);
+    }
+
+    private void recordTrackIssue(AudioTrack track, String eventType, String detail)
+    {
+        DashboardStatsService stats = manager.getBot().getDashboardStats();
+        if(stats == null)
+            return;
+
+        Guild guild = manager.getBot().getJDA() == null ? null : guild(manager.getBot().getJDA());
+        stats.recordTrackIssue(guildId, guild == null ? null : guild.getName(), track, eventType, detail);
     }
 
     private static String trackSummary(AudioTrack track)
