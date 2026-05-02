@@ -279,13 +279,19 @@ public class DashboardStatsService
 
         try(Connection connection = openConnection())
         {
+            JSONArray guilds = queryGuildStats(connection, safeGuildLimit);
             JSONObject snapshot = new JSONObject();
             snapshot.put("summary", querySummary(connection));
             snapshot.put("requesters", queryRequesterStats(connection, safeRequesterLimit));
-            snapshot.put("guilds", queryGuildStats(connection, safeGuildLimit));
+            snapshot.put("guilds", guilds);
+            snapshot.put("serverDetails", queryGuildDetails(connection, guilds,
+                    Math.min(12, safeRecentLimit),
+                    Math.min(10, safeTrackLimit),
+                    Math.min(10, safeRequesterLimit)));
             snapshot.put("tracks", queryTopTracks(connection, safeTrackLimit, false));
             snapshot.put("skippedTracks", queryTopTracks(connection, safeTrackLimit, true));
             snapshot.put("sources", querySourceStats(connection));
+            snapshot.put("history", queryPlaybackHistory(connection, safeRecentLimit, null));
             snapshot.put("recent", queryRecentEvents(connection, safeRecentLimit));
             snapshot.put("hourly", queryHourlyStats(connection, safeHourlyLimit));
             snapshot.put("daily", queryDailyStats(connection, 14));
@@ -365,8 +371,21 @@ public class DashboardStatsService
 
     private JSONArray queryTopTracks(Connection connection, int limit, boolean skippedOnly) throws SQLException
     {
+        return queryTopTracks(connection, limit, skippedOnly, null);
+    }
+
+    private JSONArray queryTopTracks(Connection connection, int limit, boolean skippedOnly, Long guildId) throws SQLException
+    {
         long now = System.currentTimeMillis();
-        String where = skippedOnly ? "WHERE skipped=1 " : "";
+        String where;
+        if(skippedOnly && guildId != null)
+            where = "WHERE skipped=1 AND guild_id=? ";
+        else if(skippedOnly)
+            where = "WHERE skipped=1 ";
+        else if(guildId != null)
+            where = "WHERE guild_id=? ";
+        else
+            where = "";
         String sql = "SELECT COALESCE(NULLIF(track_uri, ''), NULLIF(track_identifier, ''), track_title) AS track_key,"
                 + "COALESCE(MAX(track_title), 'Unknown track') AS track_title,"
                 + "MAX(track_author) AS track_author,"
@@ -386,8 +405,11 @@ public class DashboardStatsService
                 + "LIMIT ?";
         try(PreparedStatement ps = connection.prepareStatement(sql))
         {
-            ps.setLong(1, now);
-            ps.setInt(2, limit);
+            int index = 1;
+            ps.setLong(index++, now);
+            if(guildId != null)
+                ps.setLong(index++, guildId);
+            ps.setInt(index, limit);
             try(ResultSet rs = ps.executeQuery())
             {
                 JSONArray tracks = new JSONArray();
@@ -418,18 +440,27 @@ public class DashboardStatsService
 
     private JSONArray querySourceStats(Connection connection) throws SQLException
     {
+        return querySourceStats(connection, null);
+    }
+
+    private JSONArray querySourceStats(Connection connection, Long guildId) throws SQLException
+    {
         long now = System.currentTimeMillis();
+        String where = guildId == null ? "" : "WHERE guild_id=? ";
         String sql = "SELECT COALESCE(NULLIF(track_source, ''), 'unknown') AS source,"
                 + "COUNT(*) AS plays,"
                 + "COALESCE(SUM(CASE WHEN ended_at IS NULL THEN MAX(0, ? - started_at) ELSE played_ms END), 0) AS played_ms,"
                 + "COALESCE(SUM(CASE WHEN skipped=1 THEN 1 ELSE 0 END), 0) AS skips,"
                 + "COUNT(DISTINCT COALESCE(NULLIF(track_uri, ''), NULLIF(track_identifier, ''), track_title)) AS tracks "
                 + "FROM dashboard_playback_sessions "
+                + where
                 + "GROUP BY source "
                 + "ORDER BY plays DESC, played_ms DESC";
         try(PreparedStatement ps = connection.prepareStatement(sql))
         {
             ps.setLong(1, now);
+            if(guildId != null)
+                ps.setLong(2, guildId);
             try(ResultSet rs = ps.executeQuery())
             {
                 JSONArray sources = new JSONArray();
@@ -450,6 +481,11 @@ public class DashboardStatsService
 
     private JSONArray queryRequesterStats(Connection connection, int limit) throws SQLException
     {
+        return queryRequesterStats(connection, limit, null);
+    }
+
+    private JSONArray queryRequesterStats(Connection connection, int limit, Long guildId) throws SQLException
+    {
         long now = System.currentTimeMillis();
         String sql = "SELECT requester_id,"
                 + "COALESCE(MAX(requester_name), 'Unknown') AS requester_name,"
@@ -460,13 +496,17 @@ public class DashboardStatsService
                 + "MAX(started_at) AS last_requested_at "
                 + "FROM dashboard_playback_sessions "
                 + "WHERE requester_id IS NOT NULL AND requester_id != 0 "
+                + (guildId == null ? "" : "AND guild_id=? ")
                 + "GROUP BY requester_id "
                 + "ORDER BY songs DESC, played_ms DESC, last_requested_at DESC "
                 + "LIMIT ?";
         try(PreparedStatement ps = connection.prepareStatement(sql))
         {
-            ps.setLong(1, now);
-            ps.setInt(2, limit);
+            int index = 1;
+            ps.setLong(index++, now);
+            if(guildId != null)
+                ps.setLong(index++, guildId);
+            ps.setInt(index, limit);
             try(ResultSet rs = ps.executeQuery())
             {
                 JSONArray requesters = new JSONArray();
@@ -495,7 +535,11 @@ public class DashboardStatsService
                 + "COUNT(*) AS songs,"
                 + "COALESCE(SUM(CASE WHEN ended_at IS NULL THEN MAX(0, ? - started_at) ELSE played_ms END), 0) AS played_ms,"
                 + "COALESCE(SUM(CASE WHEN skipped=1 THEN 1 ELSE 0 END), 0) AS skips,"
+                + "COALESCE(SUM(CASE WHEN end_reason='FINISHED' THEN 1 ELSE 0 END), 0) AS completed_songs,"
+                + "COALESCE(SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END), 0) AS active_sessions,"
                 + "COUNT(DISTINCT CASE WHEN requester_id IS NOT NULL AND requester_id != 0 THEN requester_id END) AS requesters,"
+                + "COUNT(DISTINCT COALESCE(NULLIF(track_uri, ''), NULLIF(track_identifier, ''), track_title)) AS tracks,"
+                + "COUNT(DISTINCT COALESCE(NULLIF(track_source, ''), 'unknown')) AS sources,"
                 + "MAX(started_at) AS last_played_at "
                 + "FROM dashboard_playback_sessions "
                 + "GROUP BY guild_id "
@@ -510,19 +554,60 @@ public class DashboardStatsService
                 JSONArray guilds = new JSONArray();
                 while(rs.next())
                 {
+                    long songs = rs.getLong("songs");
+                    long playedMs = rs.getLong("played_ms");
+                    long skips = rs.getLong("skips");
+                    long completedSongs = rs.getLong("completed_songs");
                     JSONObject guild = new JSONObject();
                     guild.put("id", Long.toString(rs.getLong("guild_id")));
                     guild.put("name", rs.getString("guild_name"));
-                    guild.put("songs", rs.getLong("songs"));
-                    guild.put("playedMs", rs.getLong("played_ms"));
-                    guild.put("skips", rs.getLong("skips"));
+                    guild.put("songs", songs);
+                    guild.put("playedMs", playedMs);
+                    guild.put("minutesPlayed", Math.round(playedMs / 60000.0));
+                    guild.put("averagePlayedMs", songs == 0 ? 0 : Math.round((double)playedMs / songs));
+                    guild.put("skips", skips);
+                    guild.put("completedSongs", completedSongs);
+                    guild.put("activeSessions", rs.getLong("active_sessions"));
+                    guild.put("skipRate", songs == 0 ? 0 : skips / (double)songs);
+                    guild.put("completionRate", songs == 0 ? 0 : completedSongs / (double)songs);
                     guild.put("requesters", rs.getLong("requesters"));
+                    guild.put("tracks", rs.getLong("tracks"));
+                    guild.put("sources", rs.getLong("sources"));
                     guild.put("lastPlayedAt", rs.getLong("last_played_at"));
                     guilds.put(guild);
                 }
                 return guilds;
             }
         }
+    }
+
+    private JSONArray queryGuildDetails(Connection connection, JSONArray guilds, int historyLimit, int trackLimit, int requesterLimit) throws SQLException
+    {
+        JSONArray details = new JSONArray();
+        for(int i = 0; i < guilds.length(); i++)
+        {
+            JSONObject guild = guilds.getJSONObject(i);
+            long guildId;
+            try
+            {
+                guildId = Long.parseLong(guild.getString("id"));
+            }
+            catch(NumberFormatException ex)
+            {
+                continue;
+            }
+
+            JSONObject detail = new JSONObject();
+            detail.put("id", guild.getString("id"));
+            detail.put("name", guild.optString("name", "Unknown server"));
+            detail.put("summary", new JSONObject(guild.toString()));
+            detail.put("history", queryPlaybackHistory(connection, historyLimit, guildId));
+            detail.put("topTracks", queryTopTracks(connection, trackLimit, false, guildId));
+            detail.put("requesters", queryRequesterStats(connection, requesterLimit, guildId));
+            detail.put("sources", querySourceStats(connection, guildId));
+            details.put(detail);
+        }
+        return details;
     }
 
     private JSONArray queryRecentEvents(Connection connection, int limit) throws SQLException
@@ -552,6 +637,67 @@ public class DashboardStatsService
                     recent.put(event);
                 }
                 return recent;
+            }
+        }
+    }
+
+    private JSONArray queryPlaybackHistory(Connection connection, int limit, Long guildId) throws SQLException
+    {
+        long now = System.currentTimeMillis();
+        String sql = "SELECT session_key, guild_id, guild_name, voice_channel_id, voice_channel_name, "
+                + "track_identifier, track_title, track_author, track_uri, track_source, duration_ms, "
+                + "requester_id, requester_name, requester_avatar, request_query, started_at, ended_at, "
+                + "CASE WHEN ended_at IS NULL THEN MAX(0, ? - started_at) ELSE played_ms END AS effective_played_ms, "
+                + "end_reason, skipped, skip_actor_id, skip_actor_name, skip_type, queue_size_at_start, volume "
+                + "FROM dashboard_playback_sessions "
+                + (guildId == null ? "" : "WHERE guild_id=? ")
+                + "ORDER BY started_at DESC LIMIT ?";
+        try(PreparedStatement ps = connection.prepareStatement(sql))
+        {
+            int index = 1;
+            ps.setLong(index++, now);
+            if(guildId != null)
+                ps.setLong(index++, guildId);
+            ps.setInt(index, limit);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                JSONArray history = new JSONArray();
+                while(rs.next())
+                {
+                    JSONObject row = new JSONObject();
+                    row.put("sessionKey", rs.getString("session_key"));
+                    row.put("guild", new JSONObject()
+                            .put("id", Long.toString(rs.getLong("guild_id")))
+                            .put("name", rs.getString("guild_name")));
+                    row.put("channel", new JSONObject()
+                            .put("id", nullableLongId(rs, "voice_channel_id"))
+                            .put("name", rs.getString("voice_channel_name")));
+                    row.put("track", new JSONObject()
+                            .put("identifier", rs.getString("track_identifier"))
+                            .put("title", rs.getString("track_title"))
+                            .put("author", rs.getString("track_author"))
+                            .put("uri", rs.getString("track_uri"))
+                            .put("source", rs.getString("track_source"))
+                            .put("durationMs", rs.getLong("duration_ms")));
+                    row.put("requester", new JSONObject()
+                            .put("id", nullableLongId(rs, "requester_id"))
+                            .put("name", rs.getString("requester_name"))
+                            .put("avatar", rs.getString("requester_avatar"))
+                            .put("query", rs.getString("request_query")));
+                    row.put("startedAt", rs.getLong("started_at"));
+                    row.put("endedAt", nullableLongValue(rs, "ended_at"));
+                    row.put("playedMs", rs.getLong("effective_played_ms"));
+                    row.put("endReason", rs.getString("end_reason"));
+                    row.put("skipped", rs.getInt("skipped") == 1);
+                    row.put("skipActor", new JSONObject()
+                            .put("id", nullableLongId(rs, "skip_actor_id"))
+                            .put("name", rs.getString("skip_actor_name")));
+                    row.put("skipType", rs.getString("skip_type"));
+                    row.put("queueSizeAtStart", rs.getInt("queue_size_at_start"));
+                    row.put("volume", rs.getInt("volume"));
+                    history.put(row);
+                }
+                return history;
             }
         }
     }
@@ -730,6 +876,18 @@ public class DashboardStatsService
             ps.setNull(index, Types.BIGINT);
         else
             ps.setLong(index, value);
+    }
+
+    private static Object nullableLongId(ResultSet rs, String column) throws SQLException
+    {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? JSONObject.NULL : Long.toString(value);
+    }
+
+    private static Object nullableLongValue(ResultSet rs, String column) throws SQLException
+    {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? JSONObject.NULL : value;
     }
 
     private static int clamp(int value, int min, int max)

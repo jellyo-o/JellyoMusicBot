@@ -1,9 +1,12 @@
 const state = {
   lastSnapshot: null,
   loading: false,
+  selectedHistoryGuild: "global",
+  selectedServerId: "",
 };
 
 const THEME_STORAGE_KEY = "jmusicbot.dashboard.theme";
+const SNAPSHOT_URL = "/api/snapshot?requesters=50&recent=80&hours=24&tracks=50";
 const number = new Intl.NumberFormat();
 
 const els = {
@@ -39,6 +42,17 @@ const els = {
   hourOfDayChart: document.getElementById("hour-of-day-chart"),
   trendNotes: document.getElementById("trend-notes"),
   eventList: document.getElementById("event-list"),
+  historyServerSelect: document.getElementById("history-server-select"),
+  historyList: document.getElementById("history-list"),
+  historyCount: document.getElementById("history-count"),
+  serverSelect: document.getElementById("server-select"),
+  serverDetailTitle: document.getElementById("server-detail-title"),
+  serverDetailMeta: document.getElementById("server-detail-meta"),
+  serverSummaryStats: document.getElementById("server-summary-stats"),
+  serverTrackList: document.getElementById("server-track-list"),
+  serverRequesterList: document.getElementById("server-requester-list"),
+  serverSourceList: document.getElementById("server-source-list"),
+  serverHistoryList: document.getElementById("server-history-list"),
 };
 
 function setTheme(theme, persist = true) {
@@ -81,6 +95,7 @@ function setupTabs() {
         panel.classList.toggle("active", active);
         panel.hidden = !active;
       });
+      button.scrollIntoView({ block: "nearest", inline: "center" });
     });
   });
 }
@@ -127,6 +142,52 @@ function timeAgo(ts) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function formatDateTime(ts) {
+  if (!ts) return "--";
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function historyStatus(row) {
+  if (!row.endedAt) return "Playing";
+  if (row.skipped) return row.skipType ? `Skipped · ${titleCase(row.skipType)}` : "Skipped";
+  return titleCase(row.endReason || "Ended");
+}
+
+function serverDetails(snapshot) {
+  return snapshot.serverDetails || [];
+}
+
+function syncServerSelect(select, details, currentValue, includeGlobal, globalLabel) {
+  const validIds = new Set(details.map((detail) => String(detail.id)));
+  const fallback = includeGlobal ? "global" : (details[0] ? String(details[0].id) : "");
+  const selected = (includeGlobal && currentValue === "global") || validIds.has(String(currentValue))
+    ? String(currentValue)
+    : fallback;
+  const options = [];
+  if (includeGlobal) {
+    options.push(`<option value="global">${escapeHtml(globalLabel)}</option>`);
+  }
+  options.push(...details.map((detail) => `
+    <option value="${escapeHtml(detail.id)}">${escapeHtml(detail.name || "Unknown server")}</option>
+  `));
+  select.innerHTML = options.join("");
+  select.value = selected;
+  select.disabled = !details.length && !includeGlobal;
+  return selected;
 }
 
 function setStatus(snapshot, failed = false) {
@@ -223,14 +284,13 @@ function renderNowPlaying(snapshot) {
   }).join("");
 }
 
-function renderRequesters(snapshot) {
-  const requesters = snapshot.requesters || [];
+function renderRequesterRows(target, requesters, emptyText) {
   if (!requesters.length) {
-    els.requesterList.innerHTML = `<div class="empty-state">No requester stats yet</div>`;
+    target.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
-  els.requesterList.innerHTML = requesters.slice(0, 10).map((requester, index) => `
+  target.innerHTML = requesters.slice(0, 10).map((requester, index) => `
     <div class="requester-row">
       <div class="rank">${index + 1}</div>
       <div>
@@ -240,6 +300,10 @@ function renderRequesters(snapshot) {
       <div class="requester-stat">${number.format(requester.songs || 0)}</div>
     </div>
   `).join("");
+}
+
+function renderRequesters(snapshot) {
+  renderRequesterRows(els.requesterList, snapshot.requesters || [], "No requester stats yet");
 }
 
 function renderTrackList(target, tracks, emptyText, skippedMode = false) {
@@ -267,15 +331,14 @@ function renderTracks(snapshot) {
   renderTrackList(els.skippedTrackList, skippedTracks, "No skipped tracks yet", true);
 }
 
-function renderSources(snapshot) {
-  const sources = snapshot.sources || [];
+function renderSourceRows(target, sources, emptyText) {
   if (!sources.length) {
-    els.sourceList.innerHTML = `<div class="empty-state">No source data yet</div>`;
+    target.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
     return;
   }
 
   const max = Math.max(...sources.map((source) => source.plays || 0), 1);
-  els.sourceList.innerHTML = sources.map((source) => {
+  target.innerHTML = sources.map((source) => {
     const width = Math.max(3, Math.round(((source.plays || 0) / max) * 100));
     return `
       <div class="source-row">
@@ -285,6 +348,10 @@ function renderSources(snapshot) {
       </div>
     `;
   }).join("");
+}
+
+function renderSources(snapshot) {
+  renderSourceRows(els.sourceList, snapshot.sources || [], "No source data yet");
 }
 
 function renderTrackDiversity(snapshot) {
@@ -314,11 +381,98 @@ function renderGuildList(snapshot) {
       <div class="rank">${index + 1}</div>
       <div>
         <strong>${escapeHtml(guild.name || "Unknown server")}</strong>
-        <span>${formatMinutes(guild.playedMs)} min · ${number.format(guild.requesters || 0)} requesters · ${number.format(guild.skips || 0)} skips</span>
+        <span>${formatMinutes(guild.playedMs)} min · ${number.format(guild.tracks || 0)} tracks · ${number.format(guild.requesters || 0)} requesters · ${formatPercent(guild.skipRate)} skipped</span>
       </div>
       <div class="requester-stat">${number.format(guild.songs || 0)}</div>
     </div>
   `).join("");
+}
+
+function renderHistoryRows(target, history, emptyText, showServer = true) {
+  if (!history.length) {
+    target.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+
+  target.innerHTML = history.map((row) => {
+    const track = row.track || {};
+    const guild = row.guild || {};
+    const channel = row.channel || {};
+    const requester = row.requester || {};
+    const status = historyStatus(row);
+    const serverMeta = showServer ? `${escapeHtml(guild.name || "Unknown server")} · ` : "";
+    const requesterName = requester.name || "Autoplay or unknown";
+    return `
+      <div class="history-row">
+        <div class="history-main">
+          <strong>${escapeHtml(track.title || "Unknown track")}</strong>
+          <span>${escapeHtml(track.author || sourceName(track.source))} · ${serverMeta}${escapeHtml(requesterName)}</span>
+          <small>${escapeHtml(channel.name || "No voice channel")} · ${escapeHtml(formatDateTime(row.startedAt))}</small>
+        </div>
+        <div class="history-metrics">
+          <span class="status-pill ${row.skipped ? "warn" : (!row.endedAt ? "live" : "")}">${escapeHtml(status)}</span>
+          <span>${formatMs(row.playedMs || 0)} played</span>
+          <span>${row.endedAt ? timeAgo(row.endedAt) : "live now"}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderHistory(snapshot) {
+  const details = serverDetails(snapshot);
+  state.selectedHistoryGuild = syncServerSelect(
+    els.historyServerSelect,
+    details,
+    state.selectedHistoryGuild,
+    true,
+    "Global"
+  );
+  const selectedDetail = details.find((detail) => String(detail.id) === state.selectedHistoryGuild);
+  const history = state.selectedHistoryGuild === "global"
+    ? (snapshot.history || [])
+    : (selectedDetail?.history || []);
+  els.historyCount.textContent = `${number.format(history.length)} ${history.length === 1 ? "session" : "sessions"}`;
+  renderHistoryRows(
+    els.historyList,
+    history,
+    state.selectedHistoryGuild === "global" ? "No song history yet" : "No song history for this server yet",
+    state.selectedHistoryGuild === "global"
+  );
+}
+
+function renderServerDetail(snapshot) {
+  const details = serverDetails(snapshot);
+  state.selectedServerId = syncServerSelect(els.serverSelect, details, state.selectedServerId, false, "");
+  const detail = details.find((item) => String(item.id) === state.selectedServerId);
+  if (!detail) {
+    els.serverDetailTitle.textContent = "Server Stats";
+    els.serverDetailMeta.textContent = "No server playback yet";
+    els.serverSummaryStats.innerHTML = `<div class="empty-state">No server playback yet</div>`;
+    renderTrackList(els.serverTrackList, [], "No server tracks yet");
+    renderRequesterRows(els.serverRequesterList, [], "No server requesters yet");
+    renderSourceRows(els.serverSourceList, [], "No server source data yet");
+    renderHistoryRows(els.serverHistoryList, [], "No server song history yet", false);
+    return;
+  }
+
+  const summary = detail.summary || {};
+  els.serverDetailTitle.textContent = detail.name || "Unknown server";
+  els.serverDetailMeta.textContent = `${number.format(summary.songs || 0)} songs · ${formatMinutes(summary.playedMs)} min · last played ${timeAgo(summary.lastPlayedAt)}`;
+  els.serverSummaryStats.innerHTML = `
+    <div class="server-stat"><span>Songs</span><strong>${number.format(summary.songs || 0)}</strong></div>
+    <div class="server-stat"><span>Listened</span><strong>${formatMinutes(summary.playedMs)}m</strong></div>
+    <div class="server-stat"><span>Unique Tracks</span><strong>${number.format(summary.tracks || 0)}</strong></div>
+    <div class="server-stat"><span>Requesters</span><strong>${number.format(summary.requesters || 0)}</strong></div>
+    <div class="server-stat"><span>Completion</span><strong>${formatPercent(summary.completionRate)}</strong></div>
+    <div class="server-stat"><span>Skip Rate</span><strong>${formatPercent(summary.skipRate)}</strong></div>
+    <div class="server-stat"><span>Avg Play</span><strong>${formatMs(summary.averagePlayedMs || 0)}</strong></div>
+    <div class="server-stat"><span>Sources</span><strong>${number.format(summary.sources || 0)}</strong></div>
+  `;
+  renderTrackList(els.serverTrackList, detail.topTracks || [], "No server tracks yet");
+  renderRequesterRows(els.serverRequesterList, detail.requesters || [], "No server requesters yet");
+  renderSourceRows(els.serverSourceList, detail.sources || [], "No server source data yet");
+  renderHistoryRows(els.serverHistoryList, detail.history || [], "No server song history yet", false);
 }
 
 function renderBarChart(target, buckets, emptyText, valueSelector, labelSelector) {
@@ -406,11 +560,13 @@ function render(snapshot) {
   renderInsights(snapshot);
   renderServers(snapshot);
   renderNowPlaying(snapshot);
+  renderHistory(snapshot);
   renderRequesters(snapshot);
   renderTracks(snapshot);
   renderSources(snapshot);
   renderTrackDiversity(snapshot);
   renderGuildList(snapshot);
+  renderServerDetail(snapshot);
   renderCharts(snapshot);
   renderTrendNotes(snapshot);
   renderEvents(snapshot);
@@ -422,7 +578,7 @@ async function loadSnapshot() {
   els.refreshButton.disabled = true;
 
   try {
-    const response = await fetch("/api/snapshot", { cache: "no-store" });
+    const response = await fetch(SNAPSHOT_URL, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     render(await response.json());
   } catch (error) {
@@ -436,6 +592,14 @@ async function loadSnapshot() {
 
 setupTheme();
 setupTabs();
+els.historyServerSelect.addEventListener("change", () => {
+  state.selectedHistoryGuild = els.historyServerSelect.value;
+  if (state.lastSnapshot) renderHistory(state.lastSnapshot);
+});
+els.serverSelect.addEventListener("change", () => {
+  state.selectedServerId = els.serverSelect.value;
+  if (state.lastSnapshot) renderServerDetail(state.lastSnapshot);
+});
 els.refreshButton.addEventListener("click", loadSnapshot);
 loadSnapshot();
 setInterval(loadSnapshot, 5000);

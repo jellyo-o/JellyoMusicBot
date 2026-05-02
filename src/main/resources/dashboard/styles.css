@@ -68,6 +68,7 @@ body {
 }
 
 button,
+select,
 table {
   font: inherit;
 }
@@ -82,10 +83,27 @@ button {
   cursor: pointer;
 }
 
+select {
+  min-height: 38px;
+  max-width: 240px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--text);
+  padding: 0 34px 0 12px;
+}
+
 button:hover,
-button:focus-visible {
+button:focus-visible,
+select:hover,
+select:focus-visible {
   border-color: var(--teal);
   outline: none;
+}
+
+button:focus-visible,
+select:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 24%, transparent);
 }
 
 .app-shell {
@@ -416,9 +434,11 @@ dd {
   gap: 8px;
   margin: 0 0 14px;
   overflow-x: auto;
+  scroll-padding: 18px;
 }
 
 .tab-button {
+  flex: 0 0 auto;
   min-height: 36px;
   padding: 0 16px;
   color: var(--muted);
@@ -471,6 +491,28 @@ dd {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
+  margin-bottom: 14px;
+}
+
+.panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.select-label {
+  display: inline-grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.full-panel {
   margin-bottom: 14px;
 }
 
@@ -564,6 +606,115 @@ td {
   color: var(--text);
   font-size: 13px;
   font-weight: 750;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 13px;
+  border: 1px solid var(--row-line);
+  border-radius: 8px;
+  background: var(--row-bg);
+}
+
+.history-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.history-main strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-main span,
+.history-main small,
+.history-metrics span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-main span,
+.history-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--mint) 45%, var(--line));
+  border-radius: 999px;
+  padding: 0 9px;
+  color: var(--mint);
+  background: color-mix(in srgb, var(--mint) 10%, transparent);
+  white-space: nowrap;
+}
+
+.status-pill.warn {
+  border-color: color-mix(in srgb, var(--amber) 50%, var(--line));
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
+}
+
+.status-pill.live {
+  border-color: color-mix(in srgb, var(--teal) 50%, var(--line));
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+}
+
+.server-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.server-stat {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid var(--row-line);
+  border-radius: 8px;
+  background: var(--row-bg);
+}
+
+.server-stat span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.server-stat strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  overflow-wrap: anywhere;
 }
 
 .chart {
@@ -701,6 +852,10 @@ td {
     grid-template-columns: 1fr 1fr;
   }
 
+  .server-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .now-panel {
     grid-column: 1 / -1;
   }
@@ -716,6 +871,23 @@ td {
     flex-direction: column;
   }
 
+  .panel-head {
+    flex-direction: column;
+  }
+
+  .panel-actions {
+    width: 100%;
+    align-items: stretch;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .select-label,
+  select {
+    width: 100%;
+    max-width: none;
+  }
+
   .topbar-actions {
     width: 100%;
     justify-content: space-between;
@@ -725,7 +897,8 @@ td {
   .metric-grid,
   .insight-grid,
   .content-grid,
-  .lower-grid {
+  .lower-grid,
+  .server-stat-grid {
     grid-template-columns: 1fr;
   }
 
@@ -805,5 +978,19 @@ td {
 
   .source-row {
     grid-template-columns: 1fr;
+  }
+
+  .history-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .history-metrics {
+    justify-content: flex-start;
+  }
+
+  .history-main span,
+  .history-main small {
+    white-space: normal;
   }
 }

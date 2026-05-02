@@ -119,7 +119,9 @@
 
         <nav class="tabs" role="tablist" aria-label="Dashboard analytics">
           <button class="tab-button active" type="button" role="tab" aria-selected="true" data-tab="overview">Overview</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="history">History</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="tracks">Tracks</button>
+          <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="servers">Servers</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="people">People</button>
           <button class="tab-button" type="button" role="tab" aria-selected="false" data-tab="trends">Trends</button>
         </nav>
@@ -160,6 +162,27 @@
               <div class="event-list" id="event-list"></div>
             </article>
           </section>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="history" hidden>
+          <article class="panel full-panel">
+            <div class="panel-head">
+              <div>
+                <h3>Song History</h3>
+                <p>Playback sessions without duplicate start and stop events</p>
+              </div>
+              <div class="panel-actions">
+                <span id="history-count">0 sessions</span>
+                <label class="select-label" for="history-server-select">
+                  <span>Server</span>
+                  <select id="history-server-select">
+                    <option value="global">Global</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="history-list" id="history-list"></div>
+          </article>
         </section>
 
         <section class="tab-panel" data-tab-panel="tracks" hidden>
@@ -204,6 +227,68 @@
                 </div>
               </div>
               <div class="stat-list" id="track-diversity"></div>
+            </article>
+          </section>
+        </section>
+
+        <section class="tab-panel" data-tab-panel="servers" hidden>
+          <article class="panel full-panel">
+            <div class="panel-head">
+              <div>
+                <h3 id="server-detail-title">Server Stats</h3>
+                <p id="server-detail-meta">Select a server to inspect playback patterns</p>
+              </div>
+              <div class="panel-actions">
+                <label class="select-label" for="server-select">
+                  <span>Server</span>
+                  <select id="server-select"></select>
+                </label>
+              </div>
+            </div>
+            <div class="server-stat-grid" id="server-summary-stats"></div>
+          </article>
+
+          <section class="content-grid server-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Server Top Tracks</h3>
+                  <p>Most played songs in the selected server</p>
+                </div>
+              </div>
+              <div class="leaderboard analytics-list" id="server-track-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Server Requesters</h3>
+                  <p>Most active requesters in the selected server</p>
+                </div>
+              </div>
+              <div class="leaderboard" id="server-requester-list"></div>
+            </article>
+          </section>
+
+          <section class="content-grid lower-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Server Source Mix</h3>
+                  <p>Source breakdown for the selected server</p>
+                </div>
+              </div>
+              <div class="source-list" id="server-source-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Server Song History</h3>
+                  <p>Recent playback sessions in the selected server</p>
+                </div>
+              </div>
+              <div class="history-list compact-history" id="server-history-list"></div>
             </article>
           </section>
         </section>
