@@ -78,10 +78,8 @@ public class NowplayingHandler
     public static final String BUTTON_STOP = "jmb-np:stop";
     private static final String BUTTON_STOP_CONFIRM_PREFIX = "jmb-np:stop-confirm:";
     private static final String BUTTON_STOP_CANCEL_PREFIX = "jmb-np:stop-cancel:";
-    private static final long PANEL_REFRESH_SECONDS = Math.max(10L,
-            Long.getLong("jmusicbot.nowplaying.refreshSeconds", 15L));
     private static final long PANEL_MIN_EDIT_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(Math.max(5L,
-            Long.getLong("jmusicbot.nowplaying.minEditSeconds", 10L)));
+            Long.getLong("jmusicbot.nowplaying.minEditSeconds", 15L)));
     private static final long PANEL_INTERACTIVE_EDIT_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(Math.max(2L,
             Long.getLong("jmusicbot.nowplaying.interactiveEditSeconds", 2L)));
     private static final long PANEL_BUTTON_UPDATE_DEBOUNCE_MILLIS = Math.max(100L,
@@ -101,13 +99,13 @@ public class NowplayingHandler
     
     public void init()
     {
-        bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(),
-                PANEL_REFRESH_SECONDS, PANEL_REFRESH_SECONDS, TimeUnit.SECONDS);
+        // Panel updates are event driven. Requests are queued per panel and throttled in requestPanelUpdate.
     }
     
     public void setLastNPMessage(Message m)
     {
         rememberPanel(m.getGuild().getIdLong(), m.getChannelIdLong(), m.getIdLong());
+        markPanelUpdated(m.getGuild().getIdLong(), m.getChannelIdLong());
     }
     
     public void clearLastNPMessage(Guild guild)
@@ -133,23 +131,6 @@ public class NowplayingHandler
         showOrUpdatePanel(guild, channel, viewer, replaceExisting, success, failure);
     }
     
-    private void updateAll()
-    {
-        for(long guildId: panels.keySet())
-        {
-            try
-            {
-                Guild guild = bot.getJDA() == null ? null : bot.getJDA().getGuildById(guildId);
-                if(guild != null && isMusicPlaying(guild))
-                    updatePanels(guild, false);
-            }
-            catch(RuntimeException ex)
-            {
-                LOG.warn("Failed to update music panel for guild {}; future panel updates will continue", guildId, ex);
-            }
-        }
-    }
-
     public void updatePanels(long guildId)
     {
         updatePanels(guildId, false);
@@ -354,7 +335,11 @@ public class NowplayingHandler
             {
                 MessageCreateData msg = bot.getPlayerManager().setUpHandler(guild).getMusicPanel(bot.getJDA());
                 channel.editMessageById(existingMessageId, MessageEditData.fromCreateData(msg))
-                        .queue(m -> success.accept(PanelResult.updated(m)),
+                        .queue(m ->
+                                {
+                                    markPanelUpdated(guildId, channelId);
+                                    success.accept(PanelResult.updated(m));
+                                },
                                 t -> sendPanel(guild, channel, m -> success.accept(PanelResult.posted(m)), failure));
                 return;
             }
@@ -369,6 +354,7 @@ public class NowplayingHandler
         channel.sendMessage(msg).queue(m ->
         {
             rememberPanel(guild.getIdLong(), channel.getIdLong(), m.getIdLong());
+            markPanelUpdated(guild.getIdLong(), channel.getIdLong());
             success.accept(m);
         }, failure);
     }
@@ -387,6 +373,16 @@ public class NowplayingHandler
     private void rememberPanel(long guildId, long channelId, long messageId)
     {
         panels.computeIfAbsent(guildId, id -> new ConcurrentHashMap<>()).put(channelId, messageId);
+    }
+
+    private void markPanelUpdated(long guildId, long channelId)
+    {
+        PanelKey key = new PanelKey(guildId, channelId);
+        PanelUpdateState state = panelUpdateStates.computeIfAbsent(key, ignored -> new PanelUpdateState());
+        synchronized(state)
+        {
+            state.lastEditAt = System.currentTimeMillis();
+        }
     }
 
     private Optional<PanelReference> findVisiblePanel(Guild guild, Member viewer, long preferredChannelId)
@@ -430,16 +426,6 @@ public class NowplayingHandler
     private boolean canViewPanel(Member viewer, TextChannel channel)
     {
         return viewer != null && viewer.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY);
-    }
-
-    private boolean isMusicPlaying(Guild guild)
-    {
-        if(bot.getJDA() == null)
-            return false;
-        if(!(guild.getAudioManager().getSendingHandler() instanceof AudioHandler))
-            return false;
-        AudioHandler handler = (AudioHandler)guild.getAudioManager().getSendingHandler();
-        return handler.isMusicPlaying(bot.getJDA());
     }
 
     private void requestPanelUpdate(long guildId, long channelId, boolean bypassThrottle)
@@ -779,9 +765,17 @@ public class NowplayingHandler
         try
         {
             bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+            PlaylistTrack playlistTrack = PlaylistTrack.fromAudioTrack(track, track.getInfo().uri);
             AddResult result = bot.getUserPlaylistService().addTrack(event.getUser().getIdLong(),
-                    UserPlaylistService.LIKED_SONGS, PlaylistTrack.fromAudioTrack(track, track.getInfo().uri));
-            event.reply(formatLikeResult(track, result)).setEphemeral(true).queue();
+                    UserPlaylistService.LIKED_SONGS, playlistTrack);
+            if(result.getAdded() == 0 && result.getSkippedDuplicates() > 0)
+            {
+                Optional<PlaylistTrack> removed = bot.getUserPlaylistService().removeTrack(event.getUser().getIdLong(),
+                        UserPlaylistService.LIKED_SONGS, playlistTrack);
+                event.reply(formatUnlikeResult(track, removed.isPresent())).setEphemeral(true).queue();
+                return;
+            }
+            event.reply(formatLikeResult(track)).setEphemeral(true).queue();
         }
         catch(PlaylistException ex)
         {
@@ -789,12 +783,17 @@ public class NowplayingHandler
         }
     }
 
-    private String formatLikeResult(AudioTrack track, AddResult result)
+    private String formatLikeResult(AudioTrack track)
+    {
+        return bot.getConfig().getSuccess() + " Added **" + trackTitle(track) + "** to your Liked Songs.";
+    }
+
+    private String formatUnlikeResult(AudioTrack track, boolean removed)
     {
         String title = trackTitle(track);
-        if(result.getAdded() == 0 && result.getSkippedDuplicates() > 0)
-            return bot.getConfig().getWarning() + " **" + title + "** is already in your Liked Songs.";
-        return bot.getConfig().getSuccess() + " Added **" + title + "** to your Liked Songs.";
+        if(removed)
+            return bot.getConfig().getSuccess() + " Removed **" + title + "** from your Liked Songs.";
+        return bot.getConfig().getWarning() + " **" + title + "** was already removed from your Liked Songs.";
     }
 
     private static String queueDurationText(List<QueuedTrack> list)

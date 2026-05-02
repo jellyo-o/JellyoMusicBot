@@ -38,7 +38,7 @@ public class NowplayingHandlerTest
     @Test
     public void panelUpdateDelayKeepsRoutineUpdatesOnLongerInterval()
     {
-        assertEquals(7_000L, NowplayingHandler.computePanelUpdateDelayMillis(
-                13_000L, 10_000L, 10_000L, 0L));
+        assertEquals(12_000L, NowplayingHandler.computePanelUpdateDelayMillis(
+                13_000L, 10_000L, 15_000L, 0L));
     }
 }
