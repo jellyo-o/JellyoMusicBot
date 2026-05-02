@@ -20,6 +20,7 @@ import net.dv8tion.jda.api.interactions.commands.build.CommandData;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
+import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -151,6 +152,28 @@ public class SlashCommandListenerTest
     }
 
     @Test
+    public void paginatedCommandsUseButtonsInsteadOfPageOptions()
+    {
+        SlashCommandData queue = findSlashCommand("queue");
+        assertNotNull(queue);
+        assertTrue(queue.getOptions().isEmpty());
+
+        SlashCommandData liked = findSlashCommand("liked");
+        assertNotNull(liked);
+        assertFalse(hasOption(liked.getOptions(), "page"));
+
+        SlashCommandData playlist = findSlashCommand("playlist");
+        assertNotNull(playlist);
+        SubcommandData view = playlist.getSubcommands().stream()
+                .filter(subcommand -> "view".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(view);
+        assertFalse(hasOption(view.getOptions(), "page"));
+    }
+
+    @Test
     public void filterCommandHasExpectedPresetChoices()
     {
         SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
@@ -205,10 +228,7 @@ public class SlashCommandListenerTest
 
     private void assertOptionAutocompleteEnabled(String commandName, String optionName)
     {
-        SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
-                .filter(cmd -> commandName.equals(cmd.getName()))
-                .findFirst()
-                .orElse(null);
+        SlashCommandData command = findSlashCommand(commandName);
 
         assertNotNull(command);
         OptionData option = command.getOptions().stream()
@@ -218,5 +238,18 @@ public class SlashCommandListenerTest
 
         assertNotNull(option);
         assertTrue(option.isAutoComplete());
+    }
+
+    private SlashCommandData findSlashCommand(String commandName)
+    {
+        return SlashCommandListener.buildSlashCommands().stream()
+                .filter(cmd -> commandName.equals(cmd.getName()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean hasOption(List<OptionData> options, String optionName)
+    {
+        return options.stream().anyMatch(option -> optionName.equals(option.getName()));
     }
 }

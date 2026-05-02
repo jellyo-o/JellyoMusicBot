@@ -37,6 +37,8 @@ import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
 import com.jagrosh.jmusicbot.commands.music.HistoryCmd;
+import com.jagrosh.jmusicbot.commands.music.PlaylistViewPaginator;
+import com.jagrosh.jmusicbot.commands.music.QueueCmd;
 import com.jagrosh.jmusicbot.commands.music.RemoveCmd;
 import com.jagrosh.jmusicbot.commands.music.SeekCmd;
 import com.jagrosh.jmusicbot.commands.music.ShuffleCmd;
@@ -49,7 +51,6 @@ import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.Share;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.ShareMode;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
-import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
@@ -88,7 +89,6 @@ import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.commands.build.OptionData;
 import net.dv8tion.jda.api.interactions.commands.build.SlashCommandData;
 import net.dv8tion.jda.api.interactions.commands.build.SubcommandData;
-import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -137,6 +137,7 @@ public class SlashCommandListener extends ListenerAdapter
     private final SkiptoCmd skiptoCmd;
     private final MoveTrackCmd moveTrackCmd;
     private final HistoryCmd historyCmd;
+    private final QueueCmd queueCmd;
     private final PrefixCmd prefixCmd;
     private final SkipratioCmd skipratioCmd;
     private final QueueTypeCmd queueTypeCmd;
@@ -157,6 +158,7 @@ public class SlashCommandListener extends ListenerAdapter
         this.skiptoCmd = new SkiptoCmd(bot);
         this.moveTrackCmd = new MoveTrackCmd(bot);
         this.historyCmd = new HistoryCmd(bot);
+        this.queueCmd = new QueueCmd(bot);
         this.prefixCmd = new PrefixCmd(bot);
         this.skipratioCmd = new SkipratioCmd(bot);
         this.queueTypeCmd = new QueueTypeCmd(bot);
@@ -261,7 +263,7 @@ public class SlashCommandListener extends ListenerAdapter
                         new SubcommandData("delete", "Delete one of your playlists")
                                 .addOptions(playlistNameOption()),
                         new SubcommandData("view", "View playlist songs by index")
-                                .addOptions(playlistNameOption(), new OptionData(OptionType.INTEGER, "page", "Page number", false)),
+                                .addOptions(playlistNameOption()),
                         new SubcommandData("play", "Add a playlist to the queue")
                                 .addOptions(playlistNameOption()),
                         new SubcommandData("add", "Add a song or URL to a playlist")
@@ -300,11 +302,9 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(slashCommand("liked", "View or play your Liked Songs")
                 .addOptions(new OptionData(OptionType.STRING, "action", "Action", true)
                                 .addChoice("view", "view")
-                                .addChoice("play", "play"),
-                        new OptionData(OptionType.INTEGER, "page", "Page number", false)));
+                                .addChoice("play", "play")));
         commands.add(slashCommand("nowplaying", "Shows the currently playing song"));
-        commands.add(slashCommand("queue", "Shows the current queue")
-                .addOptions(new OptionData(OptionType.INTEGER, "page", "Page number", false)));
+        commands.add(slashCommand("queue", "Shows the current queue"));
         commands.add(slashCommand("history", "Shows the played song history")
                 .addSubcommands(
                         new SubcommandData("session", "Shows songs played since the bot joined this voice session"),
@@ -468,7 +468,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "unlike": handleUnlike(event); break;
             case "liked": handleLiked(event); break;
             case "nowplaying": handleNowPlaying(event); break;
-            case "queue": handleQueue(event); break;
+            case "queue": handleSharedMusicCommand(event, queueCmd, "", false, true, false); break;
             case "history": handleHistory(event); break;
             case "skip": handleSharedMusicCommand(event, skipCmd, "", false, true, true); break;
             case "remove": handleSharedMusicCommand(event, removeCmd, event.getOption("position").getAsString(), false, true, true); break;
@@ -919,7 +919,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"playtop <title|URL>", "playtop query:<title|URL>", "Add a song to the top of the queue"},
                 {"playlists", "playlists", "List your playlists, including followed and liked lists"},
                 {"nowplaying", "nowplaying", "Open or reuse the persistent music panel"},
-                {"queue [page]", "queue [page]", "Show the queue"},
+                {"queue", "queue", "Show the queue"},
                 {"history <session|guild>", "history <session|guild>", "Show played song history"},
                 {"search <query>", "search query:<query>", "Search YouTube and choose a result"},
                 {"scsearch <query>", "scsearch query:<query>", "Search SoundCloud and choose a result"},
@@ -1265,22 +1265,8 @@ public class SlashCommandListener extends ListenerAdapter
             return;
         }
 
-        int page = event.getOption("page") != null ? (int)event.getOption("page").getAsLong() : 1;
-        int itemsPerPage = 10;
-        int pages = (int)Math.ceil((double)items.size() / itemsPerPage);
-        page = Math.max(1, Math.min(page, pages));
-        int start = (page - 1) * itemsPerPage;
-        int end = Math.min(start + itemsPerPage, items.size());
-        StringBuilder sb = new StringBuilder();
-        for(int i = start; i < end; i++)
-            sb.append(formatPlaylistItem(i + 1, items.get(i))).append('\n');
-
-        EmbedBuilder eb = new EmbedBuilder()
-                .setColor(event.getGuild().getSelfMember().getColor())
-                .setTitle(playlist.getName() + " | " + items.size() + " songs")
-                .setDescription(sb.toString())
-                .setFooter("Page " + page + "/" + pages + (playlist.isFollowed() ? " | followed read-only" : ""));
-        event.replyEmbeds(eb.build()).setEphemeral(true).queue();
+        event.reply(PlaylistViewPaginator.buildCreateMessage(bot, event.getGuild(), event.getUser().getIdLong(),
+                playlist, items, 1)).setEphemeral(true).queue();
     }
 
     private void handlePlaylistPlay(SlashCommandInteractionEvent event, String name)
@@ -1613,18 +1599,6 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
-    private String formatPlaylistItem(int index, PlaylistTrack item)
-    {
-        String duration = item.getDuration() > 0 ? "`[" + TimeUtil.formatTime(item.getDuration()) + "]` " : "";
-        String title = item.getDisplayTitle();
-        if(item.getUrl() != null && item.getUrl().startsWith("http"))
-            title = "[**" + title + "**](" + item.getUrl() + ")";
-        else
-            title = "**" + title + "**";
-        String author = item.getAuthor() == null || item.getAuthor().isBlank() ? "" : " - " + item.getAuthor();
-        return "`" + index + ".` " + duration + title + author;
-    }
-
     private String truncateMessage(String message)
     {
         if(message.length() <= 2000)
@@ -1638,51 +1612,6 @@ public class SlashCommandListener extends ListenerAdapter
                 result -> hook.editOriginal(bot.getConfig().getSuccess() + (result.isPosted()
                         ? " Music panel posted: " : " Music panel is already active: ") + result.getJumpUrl()).queue(),
                 error -> hook.editOriginal(bot.getConfig().getError() + " I could not post the music panel in this channel.").queue()));
-    }
-
-    private void handleQueue(SlashCommandInteractionEvent event)
-    {
-        AudioHandler ah = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-        if (ah == null)
-        {
-            event.reply(bot.getConfig().getWarning() + " Nothing is currently playing.").queue();
-            return;
-        }
-        List<QueuedTrack> list = ah.getQueue().getList();
-        if (list.isEmpty())
-        {
-            MessageCreateData nowp = ah.getNowPlaying(event.getJDA());
-            if (nowp != null)
-                event.reply(bot.getConfig().getWarning() + " There is no music in the queue!").addEmbeds(nowp.getEmbeds()).queue();
-            else
-                event.reply(bot.getConfig().getWarning() + " There is no music in the queue!").queue();
-            return;
-        }
-        int page = event.getOption("page") != null ? (int) event.getOption("page").getAsLong() : 1;
-        int itemsPerPage = 10;
-        int pages = (int) Math.ceil((double) list.size() / itemsPerPage);
-        page = Math.max(1, Math.min(page, pages));
-        StringBuilder sb = new StringBuilder();
-        AudioTrack current = ah.getPlayer().getPlayingTrack();
-        if (current != null)
-            sb.append(ah.getStatusEmoji()).append(" **").append(current.getInfo().title).append("**\n\n");
-        int start = (page - 1) * itemsPerPage;
-        int end = Math.min(start + itemsPerPage, list.size());
-        long total = 0;
-        for (int i = 0; i < list.size(); i++)
-        {
-            total += list.get(i).getTrack().getDuration();
-            if (i >= start && i < end)
-                sb.append("`").append(i + 1).append(".` ").append(list.get(i).toString()).append("\n");
-        }
-        Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
-        EmbedBuilder eb = new EmbedBuilder()
-                .setColor(event.getGuild().getSelfMember().getColor())
-                .setTitle(bot.getConfig().getSuccess() + " Current Queue | " + list.size() + " entries | `" + TimeUtil.formatTime(total) + "`")
-                .setDescription(sb.toString())
-                .setFooter("Page " + page + "/" + pages + " | " + settings.getQueueType().getUserFriendlyName() +
-                        (settings.getRepeatMode() != RepeatMode.OFF ? " | " + settings.getRepeatMode().getUserFriendlyName() : ""));
-        event.replyEmbeds(eb.build()).queue();
     }
 
     private void handleLyrics(SlashCommandInteractionEvent event)

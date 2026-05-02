@@ -312,7 +312,7 @@ public class JMusicBot
                 {"playtop <title|URL>", "Add a song to the top of the queue"},
                 {"playlists", "List your playlists, including followed and liked lists"},
                 {"nowplaying", "Open or reuse the persistent music panel"},
-                {"queue [page]", "Show the queue"},
+                {"queue", "Show the queue"},
                 {"history <session|guild>", "Show played song history"},
                 {"search <query>", "Search YouTube and choose a result"},
                 {"scsearch <query>", "Search SoundCloud and choose a result"},
