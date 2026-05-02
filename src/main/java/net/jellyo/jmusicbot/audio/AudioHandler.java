@@ -79,6 +79,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private AbstractQueue<QueuedTrack> queue;
     private AudioFilterPreset filterPreset = AudioFilterPreset.OFF;
     private final LinkedList<String> recentTrackKeys = new LinkedList<>();
+    private final PlaybackSessionHistory playbackSessionHistory = new PlaybackSessionHistory();
     private String lastPlaylistName;
     private long lastPlaylistId;
     private boolean autoplayStopQueued = false;
@@ -169,6 +170,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         queue.clear();
         autoplayStopQueued = false;
         suppressAutoplayOnce = playing != null;
+        clearPlaybackSessionHistory();
         audioPlayer.stopTrack();
         updateMusicPanels();
         //current = null;
@@ -221,6 +223,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return new HashSet<>(recentTrackKeys);
     }
 
+    public Set<String> getPlaybackSessionTrackKeys()
+    {
+        return playbackSessionHistory.snapshot();
+    }
+
     public boolean isRecentlyPlayed(AudioTrack track)
     {
         Set<String> keys = trackKeys(track);
@@ -228,6 +235,16 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(recentTrackKeys.contains(key))
                 return true;
         return false;
+    }
+
+    public boolean hasPlayedThisSession(AudioTrack track)
+    {
+        return playbackSessionHistory.contains(track);
+    }
+
+    public boolean hasPlayedThisSession(String identifier, String uri, String title, String author)
+    {
+        return playbackSessionHistory.contains(identifier, uri, title, author);
     }
 
     public long getCurrentTrackStartedAt()
@@ -319,6 +336,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         currentTrackStartedAt = System.currentTimeMillis();
         recordTrackStart(player, track);
         rememberRecentTrack(track);
+        playbackSessionHistory.remember(track);
         RequestMetadata metadata = track.getUserData(RequestMetadata.class);
         if(metadata != null && metadata.origin == RequestMetadata.Origin.SAVED_PLAYLIST)
         {
@@ -571,6 +589,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private void finishEmptyQueue(AudioPlayer player)
     {
+        clearPlaybackSessionHistory();
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
         if(!manager.getBot().getConfig().getStay())
         {
@@ -603,6 +622,12 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         }
         while(recentTrackKeys.size() > RECENT_TRACK_LIMIT)
             recentTrackKeys.removeLast();
+    }
+
+    private void clearPlaybackSessionHistory()
+    {
+        recentTrackKeys.clear();
+        playbackSessionHistory.clear();
     }
 
     private static Set<String> trackKeys(AudioTrack track)

@@ -74,7 +74,7 @@ public class AutoplayService
         if(mode == AutoplayMode.OFF || previousTrack == null)
             return false;
 
-        List<AutoplaySource> sources = sourcesFor(mode);
+        List<AutoplaySource> sources = sourcesFor(mode, handler, previousTrack);
         if(sources.isEmpty())
             return false;
 
@@ -96,12 +96,12 @@ public class AutoplayService
         return historyStore;
     }
 
-    private List<AutoplaySource> sourcesFor(AutoplayMode mode)
+    private List<AutoplaySource> sourcesFor(AutoplayMode mode, AudioHandler handler, AudioTrack previousTrack)
     {
         switch(mode)
         {
             case SMART:
-                return Arrays.asList(AutoplaySource.SERVER, AutoplaySource.PLAYLIST, AutoplaySource.ARTIST, AutoplaySource.RELATED);
+                return smartSourcesFor(handler, previousTrack);
             case RELATED:
                 return Collections.singletonList(AutoplaySource.RELATED);
             case ARTIST:
@@ -113,6 +113,24 @@ public class AutoplayService
             default:
                 return Collections.emptyList();
         }
+    }
+
+    private List<AutoplaySource> smartSourcesFor(AudioHandler handler, AudioTrack previousTrack)
+    {
+        List<AutoplaySource> sources = new ArrayList<>();
+        if(handler.getLastPlaylistId() > 0L)
+            addSource(sources, AutoplaySource.PLAYLIST);
+        if(previousTrack.getInfo() != null && hasText(previousTrack.getInfo().author))
+            addSource(sources, AutoplaySource.ARTIST);
+        addSource(sources, AutoplaySource.RELATED);
+        addSource(sources, AutoplaySource.SERVER);
+        return sources;
+    }
+
+    private static void addSource(List<AutoplaySource> sources, AutoplaySource source)
+    {
+        if(!sources.contains(source))
+            sources.add(source);
     }
 
     private enum AutoplaySource
@@ -184,7 +202,7 @@ public class AutoplayService
 
         private boolean tryServerFavorite()
         {
-            Optional<TrackReference> reference = historyStore.chooseWeighted(handler.getGuildId(), handler.getRecentTrackKeys(), random);
+            Optional<TrackReference> reference = historyStore.chooseWeighted(handler.getGuildId(), handler.getPlaybackSessionTrackKeys(), random);
             if(!reference.isPresent())
                 return false;
 
@@ -223,6 +241,7 @@ public class AutoplayService
                 return false;
             }
             items.removeIf(item -> !isStoredPlaylistDurationAcceptable(item, bot.getConfig().getAutoplayMaxDurationMillis()));
+            items.removeIf(item -> handler.hasPlayedThisSession(item.getQuery(), item.getUrl(), item.getTitle(), item.getAuthor()));
             if(items.isEmpty())
                 return false;
 
@@ -256,8 +275,10 @@ public class AutoplayService
 
         private boolean tryArtist()
         {
-            String author = previousTrack.getInfo().author;
-            if(author == null || author.trim().isEmpty())
+            if(previousTrack.getInfo() == null)
+                return false;
+            String author = artistSearchName(previousTrack.getInfo().author);
+            if(!hasText(author))
                 return false;
             String query = searchQuery("official music video", author);
             if(query == null)
@@ -268,7 +289,9 @@ public class AutoplayService
 
         private boolean tryRelated()
         {
-            String query = searchQuery(previousTrack.getInfo().title + " official", previousTrack.getInfo().author);
+            if(previousTrack.getInfo() == null)
+                return false;
+            String query = searchQuery(previousTrack.getInfo().title + " official", artistSearchName(previousTrack.getInfo().author));
             if(query == null)
                 return false;
             loadItem("ytsearch:" + query, AutoplaySource.RELATED, "related", query);
@@ -299,9 +322,9 @@ public class AutoplayService
                         handler.getGuildId(), bot.getConfig().getAutoplayMaxTime(), describeTrack(track));
                 return false;
             }
-            if(handler.isRecentlyPlayed(track))
+            if(handler.hasPlayedThisSession(track))
             {
-                LOG.debug("Skipping recent autoplay candidate for guild {}; track={}",
+                LOG.debug("Skipping already-played autoplay candidate for guild {}; track={}",
                         handler.getGuildId(), describeTrack(track));
                 return false;
             }
@@ -326,9 +349,9 @@ public class AutoplayService
                         handler.getGuildId(), bot.getConfig().getAutoplayMaxTime(), describeTrack(track));
                 return false;
             }
-            if(handler.isRecentlyPlayed(track))
+            if(handler.hasPlayedThisSession(track))
             {
-                LOG.debug("Skipping recent autoplay candidate for guild {}; track={}",
+                LOG.debug("Skipping already-played autoplay candidate for guild {}; track={}",
                         handler.getGuildId(), describeTrack(track));
                 return false;
             }
@@ -446,6 +469,28 @@ public class AutoplayService
             builder.append(title.trim());
         }
         return builder.length() == 0 ? null : builder.toString();
+    }
+
+    private static String artistSearchName(String author)
+    {
+        if(author == null)
+            return null;
+
+        String clean = author.trim();
+        if(clean.isEmpty())
+            return null;
+
+        clean = clean.replaceAll("(?i)\\s*-\\s*topic$", "")
+                .replaceAll("(?i)\\s+topic$", "")
+                .replaceAll("(?i)\\s+official$", "")
+                .replaceAll("(?i)vevo$", "")
+                .trim();
+        return clean.isEmpty() ? author.trim() : clean;
+    }
+
+    private static boolean hasText(String value)
+    {
+        return value != null && !value.trim().isEmpty();
     }
 
     static boolean isAutoplayDurationAcceptable(AudioTrack track)

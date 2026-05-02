@@ -29,7 +29,9 @@ import java.io.IOException;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class AudioHandlerTest
 {
@@ -54,6 +56,33 @@ public class AudioHandlerTest
         assertNull(AudioHandler.getNowPlayingThumbnail(new TestTrack("dQw4w9WgXcQ", null, "soundcloud")));
     }
 
+    @Test
+    public void playbackSessionHistoryKeepsAllPlayedTracks()
+    {
+        PlaybackSessionHistory history = new PlaybackSessionHistory();
+        AudioTrack first = new TestTrack("id-0", null, "youtube");
+
+        for(int i = 0; i < 40; i++)
+            history.remember(new TestTrack("id-" + i, null, "youtube"));
+
+        assertTrue(history.contains(first));
+
+        history.clear();
+
+        assertFalse(history.contains(first));
+    }
+
+    @Test
+    public void playbackSessionHistoryMatchesSongVersions()
+    {
+        PlaybackSessionHistory history = new PlaybackSessionHistory();
+        history.remember(new TestTrack("lyric-id", null, "youtube",
+                "Artist - Song (Official Lyrics Video)", "Artist - Topic"));
+
+        assertTrue(history.contains("video-id", "https://example.test/video-id",
+                "Artist - Song (Official Music Video)", "ArtistVEVO"));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;
@@ -61,7 +90,12 @@ public class AudioHandlerTest
 
         private TestTrack(String identifier, String artworkUrl, String sourceName)
         {
-            this.info = new AudioTrackInfo("Title", "Author", 1000L, identifier, false,
+            this(identifier, artworkUrl, sourceName, "Title", "Author");
+        }
+
+        private TestTrack(String identifier, String artworkUrl, String sourceName, String title, String author)
+        {
+            this.info = new AudioTrackInfo(title, author, 1000L, identifier, false,
                     "https://www.youtube.com/watch?v=" + identifier, artworkUrl, null);
             this.sourceManager = new TestSourceManager(sourceName);
         }
