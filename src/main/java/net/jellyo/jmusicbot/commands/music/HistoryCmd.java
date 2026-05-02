@@ -19,6 +19,7 @@ import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.PlaybackHistoryStore;
+import com.jagrosh.jmusicbot.commands.ButtonPaginator;
 import com.jagrosh.jmusicbot.commands.CommandContext;
 import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
@@ -30,7 +31,6 @@ import java.util.List;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.components.actionrow.ActionRow;
-import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
@@ -43,7 +43,7 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
     private static final int ITEMS_PER_PAGE = 10;
     private static final int TITLE_LIMIT = 120;
     private static final int AUTHOR_LIMIT = 80;
-    private static final String BUTTON_PREFIX = "jmb-history:";
+    private static final String PAGE_NAMESPACE = "history";
 
     public HistoryCmd(Bot bot)
     {
@@ -79,25 +79,17 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
 
     public static boolean handleButtonInteraction(Bot bot, ButtonInteractionEvent event)
     {
-        ButtonRequest request = ButtonRequest.parse(event.getComponentId());
-        if(request == null)
+        ButtonPaginator.Request request = ButtonPaginator.parse(event.getComponentId());
+        if(!ButtonPaginator.isNamespace(request, PAGE_NAMESPACE))
             return false;
 
-        if(event.getGuild() == null || event.getGuild().getIdLong() != request.guildId)
-        {
-            event.reply(bot.getConfig().getError() + " This history control cannot be used here.")
-                    .setEphemeral(true).queue();
+        Scope scope = Scope.fromId(request.getState());
+        if(scope == Scope.NONE)
             return true;
-        }
-
-        if(event.getUser().getIdLong() != request.userId)
-        {
-            event.reply(bot.getConfig().getError() + " Only the user who opened this history can change pages.")
-                    .setEphemeral(true).queue();
+        if(!ButtonPaginator.isAuthorized(bot, event, request, "history"))
             return true;
-        }
 
-        MessageEditData message = buildEditMessage(bot, event.getGuild(), request.scope, request.userId, request.page);
+        MessageEditData message = buildEditMessage(bot, event.getGuild(), scope, request.getUserId(), request.getPage());
         event.editMessage(message).queue();
         return true;
     }
@@ -167,9 +159,9 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
                 return emptyHistoryMessage(bot.getConfig().getWarning() + " No songs have been played in this session yet.");
 
             int totalEntries = history.size();
-            int pages = pageCount(totalEntries);
+            int pages = ButtonPaginator.pageCount(totalEntries, ITEMS_PER_PAGE);
             int page = Math.max(1, Math.min(requestedPage, pages));
-            int offset = (page - 1) * ITEMS_PER_PAGE;
+            int offset = ButtonPaginator.offset(page, ITEMS_PER_PAGE);
             int end = Math.min(offset + ITEMS_PER_PAGE, history.size());
             return MessageEditData.fromCreateData(buildCreateMessage(guild, userId, scope, "Session Playback History",
                     history.subList(offset, end), totalEntries, page, offset));
@@ -185,9 +177,9 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
             if(totalEntries == 0)
                 return emptyHistoryMessage(bot.getConfig().getWarning() + " No songs have been played on this server yet.");
 
-            int pages = pageCount(totalEntries);
+            int pages = ButtonPaginator.pageCount(totalEntries, ITEMS_PER_PAGE);
             int page = Math.max(1, Math.min(requestedPage, pages));
-            int offset = (page - 1) * ITEMS_PER_PAGE;
+            int offset = ButtonPaginator.offset(page, ITEMS_PER_PAGE);
             List<PlaybackHistoryStore.Entry> history = store.list(guild.getIdLong(), offset, ITEMS_PER_PAGE);
             return MessageEditData.fromCreateData(buildCreateMessage(guild, userId, scope, "Guild Playback History",
                     history, totalEntries, page, offset));
@@ -211,7 +203,7 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
                                                         List<PlaybackHistoryStore.Entry> history, int totalEntries,
                                                         int page, int offset)
     {
-        int pages = pageCount(totalEntries);
+        int pages = ButtonPaginator.pageCount(totalEntries, ITEMS_PER_PAGE);
 
         StringBuilder description = new StringBuilder();
         for(int i = 0; i < history.size(); i++)
@@ -224,12 +216,9 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
                 .setFooter("Page " + page + "/" + pages);
 
         MessageCreateBuilder builder = new MessageCreateBuilder().setEmbeds(eb.build());
-        if(pages > 1)
-            builder.setComponents(ActionRow.of(
-                    Button.secondary(buttonId(scope, guild.getIdLong(), userId, Math.max(1, page - 1)), "Previous")
-                            .withDisabled(page <= 1),
-                    Button.secondary(buttonId(scope, guild.getIdLong(), userId, Math.min(pages, page + 1)), "Next")
-                            .withDisabled(page >= pages)));
+        List<ActionRow> components = ButtonPaginator.controls(PAGE_NAMESPACE, scope.id, guild.getIdLong(), userId, page, pages);
+        if(!components.isEmpty())
+            builder.setComponents(components);
         return builder.build();
     }
 
@@ -249,17 +238,7 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
 
     private static List<PlaybackHistoryStore.Entry> firstPage(List<PlaybackHistoryStore.Entry> history)
     {
-        return history.subList(0, Math.min(ITEMS_PER_PAGE, history.size()));
-    }
-
-    private static int pageCount(int totalEntries)
-    {
-        return Math.max(1, (int)Math.ceil((double)totalEntries / ITEMS_PER_PAGE));
-    }
-
-    private static String buttonId(Scope scope, long guildId, long userId, int page)
-    {
-        return BUTTON_PREFIX + scope.id + ":" + guildId + ":" + userId + ":" + page;
+        return ButtonPaginator.pageItems(history, 1, ITEMS_PER_PAGE);
     }
 
     private static String formatEntry(int index, PlaybackHistoryStore.Entry entry)
@@ -339,45 +318,6 @@ public class HistoryCmd extends MusicCommand implements UnifiedCommand
         private ParsedArgs(Scope scope)
         {
             this.scope = scope;
-        }
-    }
-
-    private static final class ButtonRequest
-    {
-        private final Scope scope;
-        private final long guildId;
-        private final long userId;
-        private final int page;
-
-        private ButtonRequest(Scope scope, long guildId, long userId, int page)
-        {
-            this.scope = scope;
-            this.guildId = guildId;
-            this.userId = userId;
-            this.page = page;
-        }
-
-        private static ButtonRequest parse(String componentId)
-        {
-            if(componentId == null || !componentId.startsWith(BUTTON_PREFIX))
-                return null;
-
-            String[] parts = componentId.substring(BUTTON_PREFIX.length()).split(":");
-            if(parts.length != 4)
-                return null;
-
-            try
-            {
-                Scope scope = Scope.fromId(parts[0]);
-                if(scope == Scope.NONE)
-                    return null;
-                return new ButtonRequest(scope, Long.parseLong(parts[1]), Long.parseLong(parts[2]),
-                        Math.max(1, Integer.parseInt(parts[3])));
-            }
-            catch(NumberFormatException ex)
-            {
-                return null;
-            }
         }
     }
 }

@@ -16,6 +16,8 @@
 package com.jagrosh.jmusicbot;
 
 import com.jagrosh.jmusicbot.commands.music.HistoryCmd;
+import com.jagrosh.jmusicbot.commands.music.PlaylistViewPaginator;
+import com.jagrosh.jmusicbot.commands.music.QueueCmd;
 import com.jagrosh.jmusicbot.utils.DependencyUpdateChecker;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
 import java.util.List;
@@ -114,6 +116,10 @@ public class Listener extends ListenerAdapter
     public void onButtonInteraction(ButtonInteractionEvent event)
     {
         if(HistoryCmd.handleButtonInteraction(bot, event))
+            return;
+        if(QueueCmd.handleButtonInteraction(bot, event))
+            return;
+        if(PlaylistViewPaginator.handleButtonInteraction(bot, event))
             return;
         bot.getNowplayingHandler().onButtonInteraction(event);
     }

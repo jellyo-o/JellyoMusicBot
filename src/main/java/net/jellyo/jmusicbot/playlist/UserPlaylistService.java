@@ -244,6 +244,50 @@ public class UserPlaylistService
         return Optional.empty();
     }
 
+    public synchronized Optional<PlaylistSummary> resolveVisible(long userId, long playlistId)
+    {
+        ensureOpen();
+        String ownedSql = "SELECT p.id, p.owner_id, p.name, p.liked, p.legacy_shuffle, "
+                + "(SELECT COUNT(*) FROM playlist_items i WHERE i.playlist_id=p.id) AS item_count "
+                + "FROM playlists p WHERE p.owner_id=? AND p.id=? LIMIT 1";
+        try(PreparedStatement ps = connection.prepareStatement(ownedSql))
+        {
+            ps.setLong(1, userId);
+            ps.setLong(2, playlistId);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                if(rs.next())
+                    return Optional.of(new PlaylistSummary(rs.getLong("id"), rs.getLong("owner_id"), rs.getString("name"),
+                            rs.getBoolean("liked"), rs.getBoolean("legacy_shuffle"), false, true, rs.getInt("item_count")));
+            }
+        }
+        catch(SQLException ex)
+        {
+            throw new PlaylistException("Failed to resolve playlist", ex);
+        }
+
+        String followedSql = "SELECT p.id, p.owner_id, f.display_name AS name, p.liked, p.legacy_shuffle, "
+                + "(SELECT COUNT(*) FROM playlist_items i WHERE i.playlist_id=p.id) AS item_count "
+                + "FROM playlist_follows f JOIN playlists p ON p.id=f.source_playlist_id "
+                + "WHERE f.follower_id=? AND p.id=? LIMIT 1";
+        try(PreparedStatement ps = connection.prepareStatement(followedSql))
+        {
+            ps.setLong(1, userId);
+            ps.setLong(2, playlistId);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                if(rs.next())
+                    return Optional.of(new PlaylistSummary(rs.getLong("id"), rs.getLong("owner_id"), rs.getString("name"),
+                            rs.getBoolean("liked"), rs.getBoolean("legacy_shuffle"), true, false, rs.getInt("item_count")));
+            }
+        }
+        catch(SQLException ex)
+        {
+            throw new PlaylistException("Failed to resolve playlist", ex);
+        }
+        return Optional.empty();
+    }
+
     public synchronized Optional<PlaylistSummary> findOwned(long ownerId, String name)
     {
         ensureOpen();

@@ -102,6 +102,24 @@ public class UserPlaylistServiceTest
     }
 
     @Test
+    public void resolveVisibleByIdReturnsOwnedAndFollowedPlaylists() throws Exception
+    {
+        UserPlaylistService service = newService();
+        PlaylistSummary owned = service.createPlaylist(1L, "Owner Mix");
+        Share share = service.createShare(1L, "Owner Mix", ShareMode.FOLLOW);
+        service.addShared(2L, share.getCode(), "Followed Mix");
+
+        PlaylistSummary ownerView = service.resolveVisible(1L, owned.getId()).orElseThrow();
+        PlaylistSummary followerView = service.resolveVisible(2L, owned.getId()).orElseThrow();
+
+        assertEquals("Owner Mix", ownerView.getName());
+        assertTrue(ownerView.isEditable());
+        assertEquals("Followed Mix", followerView.getName());
+        assertTrue(followerView.isFollowed());
+        assertFalse(service.resolveVisible(3L, owned.getId()).isPresent());
+    }
+
+    @Test
     public void copyVisibleMakesFollowedPlaylistEditable() throws Exception
     {
         UserPlaylistService service = newService();
