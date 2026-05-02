@@ -15,7 +15,6 @@
  */
 package com.jagrosh.jmusicbot.audio;
 
-import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayerManager;
 import com.sedmelluq.discord.lavaplayer.source.AudioSourceManager;
 import com.sedmelluq.discord.lavaplayer.track.AudioItem;
@@ -122,22 +121,6 @@ public class AudioHandlerTest
                 "abcdefghijklmnopqrstuvwxyz", "Author"), RequestMetadata.EMPTY);
 
         assertEquals("`[00:01]` **abcdefg...**", AudioHandler.formatQueuedTrackLine(queuedTrack, 10));
-    }
-
-    @Test
-    public void loopNoticeLabelsActiveRepeatModes()
-    {
-        assertEquals(RepeatMode.SINGLE.getEmoji() + " Loop 1 active", AudioHandler.formatLoopNotice(RepeatMode.SINGLE));
-        assertEquals(RepeatMode.ALL.getEmoji() + " Loop all active", AudioHandler.formatLoopNotice(RepeatMode.ALL));
-    }
-
-    @Test
-    public void loopedNextUpLineShowsLoopedTrack()
-    {
-        AudioTrack track = new TestTrack("dQw4w9WgXcQ", null, "youtube");
-
-        assertEquals(RepeatMode.SINGLE.getEmoji() + " Loop 1 active\n`[00:01]` **Title**",
-                AudioHandler.formatLoopedNextUpLine(RepeatMode.SINGLE, track, RequestMetadata.EMPTY, 64));
     }
 
     private static class TestTrack implements AudioTrack

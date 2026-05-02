@@ -424,8 +424,8 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                     + " `[" + TimeUtil.formatTime(track.getPosition()) + "/" + TimeUtil.formatTime(track.getDuration()) + "]`");
             RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
             AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
-            eb.addField("Queue", getQueueSummary(track, repeatMode), false);
-            eb.addField("Next Up", getNextUpSummary(track, repeatMode), false);
+            eb.addField("Queue", getQueueSummary(track), false);
+            eb.addField("Next Up", getNextUpSummary(), false);
             eb.addField("Loop", formatRepeatMode(repeatMode), true);
             eb.addField("Autoplay", formatAutoplayMode(autoplayMode), true);
             eb.addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true);
@@ -453,7 +453,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return null;
     }
 
-    private String getQueueSummary(AudioTrack currentTrack, RepeatMode repeatMode)
+    private String getQueueSummary(AudioTrack currentTrack)
     {
         QueueTiming timing = getQueueTiming(currentTrack);
         StringBuilder builder = new StringBuilder("`")
@@ -462,19 +462,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(timing.queuedTracks > 0)
             builder.append(" | `").append(timing.queuedDurationUnknown ? "LIVE" : TimeUtil.formatTime(timing.queuedDuration)).append("`");
 
-        if(currentTrack != null && repeatMode != RepeatMode.OFF)
-        {
-            builder.append('\n').append(formatLoopNotice(repeatMode));
-            appendRepeatTiming(builder, currentTrack, timing, repeatMode);
-            return builder.toString();
-        }
-
-        appendQueueEndTiming(builder, timing);
-        return builder.toString();
-    }
-
-    private void appendQueueEndTiming(StringBuilder builder, QueueTiming timing)
-    {
         if(timing.estimatedEndUnknown)
             builder.append("\nTotal left unknown");
         else if(audioPlayer.isPaused())
@@ -490,40 +477,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                     .append(formatDiscordTimestamp(endEpochSeconds, "t"))
                     .append(")");
         }
-    }
-
-    private void appendRepeatTiming(StringBuilder builder, AudioTrack currentTrack, QueueTiming timing, RepeatMode repeatMode)
-    {
-        if(repeatMode == RepeatMode.SINGLE)
-        {
-            if(isUnknownDuration(currentTrack))
-                builder.append("\nRestart timing unknown");
-            else
-                appendRepeatCountdown(builder, "Restarts", getRemainingDuration(currentTrack));
-            return;
-        }
-
-        if(timing.estimatedEndUnknown)
-            builder.append("\nRepeat timing unknown");
-        else
-            appendRepeatCountdown(builder, "Repeats", timing.remainingDuration);
-    }
-
-    private void appendRepeatCountdown(StringBuilder builder, String label, long duration)
-    {
-        builder.append('\n').append(label).append(" in `").append(TimeUtil.formatTime(duration)).append('`');
-        if(audioPlayer.isPaused())
-        {
-            builder.append(" (paused)");
-            return;
-        }
-
-        long repeatEpochSeconds = Instant.now().plusMillis(duration).getEpochSecond();
-        builder.append(" | ")
-                .append(formatDiscordTimestamp(repeatEpochSeconds, "R"))
-                .append(" (")
-                .append(formatDiscordTimestamp(repeatEpochSeconds, "t"))
-                .append(")");
+        return builder.toString();
     }
 
     static String formatDiscordTimestamp(long epochSeconds, String style)
@@ -535,20 +489,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         String emoji = repeatMode.getEmoji();
         return (emoji == null ? "" : emoji + " ") + "`" + repeatMode.getUserFriendlyName() + "`";
-    }
-
-    static String formatLoopNotice(RepeatMode repeatMode)
-    {
-        switch(repeatMode)
-        {
-            case SINGLE:
-                return RepeatMode.SINGLE.getEmoji() + " Loop 1 active";
-            case ALL:
-                return RepeatMode.ALL.getEmoji() + " Loop all active";
-            case OFF:
-            default:
-                return "Loop off";
-        }
     }
 
     private static String formatAutoplayMode(AutoplayMode autoplayMode)
@@ -565,8 +505,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public MessageCreateData getNoMusicPlaying(JDA jda)
     {
         Guild guild = guild(jda);
-        RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
-        AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
         return new MessageCreateBuilder()
                 .setContent(FormatUtil.filter(manager.getBot().getConfig().getSuccess()+" **Now Playing...**"))
                 .setEmbeds(new EmbedBuilder()
@@ -574,9 +512,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1))
                 .setColor(guild.getSelfMember().getColor())
                 .addField("Queue", "`0` waiting", false)
-                .addField("Next Up", getNextUpSummary(null, repeatMode), false)
-                .addField("Loop", formatRepeatMode(repeatMode), true)
-                .addField("Autoplay", formatAutoplayMode(autoplayMode), true)
+                .addField("Next Up", getNextUpSummary(), false)
+                .addField("Loop", formatRepeatMode(manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode()), true)
+                .addField("Autoplay", formatAutoplayMode(manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode()), true)
                 .addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true)
                 .build())
                 .setComponents(nowPlayingButtons(false))
@@ -754,17 +692,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         }
     }
 
-    private String getNextUpSummary(AudioTrack currentTrack, RepeatMode repeatMode)
+    private String getNextUpSummary()
     {
         List<QueuedTrack> queuedTracks = snapshotQueue();
-        if(currentTrack != null && repeatMode == RepeatMode.SINGLE)
-            return formatLoopedNextUpLine(repeatMode, currentTrack, getRequestMetadata(), NEXT_UP_TITLE_LIMIT);
-
         if(!queuedTracks.isEmpty())
             return formatQueuedTrackLine(queuedTracks.get(0), NEXT_UP_TITLE_LIMIT);
-
-        if(currentTrack != null && repeatMode == RepeatMode.ALL)
-            return formatLoopedNextUpLine(repeatMode, currentTrack, getRequestMetadata(), NEXT_UP_TITLE_LIMIT);
 
         AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
         if(autoplayMode != AutoplayMode.OFF)
@@ -788,19 +720,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(queuedTrack == null || queuedTrack.getTrack() == null)
             return "`Unknown track`";
 
-        return formatTrackLine(queuedTrack.getTrack(), queuedTrack.getRequestMetadata(), titleLimit);
-    }
-
-    static String formatLoopedNextUpLine(RepeatMode repeatMode, AudioTrack track, RequestMetadata metadata, int titleLimit)
-    {
-        return formatLoopNotice(repeatMode) + "\n" + formatTrackLine(track, metadata, titleLimit);
-    }
-
-    private static String formatTrackLine(AudioTrack track, RequestMetadata metadata, int titleLimit)
-    {
-        if(track == null)
-            return "`Unknown track`";
-
+        AudioTrack track = queuedTrack.getTrack();
         String duration = isUnknownDuration(track) ? "LIVE" : TimeUtil.formatTime(Math.max(0L, track.getDuration()));
         String title = track.getInfo() == null || track.getInfo().title == null || track.getInfo().title.isBlank()
                 ? "Unknown track" : track.getInfo().title;
@@ -810,6 +730,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 .append(shortenTitle(FormatUtil.filter(title), titleLimit))
                 .append("**");
 
+        RequestMetadata metadata = queuedTrack.getRequestMetadata();
         if(metadata != null && metadata.user != null)
             builder.append(" - ").append(FormatUtil.formatUsername(metadata.user));
         return builder.toString();
