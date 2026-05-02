@@ -316,7 +316,8 @@ public class NowplayingHandler
 
         long guildId = guild.getIdLong();
         long channelId = channel.getIdLong();
-        if(replaceExisting && viewer != null)
+        Long existingMessageId = getPanelMessageId(guildId, channelId);
+        if(shouldSearchVisiblePanel(replaceExisting, viewer != null, existingMessageId != null))
         {
             Optional<PanelReference> visiblePanel = findVisiblePanel(guild, viewer, channelId);
             if(visiblePanel.isPresent())
@@ -328,7 +329,6 @@ public class NowplayingHandler
             }
         }
 
-        Long existingMessageId = getPanelMessageId(guildId, channelId);
         if(existingMessageId != null)
         {
             if(replaceExisting)
@@ -695,6 +695,11 @@ public class NowplayingHandler
     static boolean shouldMovePanel(int messagesAfterPanel, int threshold)
     {
         return threshold > 0 && messagesAfterPanel >= threshold;
+    }
+
+    static boolean shouldSearchVisiblePanel(boolean replaceExisting, boolean hasViewer, boolean hasPanelInRequestedChannel)
+    {
+        return replaceExisting && hasViewer && !hasPanelInRequestedChannel;
     }
 
     private Long getPanelMessageId(long guildId, long channelId)

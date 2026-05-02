@@ -67,4 +67,13 @@ public class NowplayingHandlerTest
         assertTrue(NowplayingHandler.shouldMovePanel(5, 5));
         assertTrue(NowplayingHandler.shouldMovePanel(6, 5));
     }
+
+    @Test
+    public void nowplayingOnlySearchesOtherVisiblePanelsWhenCurrentChannelHasNoPanel()
+    {
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(true, true, true));
+        assertTrue(NowplayingHandler.shouldSearchVisiblePanel(true, true, false));
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(true, false, false));
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(false, true, false));
+    }
 }
