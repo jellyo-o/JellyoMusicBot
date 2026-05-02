@@ -66,7 +66,7 @@ public class SlashCommandListenerTest
 
         String[] expected = {
                 "about", "help", "ping", "settings",
-                "play", "playtop", "playplaylist", "playlist", "like", "unlike", "liked", "nowplaying", "queue", "skip", "remove", "shuffle", "seek",
+                "play", "playtop", "playplaylist", "playlist", "like", "unlike", "liked", "nowplaying", "queue", "history", "skip", "remove", "shuffle", "seek",
                 "lyrics", "correctlyrics", "playlists", "search", "scsearch",
                 "forceskip", "pause", "resume", "stop", "volume", "filter", "repeat", "loop", "autoplay", "radio", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
@@ -130,6 +130,24 @@ public class SlashCommandListenerTest
         };
         for(String subcommand : expected)
             assertTrue("Missing playlist subcommand: " + subcommand, subcommands.contains(subcommand));
+    }
+
+    @Test
+    public void historyCommandHasExpectedSubcommands()
+    {
+        SlashCommandData command = SlashCommandListener.buildSlashCommands().stream()
+                .filter(cmd -> "history".equals(cmd.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(command);
+        Set<String> subcommands = command.getSubcommands().stream()
+                .map(subcommand -> subcommand.getName())
+                .collect(Collectors.toSet());
+
+        assertTrue(subcommands.contains("session"));
+        assertTrue(subcommands.contains("guild"));
+        assertTrue(command.getOptions().isEmpty());
     }
 
     @Test

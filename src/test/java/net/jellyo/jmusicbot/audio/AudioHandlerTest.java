@@ -84,6 +84,22 @@ public class AudioHandlerTest
     }
 
     @Test
+    public void playbackSessionHistoryListsRecentCollapsedRuns()
+    {
+        PlaybackSessionHistory history = new PlaybackSessionHistory();
+        history.remember(new TestTrack("a", null, "youtube", "Song", "Artist"));
+        history.remember(new TestTrack("b", null, "youtube", "Song (Official Music Video)", "ArtistVEVO"));
+        history.remember(new TestTrack("c", null, "youtube", "Other", "Artist"));
+        history.remember(new TestTrack("a", null, "youtube", "Song", "Artist"));
+
+        assertEquals(3, history.snapshotEntries().size());
+        assertEquals("Song", history.snapshotEntries().get(0).getTitle());
+        assertEquals(1, history.snapshotEntries().get(0).getCount());
+        assertEquals("Other", history.snapshotEntries().get(1).getTitle());
+        assertEquals(2, history.snapshotEntries().get(2).getCount());
+    }
+
+    @Test
     public void discordTimestampUsesRequestedStyle()
     {
         assertEquals("<t:1714600000:R>", AudioHandler.formatDiscordTimestamp(1714600000L, "R"));

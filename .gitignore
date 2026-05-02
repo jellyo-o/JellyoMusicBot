@@ -4,6 +4,7 @@
 /test/
 *.json
 *.txt
+*.db
 nb*.xml
 AGENTS.md
 CLAUDE.md
