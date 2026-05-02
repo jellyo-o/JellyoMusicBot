@@ -16,7 +16,9 @@
 package com.jagrosh.jmusicbot;
 
 import com.jagrosh.jmusicbot.queue.FairQueue;
+import com.jagrosh.jmusicbot.queue.LinearQueue;
 import com.jagrosh.jmusicbot.queue.Queueable;
+import java.util.List;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
@@ -44,6 +46,41 @@ public class FairQueueTest
         for(int i=0; i<size; i++)
             queue.add(new Q(0));
         assertEquals(queue.size(), size);
+    }
+
+    @Test
+    public void fairBulkAddPreservesFairOrdering()
+    {
+        FairQueue<Q> queue = new FairQueue<>(null);
+        queue.add(new Q(1));
+        queue.add(new Q(2));
+        queue.add(new Q(1));
+        queue.add(new Q(2));
+
+        int firstPosition = queue.addAll(List.of(new Q(3), new Q(3)));
+
+        assertEquals(2, firstPosition);
+        assertEquals(List.of(1L, 2L, 3L, 1L, 2L, 3L), List.of(
+                queue.get(0).getIdentifier(),
+                queue.get(1).getIdentifier(),
+                queue.get(2).getIdentifier(),
+                queue.get(3).getIdentifier(),
+                queue.get(4).getIdentifier(),
+                queue.get(5).getIdentifier()));
+    }
+
+    @Test
+    public void linearBulkAddAppendsAllItems()
+    {
+        LinearQueue<Q> queue = new LinearQueue<>(null);
+        queue.add(new Q(1));
+
+        int firstPosition = queue.addAll(List.of(new Q(2), new Q(3)));
+
+        assertEquals(1, firstPosition);
+        assertEquals(3, queue.size());
+        assertEquals(2L, queue.get(1).getIdentifier());
+        assertEquals(3L, queue.get(2).getIdentifier());
     }
     
     private class Q implements Queueable

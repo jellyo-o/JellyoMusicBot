@@ -160,6 +160,42 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             return position;
         }
     }
+
+    public int addTracks(List<QueuedTrack> qtracks)
+    {
+        if(qtracks == null || qtracks.isEmpty())
+            return 0;
+
+        if(audioPlayer.getPlayingTrack()==null)
+        {
+            QueuedTrack first = qtracks.get(0);
+            if(qtracks.size() > 1)
+                queue.addAll(qtracks.subList(1, qtracks.size()));
+            LOG.info("Starting first bulk track immediately for guild {}; tracks={}; first={}",
+                    guildId, qtracks.size(), trackSummary(first.getTrack()));
+            audioPlayer.playTrack(first.getTrack());
+            return qtracks.size();
+        }
+        else if(shouldInterruptAutoplay(qtracks.get(0)))
+        {
+            queue.addAt(0, qtracks.get(0));
+            if(qtracks.size() > 1)
+                queue.addAll(qtracks.subList(1, qtracks.size()));
+            autoplayStopQueued = true;
+            LOG.info("Manual bulk queue request interrupted autoplay for guild {}; tracks={}; first={}",
+                    guildId, qtracks.size(), trackSummary(qtracks.get(0).getTrack()));
+            audioPlayer.stopTrack();
+            return qtracks.size();
+        }
+        else
+        {
+            int firstPosition = queue.addAll(qtracks);
+            LOG.debug("Queued tracks in bulk for guild {}; tracks={}; firstPosition={}; queueSize={}",
+                    guildId, qtracks.size(), firstPosition + 1, queue.size());
+            updateMusicPanels();
+            return qtracks.size();
+        }
+    }
     
     public AbstractQueue<QueuedTrack> getQueue()
     {

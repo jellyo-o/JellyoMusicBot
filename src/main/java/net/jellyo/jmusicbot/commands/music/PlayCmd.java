@@ -34,9 +34,11 @@ import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Message;
@@ -169,19 +171,19 @@ public class PlayCmd extends MusicCommand
         
         private int loadPlaylist(AudioPlaylist playlist, AudioTrack exclude)
         {
-            int[] count = {0};
+            List<QueuedTrack> tracks = new ArrayList<>();
             playlist.getTracks().stream().forEach((track) -> {
                 if(!bot.getConfig().isTooLong(track) && !track.equals(exclude))
                 {
-                    AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-                    handler.addTrack(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
-                    count[0]++;
+                    tracks.add(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
                 }
             });
+            AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+            handler.addTracks(tracks);
             LOG.info("Prefix play playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
                     event.getGuild().getName(), event.getGuild().getId(), event.getArgs(),
-                    playlist.getName(), count[0], playlist.getTracks().size());
-            return count[0];
+                    playlist.getName(), tracks.size(), playlist.getTracks().size());
+            return tracks.size();
         }
         
         @Override
@@ -309,41 +311,73 @@ public class PlayCmd extends MusicCommand
                         playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), items.size());
                 AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
                 AtomicInteger remaining = new AtomicInteger(items.size());
-                AtomicInteger loaded = new AtomicInteger();
                 AtomicInteger failed = new AtomicInteger();
-                for(PlaylistTrack item : items)
+                AtomicReferenceArray<List<AudioTrack>> loadedTracks = new AtomicReferenceArray<>(items.size());
+                long startedAt = System.nanoTime();
+                for(int i = 0; i < items.size(); i++)
                 {
-                    bot.getPlayerManager().loadItemOrdered(event.getGuild(), item.getLoadQuery(), new AudioLoadResultHandler()
+                    int index = i;
+                    PlaylistTrack item = items.get(i);
+                    bot.getPlayerManager().loadItem(item.getLoadQuery(), new AudioLoadResultHandler()
                     {
-                        private void done()
+                        private void done(List<AudioTrack> tracks)
                         {
+                            loadedTracks.set(index, tracks);
                             if(remaining.decrementAndGet() == 0)
                             {
-                                LOG.info("User playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}",
-                                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), loaded.get(), failed.get());
-                                String str = event.getClient().getSuccess()+" Loaded **"+loaded.get()+"** tracks!"
+                                List<QueuedTrack> queuedTracks = new ArrayList<>();
+                                for(int i = 0; i < items.size(); i++)
+                                {
+                                    List<AudioTrack> itemTracks = loadedTracks.get(i);
+                                    if(itemTracks == null)
+                                        continue;
+                                    for(AudioTrack track : itemTracks)
+                                        queuedTracks.add(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getAuthor(), playlist.getId(),
+                                                playlist.getName(), track, event.getTextChannel().getIdLong())));
+                                }
+                                handler.addTracks(queuedTracks);
+                                long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+                                LOG.info("User playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}; elapsedMs={}",
+                                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(),
+                                        queuedTracks.size(), failed.get(), elapsedMillis);
+                                String str = event.getClient().getSuccess()+" Loaded **"+queuedTracks.size()+"** tracks!"
                                         +(failed.get() == 0 ? "" : "\n"+event.getClient().getWarning()+" `"+failed.get()+"` entries failed.");
                                 m.editMessage(FormatUtil.filter(str)).queue();
                             }
                         }
 
-                        private void addTrack(AudioTrack track)
+                        private List<AudioTrack> acceptedTrack(AudioTrack track)
                         {
                             if(bot.getConfig().isTooLong(track))
                             {
                                 failed.incrementAndGet();
-                                return;
+                                return Collections.emptyList();
                             }
-                            handler.addTrack(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getAuthor(), playlist.getId(),
-                                    playlist.getName(), track, event.getTextChannel().getIdLong())));
-                            loaded.incrementAndGet();
+                            return List.of(track);
+                        }
+
+                        private List<AudioTrack> acceptedTracks(List<AudioTrack> tracks)
+                        {
+                            if(tracks.isEmpty())
+                            {
+                                failed.incrementAndGet();
+                                return Collections.emptyList();
+                            }
+                            List<AudioTrack> accepted = new ArrayList<>();
+                            for(AudioTrack track : tracks)
+                            {
+                                if(bot.getConfig().isTooLong(track))
+                                    failed.incrementAndGet();
+                                else
+                                    accepted.add(track);
+                            }
+                            return accepted;
                         }
 
                         @Override
                         public void trackLoaded(AudioTrack track)
                         {
-                            addTrack(track);
-                            done();
+                            done(acceptedTrack(track));
                         }
 
                         @Override
@@ -352,30 +386,28 @@ public class PlayCmd extends MusicCommand
                             if(audioPlaylist.isSearchResult())
                             {
                                 if(audioPlaylist.getTracks().isEmpty())
+                                {
                                     failed.incrementAndGet();
+                                    done(Collections.emptyList());
+                                }
                                 else
-                                    addTrack(audioPlaylist.getTracks().get(0));
+                                    done(acceptedTrack(audioPlaylist.getTracks().get(0)));
                             }
                             else if(audioPlaylist.getSelectedTrack() != null)
                             {
-                                addTrack(audioPlaylist.getSelectedTrack());
+                                done(acceptedTrack(audioPlaylist.getSelectedTrack()));
                             }
                             else
                             {
-                                int before = loaded.get();
-                                for(AudioTrack track : audioPlaylist.getTracks())
-                                    addTrack(track);
-                                if(loaded.get() == before)
-                                    failed.incrementAndGet();
+                                done(acceptedTracks(audioPlaylist.getTracks()));
                             }
-                            done();
                         }
 
                         @Override
                         public void noMatches()
                         {
                             failed.incrementAndGet();
-                            done();
+                            done(Collections.emptyList());
                         }
 
                         @Override
@@ -385,7 +417,7 @@ public class PlayCmd extends MusicCommand
                             LOG.warn("Prefix playlist item load failed in guild {} ({}); playlist='{}'; query='{}'; severity={}; message={}",
                                     event.getGuild().getName(), event.getGuild().getId(), playlist.getName(), item.getLoadQuery(),
                                     throwable.severity, throwable.getMessage(), throwable);
-                            done();
+                            done(Collections.emptyList());
                         }
                     });
                 }
