@@ -660,7 +660,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private void finishEmptyQueue(AudioPlayer player)
     {
-        clearPlaybackSessionHistory();
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
         if(!manager.getBot().getConfig().getStay())
         {
