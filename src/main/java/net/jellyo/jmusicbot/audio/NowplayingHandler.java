@@ -18,11 +18,19 @@ package com.jagrosh.jmusicbot.audio;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
+import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.AddResult;
+import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
+import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
 import com.jagrosh.jmusicbot.settings.Settings;
+import com.jagrosh.jmusicbot.utils.FormatUtil;
+import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -31,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.components.actionrow.ActionRow;
+import net.dv8tion.jda.api.components.buttons.Button;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
@@ -53,13 +63,19 @@ import org.slf4j.LoggerFactory;
 public class NowplayingHandler
 {
     private final static Logger LOG = LoggerFactory.getLogger(NowplayingHandler.class);
+    private final static int QUEUE_PREVIEW_LIMIT = 10;
 
     public static final String BUTTON_RESTART = "jmb-np:restart";
     public static final String BUTTON_PLAY_PAUSE = "jmb-np:play-pause";
     public static final String BUTTON_SKIP = "jmb-np:skip";
+    public static final String BUTTON_QUEUE = "jmb-np:queue";
+    public static final String BUTTON_LIKE = "jmb-np:like";
     public static final String BUTTON_LOOP = "jmb-np:loop";
+    public static final String BUTTON_SHUFFLE = "jmb-np:shuffle";
     public static final String BUTTON_LYRICS = "jmb-np:lyrics";
     public static final String BUTTON_STOP = "jmb-np:stop";
+    private static final String BUTTON_STOP_CONFIRM_PREFIX = "jmb-np:stop-confirm:";
+    private static final String BUTTON_STOP_CANCEL_PREFIX = "jmb-np:stop-cancel:";
 
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
@@ -226,11 +242,16 @@ public class NowplayingHandler
     public void onButtonInteraction(ButtonInteractionEvent event)
     {
         String componentId = event.getComponentId();
-        if(!isPanelButton(componentId))
+        if(!isPanelButton(componentId) && !isStopConfirmationButton(componentId))
             return;
         if(event.getUser().isBot())
         {
             event.deferEdit().queue();
+            return;
+        }
+        if(isStopConfirmationButton(componentId))
+        {
+            handleStopConfirmation(event);
             return;
         }
         if(event.getGuild() == null || !isActivePanel(event.getGuild().getIdLong(), event.getChannel().getIdLong(), event.getMessageIdLong()))
@@ -251,8 +272,17 @@ public class NowplayingHandler
             case BUTTON_SKIP:
                 handleSkip(event);
                 break;
+            case BUTTON_QUEUE:
+                handleQueue(event);
+                break;
+            case BUTTON_LIKE:
+                handleLike(event);
+                break;
             case BUTTON_LOOP:
                 handleLoop(event);
+                break;
+            case BUTTON_SHUFFLE:
+                handleShuffle(event);
                 break;
             case BUTTON_LYRICS:
                 handleLyrics(event);
@@ -354,9 +384,19 @@ public class NowplayingHandler
         return BUTTON_RESTART.equals(componentId)
                 || BUTTON_PLAY_PAUSE.equals(componentId)
                 || BUTTON_SKIP.equals(componentId)
+                || BUTTON_QUEUE.equals(componentId)
+                || BUTTON_LIKE.equals(componentId)
                 || BUTTON_LOOP.equals(componentId)
+                || BUTTON_SHUFFLE.equals(componentId)
                 || BUTTON_LYRICS.equals(componentId)
                 || BUTTON_STOP.equals(componentId);
+    }
+
+    private boolean isStopConfirmationButton(String componentId)
+    {
+        return componentId != null
+                && (componentId.startsWith(BUTTON_STOP_CONFIRM_PREFIX)
+                || componentId.startsWith(BUTTON_STOP_CANCEL_PREFIX));
     }
 
     private void handleRestart(ButtonInteractionEvent event)
@@ -395,10 +435,12 @@ public class NowplayingHandler
         if(handler == null)
             return;
 
+        AudioTrack playing = handler.getPlayer().getPlayingTrack();
+        String title = trackTitle(playing);
         if(checkDJPermission(event.getMember(), event.getGuild()))
         {
             handler.getPlayer().stopTrack();
-            event.deferEdit().queue();
+            event.reply(bot.getConfig().getSuccess() + " Skipped **" + title + "**.").setEphemeral(true).queue();
             return;
         }
 
@@ -413,11 +455,11 @@ public class NowplayingHandler
         if(event.getUser().getIdLong() == rm.getOwner() || skipRatio == 0)
         {
             handler.getPlayer().stopTrack();
-            event.deferEdit().queue();
+            event.reply(bot.getConfig().getSuccess() + " Skipped **" + title + "**.").setEphemeral(true).queue();
             return;
         }
 
-        handler.getVotes().add(event.getUser().getId());
+        boolean addedVote = handler.getVotes().add(event.getUser().getId());
         AudioChannel channel = event.getGuild().getSelfMember().getVoiceState().getChannel();
         int listeners = (int)channel.getMembers().stream()
                 .filter(m -> !m.getUser().isBot() && !m.getVoiceState().isDeafened()).count();
@@ -426,10 +468,113 @@ public class NowplayingHandler
                 .filter(m -> handler.getVotes().contains(m.getUser().getId())).count();
 
         if(skippers >= required)
+        {
             handler.getPlayer().stopTrack();
+            event.reply(bot.getConfig().getSuccess() + " Vote passed: skipped **" + title + "** (`"
+                    + skippers + "/" + required + "`).").setEphemeral(true).queue();
+        }
         else
+        {
             handler.updateMusicPanels();
-        event.deferEdit().queue();
+            String prefix = addedVote ? bot.getConfig().getSuccess() + " Vote counted: "
+                    : bot.getConfig().getWarning() + " You already voted: ";
+            event.reply(prefix + "`" + skippers + "/" + required + "` needed from `"
+                    + listeners + "` listener" + (listeners == 1 ? "" : "s") + ".")
+                    .setEphemeral(true).queue();
+        }
+    }
+
+    private void handleQueue(ButtonInteractionEvent event)
+    {
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        if(handler == null)
+        {
+            event.reply(bot.getConfig().getWarning() + " Nothing is currently playing.").setEphemeral(true).queue();
+            return;
+        }
+
+        List<QueuedTrack> list = handler.getQueue().getList();
+        if(list.isEmpty())
+        {
+            AutoplayMode autoplayMode = bot.getSettingsManager().getSettings(event.getGuild()).getAutoplayMode();
+            String message = bot.getConfig().getWarning() + " There is no music in the queue.";
+            if(autoplayMode != AutoplayMode.OFF)
+                message += " Autoplay `" + autoplayMode.getUserFriendlyName() + "` will choose the next track.";
+            event.reply(message).setEphemeral(true).queue();
+            return;
+        }
+
+        StringBuilder description = new StringBuilder();
+        AudioTrack current = handler.getPlayer().getPlayingTrack();
+        if(current != null)
+            description.append(handler.getStatusEmoji()).append(" Now: **")
+                    .append(trackTitle(current)).append("**\n\n");
+
+        int limit = Math.min(list.size(), QUEUE_PREVIEW_LIMIT);
+        for(int i = 0; i < limit; i++)
+            description.append("`").append(i + 1).append(".` ")
+                    .append(AudioHandler.formatQueuedTrackLine(list.get(i))).append('\n');
+        if(list.size() > limit)
+            description.append("\n...and `").append(list.size() - limit).append("` more.");
+
+        event.replyEmbeds(new EmbedBuilder()
+                .setColor(event.getGuild().getSelfMember().getColor())
+                .setTitle("Queue | " + list.size() + " queued | " + queueDurationText(list))
+                .setDescription(description.toString())
+                .build()).setEphemeral(true).queue();
+    }
+
+    private void handleLike(ButtonInteractionEvent event)
+    {
+        AudioHandler handler = requirePlaying(event);
+        if(handler == null)
+            return;
+
+        AudioTrack track = handler.getPlayer().getPlayingTrack();
+        try
+        {
+            bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+            AddResult result = bot.getUserPlaylistService().addTrack(event.getUser().getIdLong(),
+                    UserPlaylistService.LIKED_SONGS, PlaylistTrack.fromAudioTrack(track, track.getInfo().uri));
+            event.reply(formatLikeResult(track, result)).setEphemeral(true).queue();
+        }
+        catch(PlaylistException ex)
+        {
+            event.reply(bot.getConfig().getError() + " " + ex.getMessage()).setEphemeral(true).queue();
+        }
+    }
+
+    private String formatLikeResult(AudioTrack track, AddResult result)
+    {
+        String title = trackTitle(track);
+        if(result.getAdded() == 0 && result.getSkippedDuplicates() > 0)
+            return bot.getConfig().getWarning() + " **" + title + "** is already in your Liked Songs.";
+        return bot.getConfig().getSuccess() + " Added **" + title + "** to your Liked Songs.";
+    }
+
+    private static String queueDurationText(List<QueuedTrack> list)
+    {
+        long total = 0L;
+        for(QueuedTrack queuedTrack : list)
+        {
+            AudioTrack track = queuedTrack.getTrack();
+            if(track == null || track.getDuration() == Long.MAX_VALUE
+                    || (track.getInfo() != null && track.getInfo().isStream))
+                return "LIVE";
+
+            long duration = Math.max(0L, track.getDuration());
+            if(Long.MAX_VALUE - total < duration)
+                return "LIVE";
+            total += duration;
+        }
+        return TimeUtil.formatTime(total);
+    }
+
+    private static String trackTitle(AudioTrack track)
+    {
+        if(track == null || track.getInfo() == null || track.getInfo().title == null || track.getInfo().title.isBlank())
+            return "the current track";
+        return FormatUtil.filter(track.getInfo().title);
     }
 
     private void handleLoop(ButtonInteractionEvent event)
@@ -443,15 +588,100 @@ public class NowplayingHandler
         updatePanels(event.getGuild());
     }
 
+    private void handleShuffle(ButtonInteractionEvent event)
+    {
+        AudioHandler handler = requirePlaying(event);
+        if(handler == null || !requireListening(event))
+            return;
+
+        boolean fullQueue = checkDJPermission(event.getMember(), event.getGuild());
+        int shuffled = fullQueue ? handler.getQueue().shuffleAll() : handler.getQueue().shuffle(event.getUser().getIdLong());
+        switch(shuffled)
+        {
+            case 0:
+                event.reply(bot.getConfig().getError() + " "
+                        + (fullQueue ? "There is no music in the queue to shuffle." : "You don't have any music in the queue to shuffle."))
+                        .setEphemeral(true).queue();
+                break;
+            case 1:
+                event.reply(bot.getConfig().getWarning() + " "
+                        + (fullQueue ? "There is only one song in the queue." : "You only have one song in the queue."))
+                        .setEphemeral(true).queue();
+                break;
+            default:
+                handler.updateMusicPanels();
+                event.reply(bot.getConfig().getSuccess() + " "
+                        + (fullQueue ? "Shuffled the full queue (`" + shuffled + "` entries)."
+                        : "Shuffled your `" + shuffled + "` queued entries."))
+                        .setEphemeral(true).queue();
+                break;
+        }
+    }
+
     private void handleStop(ButtonInteractionEvent event)
     {
         AudioHandler handler = requirePlaying(event);
-        if(handler == null || !requireListening(event) || !requireDJ(event))
+        if(handler == null || !requireDJ(event))
             return;
+
+        String confirmId = BUTTON_STOP_CONFIRM_PREFIX + event.getGuild().getId() + ":" + event.getUser().getId();
+        String cancelId = BUTTON_STOP_CANCEL_PREFIX + event.getGuild().getId() + ":" + event.getUser().getId();
+        event.reply(bot.getConfig().getWarning() + " Stop playback and clear the queue?")
+                .setEphemeral(true)
+                .setComponents(ActionRow.of(
+                        Button.danger(confirmId, "Stop"),
+                        Button.secondary(cancelId, "Cancel")))
+                .queue();
+    }
+
+    private void handleStopConfirmation(ButtonInteractionEvent event)
+    {
+        if(!event.getComponentId().endsWith(":" + event.getUser().getId()))
+        {
+            event.reply(bot.getConfig().getError() + " This stop confirmation is not for you.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+
+        if(event.getComponentId().startsWith(BUTTON_STOP_CANCEL_PREFIX))
+        {
+            event.editMessage(bot.getConfig().getWarning() + " Stop cancelled.")
+                    .setComponents(Collections.emptyList())
+                    .queue();
+            return;
+        }
+
+        if(event.getGuild() == null)
+        {
+            event.editMessage(bot.getConfig().getError() + " This confirmation is no longer valid.")
+                    .setComponents(Collections.emptyList())
+                    .queue();
+            return;
+        }
+
+        if(!checkDJPermission(event.getMember(), event.getGuild()))
+        {
+            event.editMessage(bot.getConfig().getError() + " You need DJ permissions to stop playback.")
+                    .setComponents(Collections.emptyList())
+                    .queue();
+            return;
+        }
+
+        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+        if(handler == null || !handler.isMusicPlaying(event.getJDA()))
+        {
+            event.editMessage(bot.getConfig().getWarning() + " Nothing is currently playing.")
+                    .setComponents(Collections.emptyList())
+                    .queue();
+            updatePanels(event.getGuild());
+            return;
+        }
 
         handler.stopAndClear();
         bot.closeAudioConnection(event.getGuild().getIdLong());
-        event.deferEdit().queue();
+        event.editMessage(bot.getConfig().getSuccess() + " Playback stopped and the queue was cleared.")
+                .setComponents(Collections.emptyList())
+                .queue();
     }
 
     private void handleLyrics(ButtonInteractionEvent event)
