@@ -82,11 +82,29 @@ public class TrackIdentity
         return "song:" + compact(normalizedAuthor) + ":" + compact(normalizedTitle);
     }
 
+    private static String titleSongKey(String title)
+    {
+        if(title == null)
+            return null;
+
+        String[] parts = title.trim().split("\\s+[\\p{Pd}:|]\\s+", 2);
+        if(parts.length < 2)
+            return null;
+
+        String normalizedArtist = normalizeArtist(parts[0]);
+        String normalizedTitle = normalizeTitle(parts[1]);
+        if(normalizedArtist.length() < 3 || normalizedTitle.length() < 3)
+            return null;
+
+        return "song:" + compact(normalizedArtist) + ":" + compact(normalizedTitle);
+    }
+
     private static void addKeys(Set<String> keys, String identifier, String uri, String title, String author)
     {
         addNonBlank(keys, identifier);
         addNonBlank(keys, uri);
         addNonBlank(keys, songKey(title, author));
+        addNonBlank(keys, titleSongKey(title));
     }
 
     private static void addNonBlank(Set<String> keys, String value)
