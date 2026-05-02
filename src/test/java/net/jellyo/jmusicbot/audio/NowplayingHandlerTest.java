@@ -47,10 +47,17 @@ public class NowplayingHandlerTest
     @Test
     public void panelDistanceInspectionOnlyRunsWhenLatestCanBeNewer()
     {
-        assertFalse(NowplayingHandler.shouldInspectPanelDistance(100L, 100L));
-        assertFalse(NowplayingHandler.shouldInspectPanelDistance(99L, 100L));
-        assertTrue(NowplayingHandler.shouldInspectPanelDistance(101L, 100L));
-        assertTrue(NowplayingHandler.shouldInspectPanelDistance(0L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(true, 100L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(true, 99L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(true, 101L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(true, 0L, 100L));
+    }
+
+    @Test
+    public void panelDistanceInspectionSkipsNonTrackUpdates()
+    {
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(false, 101L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(false, 0L, 100L));
     }
 
     @Test
