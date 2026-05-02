@@ -1,11 +1,12 @@
 <!-- author: Kaidan Gustave -->
 <configuration>
+    <conversionRule conversionWord="sourceColor" class="com.jagrosh.jmusicbot.logging.SourceColorConverter"/>
 
     <appender name="Simple" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <!-- Pattern -->
             <pattern>
-                %nopex[%d{HH:mm:ss}] [%level] [%logger{0}]: %msg%n%ex
+                %nopex[%d{HH:mm:ss}] [%level] [%sourceColor]: %msg%n%ex
             </pattern>
         </encoder>
     </appender>
