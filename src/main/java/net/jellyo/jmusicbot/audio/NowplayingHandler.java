@@ -32,9 +32,11 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import net.dv8tion.jda.api.EmbedBuilder;
@@ -76,20 +78,27 @@ public class NowplayingHandler
     public static final String BUTTON_STOP = "jmb-np:stop";
     private static final String BUTTON_STOP_CONFIRM_PREFIX = "jmb-np:stop-confirm:";
     private static final String BUTTON_STOP_CANCEL_PREFIX = "jmb-np:stop-cancel:";
+    private static final long PANEL_REFRESH_SECONDS = Math.max(10L,
+            Long.getLong("jmusicbot.nowplaying.refreshSeconds", 15L));
+    private static final long PANEL_MIN_EDIT_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(Math.max(5L,
+            Long.getLong("jmusicbot.nowplaying.minEditSeconds", 10L)));
 
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
+    private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
     private volatile LyricsService lyricsService;
     
     public NowplayingHandler(Bot bot)
     {
         this.bot = bot;
         this.panels = new ConcurrentHashMap<>();
+        this.panelUpdateStates = new ConcurrentHashMap<>();
     }
     
     public void init()
     {
-        bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(), 0, 5, TimeUnit.SECONDS);
+        bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(),
+                PANEL_REFRESH_SECONDS, PANEL_REFRESH_SECONDS, TimeUnit.SECONDS);
     }
     
     public void setLastNPMessage(Message m)
@@ -100,6 +109,7 @@ public class NowplayingHandler
     public void clearLastNPMessage(Guild guild)
     {
         panels.remove(guild.getIdLong());
+        panelUpdateStates.keySet().removeIf(key -> key.guildId == guild.getIdLong());
     }
 
     public void showPanel(Guild guild, MessageChannel channel, boolean replaceExisting)
@@ -112,6 +122,12 @@ public class NowplayingHandler
     {
         showOrUpdatePanel(guild, channel, replaceExisting, success, failure);
     }
+
+    public void showPanel(Guild guild, MessageChannel channel, Member viewer, boolean replaceExisting,
+                          Consumer<PanelResult> success, Consumer<Throwable> failure)
+    {
+        showOrUpdatePanel(guild, channel, viewer, replaceExisting, success, failure);
+    }
     
     private void updateAll()
     {
@@ -119,7 +135,9 @@ public class NowplayingHandler
         {
             try
             {
-                updatePanels(guildId);
+                Guild guild = bot.getJDA() == null ? null : bot.getJDA().getGuildById(guildId);
+                if(guild != null && isMusicPlaying(guild))
+                    updatePanels(guild, false);
             }
             catch(RuntimeException ex)
             {
@@ -130,28 +148,26 @@ public class NowplayingHandler
 
     public void updatePanels(long guildId)
     {
+        updatePanels(guildId, false);
+    }
+
+    private void updatePanels(long guildId, boolean bypassThrottle)
+    {
         Guild guild = bot.getJDA() == null ? null : bot.getJDA().getGuildById(guildId);
         if(guild != null)
-            updatePanels(guild);
+            updatePanels(guild, bypassThrottle);
     }
 
     public void updatePanels(Guild guild)
     {
+        updatePanels(guild, false);
+    }
+
+    private void updatePanels(Guild guild, boolean bypassThrottle)
+    {
         Map<Long, Long> channelPanels = panels.get(guild.getIdLong());
         if(channelPanels == null || channelPanels.isEmpty())
             return;
-
-        AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
-        MessageCreateData msg;
-        try
-        {
-            msg = handler.getMusicPanel(bot.getJDA());
-        }
-        catch(RuntimeException ex)
-        {
-            LOG.warn("Failed to build music panel for guild {}", guild.getId(), ex);
-            return;
-        }
 
         for(Map.Entry<Long, Long> entry : channelPanels.entrySet())
         {
@@ -159,27 +175,11 @@ public class NowplayingHandler
             if(channel == null)
             {
                 channelPanels.remove(entry.getKey());
+                panelUpdateStates.remove(new PanelKey(guild.getIdLong(), entry.getKey()));
                 continue;
             }
 
-            long channelId = entry.getKey();
-            long messageId = entry.getValue();
-            try
-            {
-                channel.editMessageById(messageId, MessageEditData.fromCreateData(msg))
-                        .queue(m -> {}, t ->
-                        {
-                            LOG.debug("Removing stale music panel {} in channel {} for guild {}",
-                                    messageId, channelId, guild.getId());
-                            channelPanels.remove(channelId, messageId);
-                        });
-            }
-            catch(RuntimeException ex)
-            {
-                LOG.warn("Failed to queue music panel update for message {} in channel {} for guild {}",
-                        messageId, channelId, guild.getId(), ex);
-                channelPanels.remove(channelId, messageId);
-            }
+            requestPanelUpdate(guild.getIdLong(), entry.getKey(), bypassThrottle);
         }
     }
 
@@ -189,6 +189,7 @@ public class NowplayingHandler
             return;
 
         Map<Long, Long> channelPanels = panels.remove(guild.getIdLong());
+        panelUpdateStates.keySet().removeIf(key -> key.guildId == guild.getIdLong());
         if(channelPanels == null || channelPanels.isEmpty())
             return;
 
@@ -222,7 +223,7 @@ public class NowplayingHandler
         if(guild == null)
             return;
 
-        updatePanels(guild);
+        updatePanels(guild, true);
         if(track != null)
         {
             TextChannel channel = getDefaultPanelChannel(guild, track);
@@ -236,7 +237,13 @@ public class NowplayingHandler
         Map<Long, Long> channelPanels = panels.get(guild.getIdLong());
         if(channelPanels == null)
             return;
-        channelPanels.entrySet().removeIf(entry -> entry.getValue() == messageId);
+        channelPanels.entrySet().removeIf(entry ->
+        {
+            boolean remove = entry.getValue() == messageId;
+            if(remove)
+                panelUpdateStates.remove(new PanelKey(guild.getIdLong(), entry.getKey()));
+            return remove;
+        });
     }
 
     public void onButtonInteraction(ButtonInteractionEvent event)
@@ -299,11 +306,34 @@ public class NowplayingHandler
     private void showOrUpdatePanel(Guild guild, MessageChannel channel, boolean replaceExisting,
                                    Consumer<Message> success, Consumer<Throwable> failure)
     {
+        showOrUpdatePanel(guild, channel, null, replaceExisting,
+                result ->
+                {
+                    if(result.getMessage() != null)
+                        success.accept(result.getMessage());
+                }, failure);
+    }
+
+    private void showOrUpdatePanel(Guild guild, MessageChannel channel, Member viewer, boolean replaceExisting,
+                                   Consumer<PanelResult> success, Consumer<Throwable> failure)
+    {
         if(guild == null || channel == null)
             return;
 
         long guildId = guild.getIdLong();
         long channelId = channel.getIdLong();
+        if(replaceExisting && viewer != null)
+        {
+            Optional<PanelReference> visiblePanel = findVisiblePanel(guild, viewer, channelId);
+            if(visiblePanel.isPresent())
+            {
+                PanelReference panel = visiblePanel.get();
+                requestPanelUpdate(guildId, panel.channelId, false);
+                success.accept(PanelResult.reused(guildId, panel.channelId, panel.messageId));
+                return;
+            }
+        }
+
         Long existingMessageId = getPanelMessageId(guildId, channelId);
         if(existingMessageId != null)
         {
@@ -312,7 +342,7 @@ public class NowplayingHandler
                 sendPanel(guild, channel, m ->
                 {
                     markPanelMoved(channel, existingMessageId, m);
-                    success.accept(m);
+                    success.accept(PanelResult.posted(m));
                 }, failure);
                 return;
             }
@@ -320,12 +350,13 @@ public class NowplayingHandler
             {
                 MessageCreateData msg = bot.getPlayerManager().setUpHandler(guild).getMusicPanel(bot.getJDA());
                 channel.editMessageById(existingMessageId, MessageEditData.fromCreateData(msg))
-                        .queue(success, t -> sendPanel(guild, channel, success, failure));
+                        .queue(m -> success.accept(PanelResult.updated(m)),
+                                t -> sendPanel(guild, channel, m -> success.accept(PanelResult.posted(m)), failure));
                 return;
             }
         }
 
-        sendPanel(guild, channel, success, failure);
+        sendPanel(guild, channel, m -> success.accept(PanelResult.posted(m)), failure);
     }
 
     private void sendPanel(Guild guild, MessageChannel channel, Consumer<Message> success, Consumer<Throwable> failure)
@@ -352,6 +383,190 @@ public class NowplayingHandler
     private void rememberPanel(long guildId, long channelId, long messageId)
     {
         panels.computeIfAbsent(guildId, id -> new ConcurrentHashMap<>()).put(channelId, messageId);
+    }
+
+    private Optional<PanelReference> findVisiblePanel(Guild guild, Member viewer, long preferredChannelId)
+    {
+        Map<Long, Long> channelPanels = panels.get(guild.getIdLong());
+        if(channelPanels == null || channelPanels.isEmpty())
+            return Optional.empty();
+
+        Long preferredMessageId = channelPanels.get(preferredChannelId);
+        if(preferredMessageId != null)
+        {
+            TextChannel preferredChannel = guild.getTextChannelById(preferredChannelId);
+            if(preferredChannel == null)
+            {
+                channelPanels.remove(preferredChannelId);
+                panelUpdateStates.remove(new PanelKey(guild.getIdLong(), preferredChannelId));
+            }
+            else if(canViewPanel(viewer, preferredChannel))
+            {
+                return Optional.of(new PanelReference(preferredChannelId, preferredMessageId));
+            }
+        }
+
+        for(Map.Entry<Long, Long> entry : channelPanels.entrySet())
+        {
+            if(entry.getKey() == preferredChannelId)
+                continue;
+            TextChannel panelChannel = guild.getTextChannelById(entry.getKey());
+            if(panelChannel == null)
+            {
+                channelPanels.remove(entry.getKey());
+                panelUpdateStates.remove(new PanelKey(guild.getIdLong(), entry.getKey()));
+                continue;
+            }
+            if(canViewPanel(viewer, panelChannel))
+                return Optional.of(new PanelReference(entry.getKey(), entry.getValue()));
+        }
+        return Optional.empty();
+    }
+
+    private boolean canViewPanel(Member viewer, TextChannel channel)
+    {
+        return viewer != null && viewer.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY);
+    }
+
+    private boolean isMusicPlaying(Guild guild)
+    {
+        if(bot.getJDA() == null)
+            return false;
+        if(!(guild.getAudioManager().getSendingHandler() instanceof AudioHandler))
+            return false;
+        AudioHandler handler = (AudioHandler)guild.getAudioManager().getSendingHandler();
+        return handler.isMusicPlaying(bot.getJDA());
+    }
+
+    private void requestPanelUpdate(long guildId, long channelId, boolean bypassThrottle)
+    {
+        PanelKey key = new PanelKey(guildId, channelId);
+        PanelUpdateState state = panelUpdateStates.computeIfAbsent(key, ignored -> new PanelUpdateState());
+        synchronized(state)
+        {
+            state.pending = true;
+            if(bypassThrottle)
+            {
+                state.immediatePending = true;
+                if(hasScheduledUpdate(state) && !state.editInFlight)
+                {
+                    state.scheduledUpdate.cancel(false);
+                    state.scheduledUpdate = null;
+                }
+            }
+            if(state.editInFlight)
+                return;
+            if(hasScheduledUpdate(state))
+                return;
+
+            long now = System.currentTimeMillis();
+            long delayMillis = state.immediatePending ? 0L : Math.max(0L, state.nextAllowedEditAt - now);
+            schedulePanelUpdate(key, state, delayMillis);
+        }
+    }
+
+    private boolean hasScheduledUpdate(PanelUpdateState state)
+    {
+        return state.scheduledUpdate != null
+                && !state.scheduledUpdate.isDone()
+                && !state.scheduledUpdate.isCancelled();
+    }
+
+    private void schedulePanelUpdate(PanelKey key, PanelUpdateState state, long delayMillis)
+    {
+        state.scheduledUpdate = bot.getThreadpool().schedule(() -> runPanelUpdate(key),
+                Math.max(0L, delayMillis), TimeUnit.MILLISECONDS);
+    }
+
+    private void runPanelUpdate(PanelKey key)
+    {
+        PanelUpdateState state = panelUpdateStates.computeIfAbsent(key, ignored -> new PanelUpdateState());
+        synchronized(state)
+        {
+            state.scheduledUpdate = null;
+            if(state.editInFlight || !state.pending)
+                return;
+
+            long delayMillis = state.immediatePending ? 0L : state.nextAllowedEditAt - System.currentTimeMillis();
+            if(delayMillis > 0L)
+            {
+                schedulePanelUpdate(key, state, delayMillis);
+                return;
+            }
+
+            state.pending = false;
+            state.immediatePending = false;
+            state.editInFlight = true;
+        }
+
+        editPanel(key);
+    }
+
+    private void editPanel(PanelKey key)
+    {
+        Guild guild = bot.getJDA() == null ? null : bot.getJDA().getGuildById(key.guildId);
+        Map<Long, Long> channelPanels = panels.get(key.guildId);
+        Long messageId = channelPanels == null ? null : channelPanels.get(key.channelId);
+        TextChannel channel = guild == null ? null : guild.getTextChannelById(key.channelId);
+        if(guild == null || channelPanels == null || messageId == null || channel == null)
+        {
+            if(channelPanels != null)
+                channelPanels.remove(key.channelId);
+            finishPanelUpdate(key, true);
+            return;
+        }
+
+        MessageCreateData msg;
+        try
+        {
+            msg = bot.getPlayerManager().setUpHandler(guild).getMusicPanel(bot.getJDA());
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to build music panel for guild {}", guild.getId(), ex);
+            finishPanelUpdate(key, false);
+            return;
+        }
+
+        try
+        {
+            channel.editMessageById(messageId, MessageEditData.fromCreateData(msg))
+                    .queue(m -> finishPanelUpdate(key, false), t ->
+                    {
+                        LOG.debug("Removing stale music panel {} in channel {} for guild {}",
+                                messageId, key.channelId, guild.getId());
+                        channelPanels.remove(key.channelId, messageId);
+                        finishPanelUpdate(key, true);
+                    });
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to queue music panel update for message {} in channel {} for guild {}",
+                    messageId, key.channelId, guild.getId(), ex);
+            channelPanels.remove(key.channelId, messageId);
+            finishPanelUpdate(key, true);
+        }
+    }
+
+    private void finishPanelUpdate(PanelKey key, boolean removeState)
+    {
+        PanelUpdateState state = panelUpdateStates.get(key);
+        if(state == null)
+            return;
+
+        synchronized(state)
+        {
+            state.editInFlight = false;
+            state.nextAllowedEditAt = System.currentTimeMillis() + PANEL_MIN_EDIT_INTERVAL_MILLIS;
+            if(removeState)
+            {
+                state.pending = false;
+                panelUpdateStates.remove(key, state);
+                return;
+            }
+            if(state.pending && !hasScheduledUpdate(state))
+                schedulePanelUpdate(key, state, state.immediatePending ? 0L : PANEL_MIN_EDIT_INTERVAL_MILLIS);
+        }
     }
 
     private Long getPanelMessageId(long guildId, long channelId)
@@ -819,6 +1034,108 @@ public class NowplayingHandler
             case SINGLE:
             default:
                 return RepeatMode.OFF;
+        }
+    }
+
+    private static final class PanelKey
+    {
+        private final long guildId;
+        private final long channelId;
+
+        private PanelKey(long guildId, long channelId)
+        {
+            this.guildId = guildId;
+            this.channelId = channelId;
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if(this == obj)
+                return true;
+            if(!(obj instanceof PanelKey))
+                return false;
+            PanelKey other = (PanelKey)obj;
+            return guildId == other.guildId && channelId == other.channelId;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(guildId, channelId);
+        }
+    }
+
+    private static final class PanelUpdateState
+    {
+        private boolean editInFlight;
+        private boolean pending;
+        private boolean immediatePending;
+        private long nextAllowedEditAt;
+        private ScheduledFuture<?> scheduledUpdate;
+    }
+
+    private static final class PanelReference
+    {
+        private final long channelId;
+        private final long messageId;
+
+        private PanelReference(long channelId, long messageId)
+        {
+            this.channelId = channelId;
+            this.messageId = messageId;
+        }
+    }
+
+    public static final class PanelResult
+    {
+        private final Message message;
+        private final long guildId;
+        private final long channelId;
+        private final long messageId;
+        private final boolean posted;
+
+        private PanelResult(Message message, long guildId, long channelId, long messageId, boolean posted)
+        {
+            this.message = message;
+            this.guildId = guildId;
+            this.channelId = channelId;
+            this.messageId = messageId;
+            this.posted = posted;
+        }
+
+        private static PanelResult posted(Message message)
+        {
+            return new PanelResult(message, message.getGuild().getIdLong(),
+                    message.getChannelIdLong(), message.getIdLong(), true);
+        }
+
+        private static PanelResult updated(Message message)
+        {
+            return new PanelResult(message, message.getGuild().getIdLong(),
+                    message.getChannelIdLong(), message.getIdLong(), false);
+        }
+
+        private static PanelResult reused(long guildId, long channelId, long messageId)
+        {
+            return new PanelResult(null, guildId, channelId, messageId, false);
+        }
+
+        public Message getMessage()
+        {
+            return message;
+        }
+
+        public boolean isPosted()
+        {
+            return posted;
+        }
+
+        public String getJumpUrl()
+        {
+            if(message != null)
+                return message.getJumpUrl();
+            return "https://discord.com/channels/" + guildId + "/" + channelId + "/" + messageId;
         }
     }
 }
