@@ -18,6 +18,8 @@ package com.jagrosh.jmusicbot.audio;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class NowplayingHandlerTest
 {
@@ -40,5 +42,22 @@ public class NowplayingHandlerTest
     {
         assertEquals(12_000L, NowplayingHandler.computePanelUpdateDelayMillis(
                 13_000L, 10_000L, 15_000L, 0L));
+    }
+
+    @Test
+    public void panelDistanceInspectionOnlyRunsWhenLatestCanBeNewer()
+    {
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(100L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(99L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(101L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(0L, 100L));
+    }
+
+    @Test
+    public void panelMovesWhenThresholdIsReached()
+    {
+        assertFalse(NowplayingHandler.shouldMovePanel(4, 5));
+        assertTrue(NowplayingHandler.shouldMovePanel(5, 5));
+        assertTrue(NowplayingHandler.shouldMovePanel(6, 5));
     }
 }

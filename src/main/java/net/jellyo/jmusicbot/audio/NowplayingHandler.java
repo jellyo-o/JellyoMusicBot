@@ -84,6 +84,8 @@ public class NowplayingHandler
             Long.getLong("jmusicbot.nowplaying.interactiveEditSeconds", 2L)));
     private static final long PANEL_BUTTON_UPDATE_DEBOUNCE_MILLIS = Math.max(100L,
             Long.getLong("jmusicbot.nowplaying.buttonDebounceMillis", 250L));
+    private static final int PANEL_MOVE_MESSAGE_DISTANCE = Math.max(1,
+            Integer.getInteger("jmusicbot.nowplaying.moveAfterMessages", 5));
 
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
@@ -532,6 +534,71 @@ public class NowplayingHandler
             return;
         }
 
+        if(shouldInspectPanelDistance(channel.getLatestMessageIdLong(), messageId))
+        {
+            inspectPanelDistanceThenUpdate(key, guild, channelPanels, channel, messageId, msg);
+            return;
+        }
+
+        editPanelMessage(key, guild, channelPanels, channel, messageId, msg);
+    }
+
+    private void inspectPanelDistanceThenUpdate(PanelKey key, Guild guild, Map<Long, Long> channelPanels,
+                                                TextChannel channel, long messageId, MessageCreateData msg)
+    {
+        try
+        {
+            channel.getHistoryAfter(messageId, PANEL_MOVE_MESSAGE_DISTANCE)
+                    .queue(messages ->
+                    {
+                        if(shouldMovePanel(messages.size(), PANEL_MOVE_MESSAGE_DISTANCE))
+                            movePanelToLatest(key, guild, channelPanels, channel, messageId, msg);
+                        else
+                            editPanelMessage(key, guild, channelPanels, channel, messageId, msg);
+                    }, t ->
+                    {
+                        LOG.debug("Could not inspect music panel distance for message {} in channel {} for guild {}; editing in place",
+                                messageId, key.channelId, guild.getId(), t);
+                        editPanelMessage(key, guild, channelPanels, channel, messageId, msg);
+                    });
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.debug("Failed to queue music panel distance check for message {} in channel {} for guild {}; editing in place",
+                    messageId, key.channelId, guild.getId(), ex);
+            editPanelMessage(key, guild, channelPanels, channel, messageId, msg);
+        }
+    }
+
+    private void movePanelToLatest(PanelKey key, Guild guild, Map<Long, Long> channelPanels,
+                                   TextChannel channel, long oldMessageId, MessageCreateData msg)
+    {
+        try
+        {
+            channel.sendMessage(msg).queue(newPanel ->
+            {
+                rememberPanel(key.guildId, key.channelId, newPanel.getIdLong());
+                markPanelUpdated(key.guildId, key.channelId);
+                markPanelMoved(channel, oldMessageId, newPanel);
+                finishPanelUpdate(key, false);
+            }, t ->
+            {
+                LOG.warn("Failed to move music panel {} to latest message in channel {} for guild {}; editing in place",
+                        oldMessageId, key.channelId, guild.getId(), t);
+                editPanelMessage(key, guild, channelPanels, channel, oldMessageId, msg);
+            });
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to queue music panel move for message {} in channel {} for guild {}; editing in place",
+                    oldMessageId, key.channelId, guild.getId(), ex);
+            editPanelMessage(key, guild, channelPanels, channel, oldMessageId, msg);
+        }
+    }
+
+    private void editPanelMessage(PanelKey key, Guild guild, Map<Long, Long> channelPanels,
+                                  TextChannel channel, long messageId, MessageCreateData msg)
+    {
         try
         {
             channel.editMessageById(messageId, MessageEditData.fromCreateData(msg))
@@ -583,6 +650,16 @@ public class NowplayingHandler
         long earliestEditAt = Math.max(nowMillis + Math.max(0L, debounceMillis),
                 lastEditAtMillis + Math.max(0L, minEditIntervalMillis));
         return Math.max(0L, earliestEditAt - nowMillis);
+    }
+
+    static boolean shouldInspectPanelDistance(long latestMessageId, long panelMessageId)
+    {
+        return latestMessageId == 0L || Long.compareUnsigned(latestMessageId, panelMessageId) > 0;
+    }
+
+    static boolean shouldMovePanel(int messagesAfterPanel, int threshold)
+    {
+        return threshold > 0 && messagesAfterPanel >= threshold;
     }
 
     private Long getPanelMessageId(long guildId, long channelId)
