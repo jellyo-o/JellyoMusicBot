@@ -27,4 +27,4 @@ Use this scheme for Maven versions, Git tags, and GitHub release names. Tags sho
 
 ## Current Line
 
-The current development line is `2026.5.0-b4`.
+The current development line is `2026.5.0-b5`.
