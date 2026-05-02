@@ -233,6 +233,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return playbackSessionHistory.snapshot();
     }
 
+    public List<PlaybackHistoryStore.Entry> getPlaybackSessionHistory()
+    {
+        return playbackSessionHistory.snapshotEntries();
+    }
+
     public boolean isRecentlyPlayed(AudioTrack track)
     {
         Set<String> keys = trackKeys(track);
@@ -340,6 +345,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         autoplayStopQueued = false;
         currentTrackStartedAt = System.currentTimeMillis();
         recordTrackStart(player, track);
+        recordPlaybackHistory(track);
         rememberRecentTrack(track);
         playbackSessionHistory.remember(track);
         RequestMetadata metadata = track.getUserData(RequestMetadata.class);
@@ -798,6 +804,22 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             return;
 
         currentStatsSessionKey = stats.recordTrackStart(guild, player, track, queue == null ? 0 : queue.size());
+    }
+
+    private void recordPlaybackHistory(AudioTrack track)
+    {
+        PlaybackHistoryStore history = manager.getBot().getPlaybackHistoryStore();
+        if(history == null)
+            return;
+
+        try
+        {
+            history.record(guildId, track);
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to record playback history for guild {}", guildId, ex);
+        }
     }
 
     private void recordTrackEnd(AudioTrack track, AudioTrackEndReason endReason, SkipInfo skipInfo)

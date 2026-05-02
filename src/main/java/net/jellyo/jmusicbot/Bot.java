@@ -22,6 +22,7 @@ import com.jagrosh.jmusicbot.autoplay.AutoplayService;
 import com.jagrosh.jmusicbot.audio.AloneInVoiceHandler;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.NowplayingHandler;
+import com.jagrosh.jmusicbot.audio.PlaybackHistoryStore;
 import com.jagrosh.jmusicbot.audio.PlayerManager;
 import com.jagrosh.jmusicbot.dashboard.DashboardServer;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
@@ -63,6 +64,7 @@ public class Bot
     private final NowplayingHandler nowplaying;
     private final AloneInVoiceHandler aloneInVoiceHandler;
     private final AutoplayService autoplayService;
+    private final PlaybackHistoryStore playbackHistoryStore;
     private final DashboardStatsService dashboardStats;
     private final DashboardServer dashboardServer;
     
@@ -89,6 +91,17 @@ public class Bot
             LOG.warn("Failed to initialize user playlist storage", ex);
         }
         this.threadpool = Executors.newSingleThreadScheduledExecutor();
+        PlaybackHistoryStore historyStore = new PlaybackHistoryStore(Paths.get("playback-history.db"));
+        try
+        {
+            historyStore.init();
+        }
+        catch(Exception ex)
+        {
+            LOG.warn("Failed to initialize playback history storage", ex);
+            historyStore = null;
+        }
+        this.playbackHistoryStore = historyStore;
         DashboardStatsService stats = null;
         DashboardServer dashboard = null;
         if(config.isDashboardEnabled())
@@ -174,6 +187,11 @@ public class Bot
         return autoplayService;
     }
 
+    public PlaybackHistoryStore getPlaybackHistoryStore()
+    {
+        return playbackHistoryStore;
+    }
+
     public DashboardStatsService getDashboardStats()
     {
         return dashboardStats;
@@ -254,6 +272,8 @@ public class Bot
             dashboardServer.stop();
         if(dashboardStats != null)
             dashboardStats.close();
+        if(playbackHistoryStore != null)
+            playbackHistoryStore.close();
         System.exit(0);
     }
 

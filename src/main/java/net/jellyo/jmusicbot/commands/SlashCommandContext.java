@@ -199,15 +199,12 @@ public class SlashCommandContext implements CommandContext
     {
         if(deferred && hook != null)
         {
-            hook.editOriginal(message.getContent())
-                .setEmbeds(message.getEmbeds())
-                .queue();
+            hook.editOriginal(net.dv8tion.jda.api.utils.messages.MessageEditData.fromCreateData(message))
+                    .queue();
         }
         else if(!replied)
         {
-            event.reply(message.getContent())
-                .addEmbeds(message.getEmbeds())
-                .queue();
+            event.reply(message).queue();
             replied = true;
         }
         else
@@ -221,15 +218,12 @@ public class SlashCommandContext implements CommandContext
     {
         if(deferred && hook != null)
         {
-            hook.editOriginal(message.getContent())
-                .setEmbeds(message.getEmbeds())
-                .queue(m -> callback.accept(m));
+            hook.editOriginal(net.dv8tion.jda.api.utils.messages.MessageEditData.fromCreateData(message))
+                    .queue(m -> callback.accept(m));
         }
         else if(!replied)
         {
-            event.reply(message.getContent())
-                .addEmbeds(message.getEmbeds())
-                .queue(ih -> ih.retrieveOriginal().queue(callback));
+            event.reply(message).queue(ih -> ih.retrieveOriginal().queue(callback));
             replied = true;
         }
         else

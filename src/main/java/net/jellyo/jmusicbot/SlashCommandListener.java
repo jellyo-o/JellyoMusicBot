@@ -36,6 +36,7 @@ import com.jagrosh.jmusicbot.commands.dj.VolumeCmd;
 import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
+import com.jagrosh.jmusicbot.commands.music.HistoryCmd;
 import com.jagrosh.jmusicbot.commands.music.RemoveCmd;
 import com.jagrosh.jmusicbot.commands.music.SeekCmd;
 import com.jagrosh.jmusicbot.commands.music.ShuffleCmd;
@@ -133,6 +134,7 @@ public class SlashCommandListener extends ListenerAdapter
     private final AutoplayCmd autoplayCmd;
     private final SkiptoCmd skiptoCmd;
     private final MoveTrackCmd moveTrackCmd;
+    private final HistoryCmd historyCmd;
     private final PrefixCmd prefixCmd;
     private final SkipratioCmd skipratioCmd;
     private final QueueTypeCmd queueTypeCmd;
@@ -152,6 +154,7 @@ public class SlashCommandListener extends ListenerAdapter
         this.autoplayCmd = new AutoplayCmd(bot);
         this.skiptoCmd = new SkiptoCmd(bot);
         this.moveTrackCmd = new MoveTrackCmd(bot);
+        this.historyCmd = new HistoryCmd(bot);
         this.prefixCmd = new PrefixCmd(bot);
         this.skipratioCmd = new SkipratioCmd(bot);
         this.queueTypeCmd = new QueueTypeCmd(bot);
@@ -300,6 +303,10 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(slashCommand("nowplaying", "Shows the currently playing song"));
         commands.add(slashCommand("queue", "Shows the current queue")
                 .addOptions(new OptionData(OptionType.INTEGER, "page", "Page number", false)));
+        commands.add(slashCommand("history", "Shows the played song history")
+                .addSubcommands(
+                        new SubcommandData("session", "Shows songs played since the bot joined this voice session"),
+                        new SubcommandData("guild", "Shows all songs played on this server")));
         commands.add(slashCommand("skip", "Vote to skip the current song"));
         commands.add(slashCommand("remove", "Remove a song from the queue")
                 .addOptions(new OptionData(OptionType.STRING, "position", "Position in queue or 'all'", true)));
@@ -460,6 +467,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "liked": handleLiked(event); break;
             case "nowplaying": handleNowPlaying(event); break;
             case "queue": handleQueue(event); break;
+            case "history": handleHistory(event); break;
             case "skip": handleSharedMusicCommand(event, skipCmd, "", false, true, true); break;
             case "remove": handleSharedMusicCommand(event, removeCmd, event.getOption("position").getAsString(), false, true, true); break;
             case "shuffle": handleSharedMusicCommand(event, shuffleCmd, "", false, true, true); break;
@@ -528,6 +536,13 @@ public class SlashCommandListener extends ListenerAdapter
             return;
         }
         command.doCommand(context);
+    }
+
+    private void handleHistory(SlashCommandInteractionEvent event)
+    {
+        handleSharedMusicCommand(event, historyCmd,
+                event.getSubcommandName() == null ? "" : event.getSubcommandName(),
+                false, false, false);
     }
 
     private String getOptionalStringArg(SlashCommandInteractionEvent event, String name)
@@ -903,6 +918,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"playlists", "playlists", "List your playlists, including followed and liked lists"},
                 {"nowplaying", "nowplaying", "Open or reuse the persistent music panel"},
                 {"queue [page]", "queue [page]", "Show the queue"},
+                {"history <session|guild>", "history <session|guild>", "Show played song history"},
                 {"search <query>", "search query:<query>", "Search YouTube and choose a result"},
                 {"scsearch <query>", "scsearch query:<query>", "Search SoundCloud and choose a result"},
                 {"skip", "skip", "Vote to skip"},

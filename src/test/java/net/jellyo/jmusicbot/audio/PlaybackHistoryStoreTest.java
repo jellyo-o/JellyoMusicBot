@@ -26,109 +26,87 @@ import com.sedmelluq.discord.lavaplayer.track.TrackMarker;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 
-public class AudioHandlerTest
+public class PlaybackHistoryStoreTest
 {
     @Test
-    public void nowPlayingThumbnailUsesTrackArtwork()
+    public void recordCollapsesOnlyConsecutiveSongsAndPersists() throws Exception
     {
-        String artworkUrl = "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg";
+        Path db = Files.createTempFile("playback-history-test", ".db");
+        PlaybackHistoryStore store = new PlaybackHistoryStore(db);
+        store.init();
 
-        assertEquals(artworkUrl, AudioHandler.getNowPlayingThumbnail(new TestTrack("dQw4w9WgXcQ", artworkUrl, "youtube")));
+        store.record(1L, track("a", "Song", "Artist"));
+        store.record(1L, track("b", "Song (Official Music Video)", "ArtistVEVO"));
+        store.record(1L, track("c", "Other", "Artist"));
+        store.record(1L, track("a", "Song", "Artist"));
+
+        List<PlaybackHistoryStore.Entry> entries = store.list(1L, 0, 10);
+        assertEquals(3, entries.size());
+        assertEquals("Song", entries.get(0).getTitle());
+        assertEquals(1, entries.get(0).getCount());
+        assertEquals("Other", entries.get(1).getTitle());
+        assertEquals(1, entries.get(1).getCount());
+        assertEquals(2, entries.get(2).getCount());
+        store.close();
+
+        store = new PlaybackHistoryStore(db);
+        store.init();
+        assertEquals(3, store.countEntries(1L));
+        assertEquals(3, store.list(1L, 0, 10).size());
+        store.close();
     }
 
     @Test
-    public void nowPlayingThumbnailFallsBackToYouTubeIdentifier()
+    public void historyIsPerGuild()
     {
-        assertEquals("https://img.youtube.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
-                AudioHandler.getNowPlayingThumbnail(new TestTrack("dQw4w9WgXcQ", null, "youtube")));
+        Path db;
+        try
+        {
+            db = Files.createTempFile("playback-history-guild-test", ".db");
+        }
+        catch(IOException ex)
+        {
+            throw new AssertionError(ex);
+        }
+        PlaybackHistoryStore store = new PlaybackHistoryStore(db);
+        try
+        {
+            store.init();
+        }
+        catch(Exception ex)
+        {
+            throw new AssertionError(ex);
+        }
+
+        store.record(1L, track("a", "Song", "Artist"));
+        store.record(2L, track("b", "Other", "Artist"));
+
+        assertEquals("Song", store.list(1L, 0, 10).get(0).getTitle());
+        assertEquals("Other", store.list(2L, 0, 10).get(0).getTitle());
+        store.close();
     }
 
-    @Test
-    public void nowPlayingThumbnailIgnoresNonYouTubeIdentifiers()
+    private static AudioTrack track(String identifier, String title, String author)
     {
-        assertNull(AudioHandler.getNowPlayingThumbnail(new TestTrack("dQw4w9WgXcQ", null, "soundcloud")));
-    }
-
-    @Test
-    public void playbackSessionHistoryKeepsAllPlayedTracks()
-    {
-        PlaybackSessionHistory history = new PlaybackSessionHistory();
-        AudioTrack first = new TestTrack("id-0", null, "youtube");
-
-        for(int i = 0; i < 40; i++)
-            history.remember(new TestTrack("id-" + i, null, "youtube"));
-
-        assertTrue(history.contains(first));
-
-        history.clear();
-
-        assertFalse(history.contains(first));
-    }
-
-    @Test
-    public void playbackSessionHistoryMatchesSongVersions()
-    {
-        PlaybackSessionHistory history = new PlaybackSessionHistory();
-        history.remember(new TestTrack("lyric-id", null, "youtube",
-                "Artist - Song (Official Lyrics Video)", "Artist - Topic"));
-
-        assertTrue(history.contains("video-id", "https://example.test/video-id",
-                "Artist - Song (Official Music Video)", "ArtistVEVO"));
-    }
-
-    @Test
-    public void playbackSessionHistoryListsRecentCollapsedRuns()
-    {
-        PlaybackSessionHistory history = new PlaybackSessionHistory();
-        history.remember(new TestTrack("a", null, "youtube", "Song", "Artist"));
-        history.remember(new TestTrack("b", null, "youtube", "Song (Official Music Video)", "ArtistVEVO"));
-        history.remember(new TestTrack("c", null, "youtube", "Other", "Artist"));
-        history.remember(new TestTrack("a", null, "youtube", "Song", "Artist"));
-
-        assertEquals(3, history.snapshotEntries().size());
-        assertEquals("Song", history.snapshotEntries().get(0).getTitle());
-        assertEquals(1, history.snapshotEntries().get(0).getCount());
-        assertEquals("Other", history.snapshotEntries().get(1).getTitle());
-        assertEquals(2, history.snapshotEntries().get(2).getCount());
-    }
-
-    @Test
-    public void discordTimestampUsesRequestedStyle()
-    {
-        assertEquals("<t:1714600000:R>", AudioHandler.formatDiscordTimestamp(1714600000L, "R"));
-        assertEquals("<t:1714600000:t>", AudioHandler.formatDiscordTimestamp(1714600000L, "t"));
-    }
-
-    @Test
-    public void queuedTrackLineIncludesDurationAndTitle()
-    {
-        QueuedTrack queuedTrack = new QueuedTrack(new TestTrack("dQw4w9WgXcQ", null, "youtube"), RequestMetadata.EMPTY);
-
-        assertEquals("`[00:01]` **Title**", AudioHandler.formatQueuedTrackLine(queuedTrack));
+        return new TestTrack(identifier, title, author);
     }
 
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;
-        private final AudioSourceManager sourceManager;
+        private final AudioSourceManager sourceManager = new TestSourceManager();
 
-        private TestTrack(String identifier, String artworkUrl, String sourceName)
-        {
-            this(identifier, artworkUrl, sourceName, "Title", "Author");
-        }
-
-        private TestTrack(String identifier, String artworkUrl, String sourceName, String title, String author)
+        private TestTrack(String identifier, String title, String author)
         {
             this.info = new AudioTrackInfo(title, author, 1000L, identifier, false,
-                    "https://www.youtube.com/watch?v=" + identifier, artworkUrl, null);
-            this.sourceManager = new TestSourceManager(sourceName);
+                    "https://example.test/" + identifier, null, null);
         }
 
         @Override
@@ -224,17 +202,10 @@ public class AudioHandlerTest
 
     private static class TestSourceManager implements AudioSourceManager
     {
-        private final String sourceName;
-
-        private TestSourceManager(String sourceName)
-        {
-            this.sourceName = sourceName;
-        }
-
         @Override
         public String getSourceName()
         {
-            return sourceName;
+            return "youtube";
         }
 
         @Override
