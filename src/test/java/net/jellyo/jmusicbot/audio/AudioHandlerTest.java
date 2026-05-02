@@ -98,6 +98,15 @@ public class AudioHandlerTest
         assertEquals("`[00:01]` **Title**", AudioHandler.formatQueuedTrackLine(queuedTrack));
     }
 
+    @Test
+    public void queuedTrackLineCanShortenLongTitles()
+    {
+        QueuedTrack queuedTrack = new QueuedTrack(new TestTrack("dQw4w9WgXcQ", null, "youtube",
+                "abcdefghijklmnopqrstuvwxyz", "Author"), RequestMetadata.EMPTY);
+
+        assertEquals("`[00:01]` **abcdefg...**", AudioHandler.formatQueuedTrackLine(queuedTrack, 10));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;

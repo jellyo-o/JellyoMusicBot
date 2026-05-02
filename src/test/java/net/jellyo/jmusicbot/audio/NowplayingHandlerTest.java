@@ -18,6 +18,8 @@ package com.jagrosh.jmusicbot.audio;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class NowplayingHandlerTest
 {
@@ -38,7 +40,40 @@ public class NowplayingHandlerTest
     @Test
     public void panelUpdateDelayKeepsRoutineUpdatesOnLongerInterval()
     {
-        assertEquals(7_000L, NowplayingHandler.computePanelUpdateDelayMillis(
-                13_000L, 10_000L, 10_000L, 0L));
+        assertEquals(12_000L, NowplayingHandler.computePanelUpdateDelayMillis(
+                13_000L, 10_000L, 15_000L, 0L));
+    }
+
+    @Test
+    public void panelDistanceInspectionOnlyRunsWhenLatestCanBeNewer()
+    {
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(true, 100L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(true, 99L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(true, 101L, 100L));
+        assertTrue(NowplayingHandler.shouldInspectPanelDistance(true, 0L, 100L));
+    }
+
+    @Test
+    public void panelDistanceInspectionSkipsNonTrackUpdates()
+    {
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(false, 101L, 100L));
+        assertFalse(NowplayingHandler.shouldInspectPanelDistance(false, 0L, 100L));
+    }
+
+    @Test
+    public void panelMovesWhenThresholdIsReached()
+    {
+        assertFalse(NowplayingHandler.shouldMovePanel(4, 5));
+        assertTrue(NowplayingHandler.shouldMovePanel(5, 5));
+        assertTrue(NowplayingHandler.shouldMovePanel(6, 5));
+    }
+
+    @Test
+    public void nowplayingOnlySearchesOtherVisiblePanelsWhenCurrentChannelHasNoPanel()
+    {
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(true, true, true));
+        assertTrue(NowplayingHandler.shouldSearchVisiblePanel(true, true, false));
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(true, false, false));
+        assertFalse(NowplayingHandler.shouldSearchVisiblePanel(false, true, false));
     }
 }
