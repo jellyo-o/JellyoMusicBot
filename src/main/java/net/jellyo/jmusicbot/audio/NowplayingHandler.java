@@ -78,6 +78,8 @@ public class NowplayingHandler
     public static final String BUTTON_STOP = "jmb-np:stop";
     private static final String BUTTON_STOP_CONFIRM_PREFIX = "jmb-np:stop-confirm:";
     private static final String BUTTON_STOP_CANCEL_PREFIX = "jmb-np:stop-cancel:";
+    private static final long PANEL_REFRESH_SECONDS = Math.max(10L,
+            Long.getLong("jmusicbot.nowplaying.refreshSeconds", 10L));
     private static final long PANEL_MIN_EDIT_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(Math.max(5L,
             Long.getLong("jmusicbot.nowplaying.minEditSeconds", 15L)));
     private static final long PANEL_INTERACTIVE_EDIT_INTERVAL_MILLIS = TimeUnit.SECONDS.toMillis(Math.max(2L,
@@ -103,7 +105,8 @@ public class NowplayingHandler
     
     public void init()
     {
-        // Panel updates are event driven. Requests are queued per panel and throttled in requestPanelUpdate.
+        bot.getThreadpool().scheduleWithFixedDelay(() -> updateAll(),
+                PANEL_REFRESH_SECONDS, PANEL_REFRESH_SECONDS, TimeUnit.SECONDS);
     }
     
     public void setLastNPMessage(Message m)
@@ -135,6 +138,23 @@ public class NowplayingHandler
         showOrUpdatePanel(guild, channel, viewer, replaceExisting, success, failure);
     }
     
+    private void updateAll()
+    {
+        for(long guildId : panels.keySet())
+        {
+            try
+            {
+                Guild guild = bot.getJDA() == null ? null : bot.getJDA().getGuildById(guildId);
+                if(guild != null && isMusicPlaying(guild))
+                    updatePanels(guild, true);
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.warn("Failed to update music panel for guild {}; future panel updates will continue", guildId, ex);
+            }
+        }
+    }
+
     public void updatePanels(long guildId)
     {
         updatePanels(guildId, false);
@@ -437,6 +457,16 @@ public class NowplayingHandler
         return viewer != null && viewer.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_HISTORY);
     }
 
+    private boolean isMusicPlaying(Guild guild)
+    {
+        if(bot.getJDA() == null)
+            return false;
+        if(!(guild.getAudioManager().getSendingHandler() instanceof AudioHandler))
+            return false;
+        AudioHandler handler = (AudioHandler)guild.getAudioManager().getSendingHandler();
+        return handler.isMusicPlaying(bot.getJDA());
+    }
+
     private void requestPanelUpdate(long guildId, long channelId, boolean bypassThrottle)
     {
         requestPanelUpdate(guildId, channelId, bypassThrottle, PANEL_UPDATE_REASON_NORMAL);
@@ -445,8 +475,7 @@ public class NowplayingHandler
     private void requestPanelUpdate(long guildId, long channelId, boolean bypassThrottle, int updateReason)
     {
         requestPanelUpdate(guildId, channelId,
-                bypassThrottle ? PANEL_INTERACTIVE_EDIT_INTERVAL_MILLIS : PANEL_MIN_EDIT_INTERVAL_MILLIS, 0L,
-                updateReason);
+                bypassThrottle ? 0L : PANEL_MIN_EDIT_INTERVAL_MILLIS, 0L, updateReason, bypassThrottle);
     }
 
     private void requestPanelUpdate(long guildId, long channelId, long minEditIntervalMillis, long debounceMillis)
@@ -457,17 +486,32 @@ public class NowplayingHandler
     private void requestPanelUpdate(long guildId, long channelId, long minEditIntervalMillis,
                                     long debounceMillis, int updateReason)
     {
+        requestPanelUpdate(guildId, channelId, minEditIntervalMillis, debounceMillis, updateReason, false);
+    }
+
+    private void requestPanelUpdate(long guildId, long channelId, long minEditIntervalMillis,
+                                    long debounceMillis, int updateReason, boolean immediate)
+    {
         PanelKey key = new PanelKey(guildId, channelId);
         PanelUpdateState state = panelUpdateStates.computeIfAbsent(key, ignored -> new PanelUpdateState());
         synchronized(state)
         {
             state.markPending(minEditIntervalMillis, updateReason);
+            if(immediate)
+            {
+                state.immediatePending = true;
+                if(hasScheduledUpdate(state) && !state.editInFlight)
+                {
+                    state.scheduledUpdate.cancel(false);
+                    state.scheduledUpdate = null;
+                }
+            }
             if(state.editInFlight)
                 return;
 
             long now = System.currentTimeMillis();
             long delayMillis = computePanelUpdateDelayMillis(now, state.lastEditAt,
-                    minEditIntervalMillis, debounceMillis);
+                    minEditIntervalMillis, debounceMillis, state.immediatePending);
             long scheduledAt = now + delayMillis;
             if(hasScheduledUpdate(state) && state.scheduledUpdateAt <= scheduledAt)
                 return;
@@ -478,15 +522,18 @@ public class NowplayingHandler
         }
     }
 
-    private void requestButtonPanelUpdate(ButtonInteractionEvent event)
+    private void requestButtonPanelUpdate(ButtonInteractionEvent event, boolean immediate)
     {
         if(event.getGuild() == null)
             return;
 
         long guildId = event.getGuild().getIdLong();
         long channelId = event.getChannel().getIdLong();
-        requestPanelUpdate(guildId, channelId,
-                PANEL_INTERACTIVE_EDIT_INTERVAL_MILLIS, PANEL_BUTTON_UPDATE_DEBOUNCE_MILLIS);
+        if(immediate)
+            requestPanelUpdate(guildId, channelId, 0L, 0L, PANEL_UPDATE_REASON_NORMAL, true);
+        else
+            requestPanelUpdate(guildId, channelId,
+                    PANEL_INTERACTIVE_EDIT_INTERVAL_MILLIS, PANEL_BUTTON_UPDATE_DEBOUNCE_MILLIS);
     }
 
     private boolean hasScheduledUpdate(PanelUpdateState state)
@@ -512,7 +559,8 @@ public class NowplayingHandler
             if(state.editInFlight || !state.pending)
                 return;
 
-            long delayMillis = state.lastEditAt + state.pendingMinEditIntervalMillis - System.currentTimeMillis();
+            long delayMillis = state.immediatePending ? 0L
+                    : state.lastEditAt + state.pendingMinEditIntervalMillis - System.currentTimeMillis();
             if(delayMillis > 0L)
             {
                 schedulePanelUpdate(key, state, delayMillis);
@@ -521,6 +569,7 @@ public class NowplayingHandler
 
             state.pending = false;
             int updateReason = state.pendingUpdateReason;
+            state.immediatePending = false;
             state.pendingMinEditIntervalMillis = PANEL_MIN_EDIT_INTERVAL_MILLIS;
             state.pendingUpdateReason = PANEL_UPDATE_REASON_NORMAL;
             state.editInFlight = true;
@@ -661,7 +710,7 @@ public class NowplayingHandler
             }
             if(state.pending && !hasScheduledUpdate(state))
             {
-                long delayMillis = Math.max(0L,
+                long delayMillis = state.immediatePending ? 0L : Math.max(0L,
                         state.lastEditAt + state.pendingMinEditIntervalMillis - System.currentTimeMillis());
                 schedulePanelUpdate(key, state, delayMillis);
             }
@@ -671,6 +720,15 @@ public class NowplayingHandler
     static long computePanelUpdateDelayMillis(long nowMillis, long lastEditAtMillis,
                                               long minEditIntervalMillis, long debounceMillis)
     {
+        return computePanelUpdateDelayMillis(nowMillis, lastEditAtMillis,
+                minEditIntervalMillis, debounceMillis, false);
+    }
+
+    static long computePanelUpdateDelayMillis(long nowMillis, long lastEditAtMillis,
+                                              long minEditIntervalMillis, long debounceMillis, boolean immediate)
+    {
+        if(immediate)
+            return 0L;
         long earliestEditAt = Math.max(nowMillis + Math.max(0L, debounceMillis),
                 lastEditAtMillis + Math.max(0L, minEditIntervalMillis));
         return Math.max(0L, earliestEditAt - nowMillis);
@@ -763,7 +821,7 @@ public class NowplayingHandler
         track.setPosition(0L);
         handler.getPlayer().setPaused(false);
         event.deferEdit().queue();
-        requestButtonPanelUpdate(event);
+        requestButtonPanelUpdate(event, true);
     }
 
     private void handlePlayPause(ButtonInteractionEvent event)
@@ -774,7 +832,7 @@ public class NowplayingHandler
 
         handler.getPlayer().setPaused(!handler.getPlayer().isPaused());
         event.deferEdit().queue();
-        requestButtonPanelUpdate(event);
+        requestButtonPanelUpdate(event, true);
     }
 
     private void handleSkip(ButtonInteractionEvent event)
@@ -823,7 +881,7 @@ public class NowplayingHandler
         }
         else
         {
-            requestButtonPanelUpdate(event);
+            requestButtonPanelUpdate(event, false);
             String prefix = addedVote ? bot.getConfig().getSuccess() + " Vote counted: "
                     : bot.getConfig().getWarning() + " You already voted: ";
             event.reply(prefix + "`" + skippers + "/" + required + "` needed from `"
@@ -946,7 +1004,7 @@ public class NowplayingHandler
         Settings settings = bot.getSettingsManager().getSettings(event.getGuild());
         settings.setRepeatMode(nextRepeatMode(settings.getRepeatMode()));
         event.deferEdit().queue();
-        requestButtonPanelUpdate(event);
+        requestButtonPanelUpdate(event, true);
     }
 
     private void handleShuffle(ButtonInteractionEvent event)
@@ -970,7 +1028,7 @@ public class NowplayingHandler
                         .setEphemeral(true).queue();
                 break;
             default:
-                requestButtonPanelUpdate(event);
+                requestButtonPanelUpdate(event, fullQueue);
                 event.reply(bot.getConfig().getSuccess() + " "
                         + (fullQueue ? "Shuffled the full queue (`" + shuffled + "` entries)."
                         : "Shuffled your `" + shuffled + "` queued entries."))
@@ -1216,6 +1274,7 @@ public class NowplayingHandler
     {
         private boolean editInFlight;
         private boolean pending;
+        private boolean immediatePending;
         private long lastEditAt;
         private long pendingMinEditIntervalMillis = PANEL_MIN_EDIT_INTERVAL_MILLIS;
         private int pendingUpdateReason = PANEL_UPDATE_REASON_NORMAL;
