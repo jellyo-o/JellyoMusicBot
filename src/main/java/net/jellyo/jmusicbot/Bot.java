@@ -202,6 +202,7 @@ public class Bot
         AudioChannel channel = guild.getAudioManager().getConnectedChannel();
         LOG.info("Scheduling audio disconnect for guild {} ({}) from channel {} ({})",
                 guild.getName(), guild.getId(), channel == null ? "none" : channel.getName(), channel == null ? "none" : channel.getId());
+        nowplaying.collapsePanels(guild, "Bot disconnected. Music panel closed.");
         threadpool.submit(() ->
         {
             try

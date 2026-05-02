@@ -45,6 +45,7 @@ public class PauseCmd extends DJCommand
             return;
         }
         handler.getPlayer().setPaused(true);
+        handler.updateMusicPanels();
         event.replySuccess("Paused **"+handler.getPlayer().getPlayingTrack().getInfo().title+"**. Type `"+event.getClient().getPrefix()+"play` to unpause!");
     }
 }

@@ -1859,11 +1859,13 @@ public class SlashCommandListener extends ListenerAdapter
         if (handler.getPlayer().isPaused())
         {
             handler.getPlayer().setPaused(false);
+            handler.updateMusicPanels();
             event.reply(bot.getConfig().getSuccess() + " Resumed **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**").queue();
         }
         else
         {
             handler.getPlayer().setPaused(true);
+            handler.updateMusicPanels();
             event.reply(bot.getConfig().getSuccess() + " Paused **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**. Use `/pause` again to resume.").queue();
         }
     }
@@ -1885,6 +1887,7 @@ public class SlashCommandListener extends ListenerAdapter
         }
 
         handler.getPlayer().setPaused(false);
+        handler.updateMusicPanels();
         event.reply(bot.getConfig().getSuccess() + " Resumed **" + handler.getPlayer().getPlayingTrack().getInfo().title + "**").queue();
     }
 

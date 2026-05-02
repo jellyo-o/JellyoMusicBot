@@ -30,6 +30,8 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -62,8 +64,12 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public final static String PAUSE_EMOJI = "\u23F8"; // ⏸
     public final static String STOP_EMOJI  = "\u23F9"; // ⏹
     public final static String PLAY_PAUSE_EMOJI = "\u23EF"; // ⏯
+    public final static String RESTART_EMOJI = "\u23EE"; // ⏮
     public final static String SKIP_EMOJI = "\u23ED"; // ⏭
     public final static String REPEAT_EMOJI = "\uD83D\uDD01"; // 🔁
+    public final static String QUEUE_EMOJI = "\uD83D\uDCDC"; // 📜
+    public final static String LIKE_EMOJI = "\u2764"; // ❤
+    public final static String SHUFFLE_EMOJI = "\uD83D\uDD00"; // 🔀
     public final static String LYRICS_EMOJI = "\uD83C\uDFA4"; // 🎤
     private final static Pattern YOUTUBE_VIDEO_ID = Pattern.compile("[A-Za-z0-9_-]{11}");
     private final static int RECENT_TRACK_LIMIT = 25;
@@ -406,16 +412,15 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(track.getInfo().author != null && !track.getInfo().author.isEmpty())
                 eb.setFooter("Source: " + track.getInfo().author, null);
 
-            double progress = (double)audioPlayer.getPlayingTrack().getPosition()/track.getDuration();
+            double progress = getProgress(track);
             eb.setDescription(getStatusEmoji()
                     + " "+FormatUtil.progressBar(progress)
-                    + " `[" + TimeUtil.formatTime(track.getPosition()) + "/" + TimeUtil.formatTime(track.getDuration()) + "]` "
-                    + FormatUtil.volumeIcon(audioPlayer.getVolume()));
+                    + " `[" + TimeUtil.formatTime(track.getPosition()) + "/" + TimeUtil.formatTime(track.getDuration()) + "]`");
             RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
             AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
-            eb.addField("Position", getQueuePositionText(queue.size()), true);
-            eb.addField("Queue", getQueueSummary(), true);
-            eb.addField("Repeat", formatRepeatMode(repeatMode), true);
+            eb.addField("Queue", getQueueSummary(track), true);
+            eb.addField("Next Up", getNextUpSummary(), true);
+            eb.addField("Loop", formatRepeatMode(repeatMode), true);
             eb.addField("Autoplay", formatAutoplayMode(autoplayMode), true);
             eb.addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true);
             if(!votes.isEmpty())
@@ -442,24 +447,36 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return null;
     }
 
-    static String getQueuePositionText(int queuedTracks)
+    private String getQueueSummary(AudioTrack currentTrack)
     {
-        int totalTracks = Math.max(1, queuedTracks + 1);
-        if(totalTracks == 1)
-            return "Now `#1`";
-        return "Now `#1` of `" + totalTracks + "`";
+        QueueTiming timing = getQueueTiming(currentTrack);
+        StringBuilder builder = new StringBuilder("`")
+                .append(timing.queuedTracks)
+                .append("` waiting");
+        if(timing.queuedTracks > 0)
+            builder.append(" | `").append(timing.queuedDurationUnknown ? "LIVE" : TimeUtil.formatTime(timing.queuedDuration)).append("`");
+
+        if(timing.estimatedEndUnknown)
+            builder.append("\nTotal left unknown");
+        else if(audioPlayer.isPaused())
+            builder.append("\nTotal left `").append(TimeUtil.formatTime(timing.remainingDuration)).append("` (paused)");
+        else
+        {
+            long endEpochSeconds = Instant.now().plusMillis(timing.remainingDuration).getEpochSecond();
+            builder.append("\nTotal left `")
+                    .append(TimeUtil.formatTime(timing.remainingDuration))
+                    .append("` | Ends ")
+                    .append(formatDiscordTimestamp(endEpochSeconds, "R"))
+                    .append(" (")
+                    .append(formatDiscordTimestamp(endEpochSeconds, "t"))
+                    .append(")");
+        }
+        return builder.toString();
     }
 
-    private String getQueueSummary()
+    static String formatDiscordTimestamp(long epochSeconds, String style)
     {
-        int queuedTracks = queue.size();
-        if(queuedTracks == 0)
-            return "`0` waiting";
-
-        long total = 0L;
-        for(QueuedTrack queuedTrack : queue.getList())
-            total += Math.max(0L, queuedTrack.getTrack().getDuration());
-        return "`" + queuedTracks + "` waiting | `" + TimeUtil.formatTime(total) + "`";
+        return "<t:" + epochSeconds + ":" + style + ">";
     }
 
     private static String formatRepeatMode(RepeatMode repeatMode)
@@ -486,10 +503,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 .setContent(FormatUtil.filter(manager.getBot().getConfig().getSuccess()+" **Now Playing...**"))
                 .setEmbeds(new EmbedBuilder()
                 .setTitle("No music playing")
-                .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1)+" "+FormatUtil.volumeIcon(audioPlayer.getVolume()))
+                .setDescription(STOP_EMOJI+" "+FormatUtil.progressBar(-1))
                 .setColor(guild.getSelfMember().getColor())
                 .addField("Queue", "`0` waiting", true)
-                .addField("Repeat", formatRepeatMode(manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode()), true)
+                .addField("Next Up", getNextUpSummary(), true)
+                .addField("Loop", formatRepeatMode(manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode()), true)
                 .addField("Autoplay", formatAutoplayMode(manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode()), true)
                 .addField("Volume", FormatUtil.volumeIcon(audioPlayer.getVolume()) + " `" + audioPlayer.getVolume() + "%`", true)
                 .build())
@@ -510,23 +528,38 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private List<ActionRow> nowPlayingButtons(boolean enabled)
     {
         String playPauseLabel = audioPlayer.isPaused() ? "Resume" : "Pause";
-        return List.of(ActionRow.of(
-                Button.primary(NowplayingHandler.BUTTON_PLAY_PAUSE, playPauseLabel)
-                        .withEmoji(Emoji.fromUnicode(PLAY_PAUSE_EMOJI))
-                        .withDisabled(!enabled),
-                Button.secondary(NowplayingHandler.BUTTON_SKIP, "Skip")
-                        .withEmoji(Emoji.fromUnicode(SKIP_EMOJI))
-                        .withDisabled(!enabled),
-                Button.secondary(NowplayingHandler.BUTTON_LOOP, "Loop")
-                        .withEmoji(Emoji.fromUnicode(REPEAT_EMOJI))
-                        .withDisabled(!enabled),
-                Button.secondary(NowplayingHandler.BUTTON_LYRICS, "Lyrics")
-                        .withEmoji(Emoji.fromUnicode(LYRICS_EMOJI))
-                        .withDisabled(!enabled),
-                Button.danger(NowplayingHandler.BUTTON_STOP, "Stop")
-                        .withEmoji(Emoji.fromUnicode(STOP_EMOJI))
-                        .withDisabled(!enabled)
-        ));
+        return List.of(
+                ActionRow.of(
+                        Button.secondary(NowplayingHandler.BUTTON_RESTART, "Start Over")
+                                .withEmoji(Emoji.fromUnicode(RESTART_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.primary(NowplayingHandler.BUTTON_PLAY_PAUSE, playPauseLabel)
+                                .withEmoji(Emoji.fromUnicode(PLAY_PAUSE_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.secondary(NowplayingHandler.BUTTON_SKIP, "Skip")
+                                .withEmoji(Emoji.fromUnicode(SKIP_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.secondary(NowplayingHandler.BUTTON_QUEUE, "Queue")
+                                .withEmoji(Emoji.fromUnicode(QUEUE_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.secondary(NowplayingHandler.BUTTON_LIKE, "Like")
+                                .withEmoji(Emoji.fromUnicode(LIKE_EMOJI))
+                                .withDisabled(!enabled)
+                ),
+                ActionRow.of(
+                        Button.secondary(NowplayingHandler.BUTTON_LOOP, "Loop")
+                                .withEmoji(Emoji.fromUnicode(REPEAT_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.secondary(NowplayingHandler.BUTTON_SHUFFLE, "Shuffle")
+                                .withEmoji(Emoji.fromUnicode(SHUFFLE_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.secondary(NowplayingHandler.BUTTON_LYRICS, "Lyrics")
+                                .withEmoji(Emoji.fromUnicode(LYRICS_EMOJI))
+                                .withDisabled(!enabled),
+                        Button.danger(NowplayingHandler.BUTTON_STOP, "Stop")
+                                .withEmoji(Emoji.fromUnicode(STOP_EMOJI))
+                                .withDisabled(!enabled)
+                ));
     }
     
     // Audio Send Handler methods
@@ -611,6 +644,137 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         RequestMetadata current = getRequestMetadata();
         RequestMetadata next = qtrack.getRequestMetadata();
         return current.isAutoplay() && !next.isAutoplay();
+    }
+
+    private QueueTiming getQueueTiming(AudioTrack currentTrack)
+    {
+        List<QueuedTrack> queuedTracks = snapshotQueue();
+        int queuedCount = queuedTracks.size();
+        long queuedDuration = 0L;
+        boolean queuedDurationUnknown = false;
+        boolean estimatedEndUnknown = isUnknownDuration(currentTrack);
+        long remainingDuration = getRemainingDuration(currentTrack);
+
+        for(QueuedTrack queuedTrack : queuedTracks)
+        {
+            AudioTrack track = queuedTrack.getTrack();
+            if(isUnknownDuration(track))
+            {
+                queuedDurationUnknown = true;
+                estimatedEndUnknown = true;
+                continue;
+            }
+
+            long duration = Math.max(0L, track.getDuration());
+            queuedDuration = safeAdd(queuedDuration, duration);
+            remainingDuration = safeAdd(remainingDuration, duration);
+            if(queuedDuration == Long.MAX_VALUE)
+                queuedDurationUnknown = true;
+            if(queuedDurationUnknown || remainingDuration == Long.MAX_VALUE)
+                estimatedEndUnknown = true;
+        }
+
+        return new QueueTiming(queuedCount, queuedDuration, remainingDuration, queuedDurationUnknown, estimatedEndUnknown);
+    }
+
+    private List<QueuedTrack> snapshotQueue()
+    {
+        try
+        {
+            return new ArrayList<>(queue.getList());
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.debug("Could not snapshot queue for guild {}; panel timing will use current track only", guildId, ex);
+            return List.of();
+        }
+    }
+
+    private String getNextUpSummary()
+    {
+        List<QueuedTrack> queuedTracks = snapshotQueue();
+        if(!queuedTracks.isEmpty())
+            return formatQueuedTrackLine(queuedTracks.get(0));
+
+        AutoplayMode autoplayMode = manager.getBot().getSettingsManager().getSettings(guildId).getAutoplayMode();
+        if(autoplayMode != AutoplayMode.OFF)
+        {
+            String message = "Autoplay `" + autoplayMode.getUserFriendlyName() + "` will choose the next track.";
+            if(getRequestMetadata().isAutoplay())
+                message += "\nUser requests play immediately.";
+            return message;
+        }
+
+        return "`Nothing queued`";
+    }
+
+    static String formatQueuedTrackLine(QueuedTrack queuedTrack)
+    {
+        if(queuedTrack == null || queuedTrack.getTrack() == null)
+            return "`Unknown track`";
+
+        AudioTrack track = queuedTrack.getTrack();
+        String duration = isUnknownDuration(track) ? "LIVE" : TimeUtil.formatTime(Math.max(0L, track.getDuration()));
+        String title = track.getInfo() == null || track.getInfo().title == null || track.getInfo().title.isBlank()
+                ? "Unknown track" : track.getInfo().title;
+        StringBuilder builder = new StringBuilder("`[")
+                .append(duration)
+                .append("]` **")
+                .append(FormatUtil.filter(title))
+                .append("**");
+
+        RequestMetadata metadata = queuedTrack.getRequestMetadata();
+        if(metadata != null && metadata.user != null)
+            builder.append(" - ").append(FormatUtil.formatUsername(metadata.user));
+        return builder.toString();
+    }
+
+    private static long getRemainingDuration(AudioTrack track)
+    {
+        if(track == null || isUnknownDuration(track))
+            return 0L;
+        return Math.max(0L, track.getDuration() - track.getPosition());
+    }
+
+    private static boolean isUnknownDuration(AudioTrack track)
+    {
+        return track != null
+                && (track.getDuration() == Long.MAX_VALUE || (track.getInfo() != null && track.getInfo().isStream));
+    }
+
+    private static long safeAdd(long total, long duration)
+    {
+        if(duration <= 0L)
+            return total;
+        if(Long.MAX_VALUE - total < duration)
+            return Long.MAX_VALUE;
+        return total + duration;
+    }
+
+    private static double getProgress(AudioTrack track)
+    {
+        if(track == null || track.getDuration() <= 0L || isUnknownDuration(track))
+            return -1;
+        return (double)track.getPosition() / track.getDuration();
+    }
+
+    private static class QueueTiming
+    {
+        private final int queuedTracks;
+        private final long queuedDuration;
+        private final long remainingDuration;
+        private final boolean queuedDurationUnknown;
+        private final boolean estimatedEndUnknown;
+
+        private QueueTiming(int queuedTracks, long queuedDuration, long remainingDuration,
+                            boolean queuedDurationUnknown, boolean estimatedEndUnknown)
+        {
+            this.queuedTracks = queuedTracks;
+            this.queuedDuration = queuedDuration;
+            this.remainingDuration = remainingDuration;
+            this.queuedDurationUnknown = queuedDurationUnknown;
+            this.estimatedEndUnknown = estimatedEndUnknown;
+        }
     }
 
     private void rememberRecentTrack(AudioTrack track)

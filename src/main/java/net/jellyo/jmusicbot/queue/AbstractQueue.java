@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot.queue;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -106,6 +107,12 @@ public abstract class AbstractQueue<T extends Queueable>
             list.set(second, temp);
         }
         return iset.size();
+    }
+
+    public int shuffleAll()
+    {
+        Collections.shuffle(list);
+        return list.size();
     }
 
     public void skip(int number)

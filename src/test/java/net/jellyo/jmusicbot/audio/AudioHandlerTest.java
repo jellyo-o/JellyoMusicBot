@@ -83,6 +83,21 @@ public class AudioHandlerTest
                 "Artist - Song (Official Music Video)", "ArtistVEVO"));
     }
 
+    @Test
+    public void discordTimestampUsesRequestedStyle()
+    {
+        assertEquals("<t:1714600000:R>", AudioHandler.formatDiscordTimestamp(1714600000L, "R"));
+        assertEquals("<t:1714600000:t>", AudioHandler.formatDiscordTimestamp(1714600000L, "t"));
+    }
+
+    @Test
+    public void queuedTrackLineIncludesDurationAndTitle()
+    {
+        QueuedTrack queuedTrack = new QueuedTrack(new TestTrack("dQw4w9WgXcQ", null, "youtube"), RequestMetadata.EMPTY);
+
+        assertEquals("`[00:01]` **Title**", AudioHandler.formatQueuedTrackLine(queuedTrack));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;

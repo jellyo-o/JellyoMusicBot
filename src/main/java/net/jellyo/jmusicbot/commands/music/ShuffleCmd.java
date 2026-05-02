@@ -18,6 +18,7 @@ package com.jagrosh.jmusicbot.commands.music;
 import com.jagrosh.jdautilities.command.CommandEvent;
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.AudioHandler;
+import com.jagrosh.jmusicbot.commands.CommandChecks;
 import com.jagrosh.jmusicbot.commands.CommandContext;
 import com.jagrosh.jmusicbot.commands.MessageCommandContext;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
@@ -33,7 +34,7 @@ public class ShuffleCmd extends MusicCommand implements UnifiedCommand
     {
         super(bot);
         this.name = "shuffle";
-        this.help = "shuffles songs you have added";
+        this.help = "shuffles your queued songs, or the full queue for DJs";
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = true;
@@ -49,18 +50,20 @@ public class ShuffleCmd extends MusicCommand implements UnifiedCommand
     public void doCommand(CommandContext event)
     {
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-        int s = handler.getQueue().shuffle(event.getAuthor().getIdLong());
+        boolean fullQueue = CommandChecks.checkDJPermission(event, bot);
+        int s = fullQueue ? handler.getQueue().shuffleAll() : handler.getQueue().shuffle(event.getAuthor().getIdLong());
         switch (s) 
         {
             case 0:
-                event.replyError("You don't have any music in the queue to shuffle!");
+                event.replyError(fullQueue ? "There is no music in the queue to shuffle!" : "You don't have any music in the queue to shuffle!");
                 break;
             case 1:
-                event.replyWarning("You only have one song in the queue!");
+                event.replyWarning(fullQueue ? "There is only one song in the queue!" : "You only have one song in the queue!");
                 break;
             default:
                 handler.updateMusicPanels();
-                event.replySuccess("You successfully shuffled your "+s+" entries.");
+                event.replySuccess(fullQueue ? "You successfully shuffled the full queue (`"+s+"` entries)."
+                        : "You successfully shuffled your "+s+" entries.");
                 break;
         }
     }
