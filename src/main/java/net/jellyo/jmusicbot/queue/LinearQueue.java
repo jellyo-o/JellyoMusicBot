@@ -15,6 +15,8 @@
  */
 package com.jagrosh.jmusicbot.queue;
 
+import java.util.Collection;
+
 /**
  *
  * @author Wolfgang Schwendtbauer
@@ -32,6 +34,16 @@ public class LinearQueue<T extends Queueable> extends AbstractQueue<T>
     {
         list.add(item);
         return list.size() - 1;
+    }
+
+    @Override
+    public int addAll(Collection<T> items)
+    {
+        if(items.isEmpty())
+            return -1;
+        int firstPosition = list.size();
+        list.addAll(items);
+        return firstPosition;
     }
 
 }

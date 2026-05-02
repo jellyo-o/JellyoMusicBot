@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot.queue;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
@@ -35,6 +36,18 @@ public abstract class AbstractQueue<T extends Queueable>
     protected final List<T> list;
 
     public abstract int add(T item);
+
+    public int addAll(Collection<T> items)
+    {
+        int firstPosition = -1;
+        for(T item : items)
+        {
+            int position = add(item);
+            if(firstPosition < 0)
+                firstPosition = position;
+        }
+        return firstPosition;
+    }
 
     public void addAt(int index, T item)
     {
