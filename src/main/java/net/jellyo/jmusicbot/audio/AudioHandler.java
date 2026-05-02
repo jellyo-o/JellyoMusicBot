@@ -63,7 +63,6 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public final static String PLAY_EMOJI  = "\u25B6"; // ▶
     public final static String PAUSE_EMOJI = "\u23F8"; // ⏸
     public final static String STOP_EMOJI  = "\u23F9"; // ⏹
-    public final static String PLAY_PAUSE_EMOJI = "\u23EF"; // ⏯
     public final static String RESTART_EMOJI = "\u23EE"; // ⏮
     public final static String SKIP_EMOJI = "\u23ED"; // ⏭
     public final static String REPEAT_EMOJI = "\uD83D\uDD01"; // 🔁
@@ -527,39 +526,27 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private List<ActionRow> nowPlayingButtons(boolean enabled)
     {
-        String playPauseLabel = audioPlayer.isPaused() ? "Resume" : "Pause";
+        String playPauseEmoji = audioPlayer.isPaused() ? PLAY_EMOJI : PAUSE_EMOJI;
         return List.of(
                 ActionRow.of(
-                        Button.secondary(NowplayingHandler.BUTTON_RESTART, "Start Over")
-                                .withEmoji(Emoji.fromUnicode(RESTART_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.primary(NowplayingHandler.BUTTON_PLAY_PAUSE, playPauseLabel)
-                                .withEmoji(Emoji.fromUnicode(PLAY_PAUSE_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.secondary(NowplayingHandler.BUTTON_SKIP, "Skip")
-                                .withEmoji(Emoji.fromUnicode(SKIP_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.secondary(NowplayingHandler.BUTTON_QUEUE, "Queue")
-                                .withEmoji(Emoji.fromUnicode(QUEUE_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.secondary(NowplayingHandler.BUTTON_LIKE, "Like")
-                                .withEmoji(Emoji.fromUnicode(LIKE_EMOJI))
+                        panelButton(NowplayingHandler.BUTTON_RESTART, RESTART_EMOJI, enabled),
+                        panelButton(NowplayingHandler.BUTTON_PLAY_PAUSE, playPauseEmoji, enabled),
+                        panelButton(NowplayingHandler.BUTTON_SKIP, SKIP_EMOJI, enabled),
+                        Button.danger(NowplayingHandler.BUTTON_STOP, Emoji.fromUnicode(STOP_EMOJI))
                                 .withDisabled(!enabled)
                 ),
                 ActionRow.of(
-                        Button.secondary(NowplayingHandler.BUTTON_LOOP, "Loop")
-                                .withEmoji(Emoji.fromUnicode(REPEAT_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.secondary(NowplayingHandler.BUTTON_SHUFFLE, "Shuffle")
-                                .withEmoji(Emoji.fromUnicode(SHUFFLE_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.secondary(NowplayingHandler.BUTTON_LYRICS, "Lyrics")
-                                .withEmoji(Emoji.fromUnicode(LYRICS_EMOJI))
-                                .withDisabled(!enabled),
-                        Button.danger(NowplayingHandler.BUTTON_STOP, "Stop")
-                                .withEmoji(Emoji.fromUnicode(STOP_EMOJI))
-                                .withDisabled(!enabled)
+                        panelButton(NowplayingHandler.BUTTON_LOOP, REPEAT_EMOJI, enabled),
+                        panelButton(NowplayingHandler.BUTTON_SHUFFLE, SHUFFLE_EMOJI, enabled),
+                        panelButton(NowplayingHandler.BUTTON_QUEUE, QUEUE_EMOJI, enabled),
+                        panelButton(NowplayingHandler.BUTTON_LYRICS, LYRICS_EMOJI, enabled),
+                        panelButton(NowplayingHandler.BUTTON_LIKE, LIKE_EMOJI, enabled)
                 ));
+    }
+
+    private static Button panelButton(String id, String emoji, boolean enabled)
+    {
+        return Button.secondary(id, Emoji.fromUnicode(emoji)).withDisabled(!enabled);
     }
     
     // Audio Send Handler methods
