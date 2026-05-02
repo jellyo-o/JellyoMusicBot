@@ -38,6 +38,12 @@ public class NowplayingCmd extends MusicCommand
     @Override
     public void doCommand(CommandEvent event) 
     {
-        bot.getNowplayingHandler().showPanel(event.getGuild(), event.getTextChannel(), true);
+        bot.getNowplayingHandler().showPanel(event.getGuild(), event.getTextChannel(), event.getMember(), true,
+                result ->
+                {
+                    if(!result.isPosted())
+                        event.reply(event.getClient().getSuccess() + " Music panel is already active: " + result.getJumpUrl());
+                },
+                error -> event.replyError("I could not post the music panel in this channel."));
     }
 }

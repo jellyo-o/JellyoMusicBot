@@ -1585,8 +1585,9 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handleNowPlaying(SlashCommandInteractionEvent event)
     {
-        event.deferReply(true).queue(hook -> bot.getNowplayingHandler().showPanel(event.getGuild(), event.getChannel(), true,
-                msg -> hook.editOriginal(bot.getConfig().getSuccess() + " Music panel posted.").queue(),
+        event.deferReply(true).queue(hook -> bot.getNowplayingHandler().showPanel(event.getGuild(), event.getChannel(), event.getMember(), true,
+                result -> hook.editOriginal(bot.getConfig().getSuccess() + (result.isPosted()
+                        ? " Music panel posted: " : " Music panel is already active: ") + result.getJumpUrl()).queue(),
                 error -> hook.editOriginal(bot.getConfig().getError() + " I could not post the music panel in this channel.").queue()));
     }
 
