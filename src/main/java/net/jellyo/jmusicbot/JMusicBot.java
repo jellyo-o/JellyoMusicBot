@@ -297,7 +297,7 @@ public class JMusicBot
                 .append("Use these prefix commands");
         if(event.getClient().getAltPrefix() != null)
             builder.append(" or the alternate prefix `").append(event.getClient().getAltPrefix()).append("`");
-        builder.append(". Slash commands with matching names are also available.\n");
+        builder.append(". Slash-only commands are listed separately.\n");
 
         appendPrefixHelp(pages, builder, "General", prefix, new String[][]{
                 {"help", "Show this command list"},
@@ -309,23 +309,32 @@ public class JMusicBot
                 {"play <title|URL>", "Play a song or URL"},
                 {"play playlist <name>", "Play one of your playlists"},
                 {"playtop <title|URL>", "Add a song to the top of the queue"},
-                {"playlists", "List your playlists"},
-                {"nowplaying", "Show the current song"},
+                {"playlists", "List your playlists, including followed and liked lists"},
+                {"nowplaying", "Open or reuse the persistent music panel"},
                 {"queue [page]", "Show the queue"},
                 {"search <query>", "Search YouTube and choose a result"},
                 {"scsearch <query>", "Search SoundCloud and choose a result"},
                 {"skip", "Vote to skip"},
                 {"remove <position|all>", "Remove queued songs"},
-                {"shuffle", "Shuffle your queued songs"},
+                {"shuffle", "Shuffle your queued songs; DJs shuffle the full queue"},
                 {"seek <time>", "Seek the current song"},
                 {"lyrics [song]", "Fetch lyrics"},
-                {"correctlyrics <genius-url> <song>", "Correct cached lyrics for a song"}
+                {"correctlyrics <genius-url> | <song>", "Correct cached lyrics for a song"}
+        });
+        appendPlainHelp(pages, builder, "Slash-Only", new String[][]{
+                {"/playlist <list|create|rename|delete|view|play|add|addcurrent|addqueue|remove|move|clear|share|addshared|unshare|unfollow|copy>", "Manage editable, shared, and followed playlists"},
+                {"/like source:<current|queue|query>", "Add music to Liked Songs"},
+                {"/unlike target:<current|index|query>", "Remove music from Liked Songs"},
+                {"/liked action:<view|play>", "View or play Liked Songs"},
+                {"/resume", "Resume playback if paused"},
+                {"/skipratio [ratio]", "Show or set skip ratio from 0 to 1"}
         });
         appendPrefixHelp(pages, builder, "DJ", prefix, new String[][]{
                 {"forceskip", "Force skip"},
-                {"pause", "Pause or resume playback"},
+                {"pause", "Pause playback; use play to resume"},
                 {"stop", "Stop playback and clear the queue"},
                 {"volume [0-150]", "Show or set volume"},
+                {"filter [off|bassboost|nightcore|8d|vaporwave|tremolo|karaoke|list]", "Show or set audio filter"},
                 {"repeat [off|all|single]", "Set repeat mode"},
                 {"loop [off|all|single]", "Alias for repeat"},
                 {"autoplay [off|smart|related|artist|playlist|server]", "Set autoplay radio mode"},
@@ -341,7 +350,6 @@ public class JMusicBot
                 {"settc <channel|none>", "Restrict music text channel"},
                 {"setvc <channel|none>", "Restrict music voice channel"},
                 {"setskip <0-100>", "Set skip percentage"},
-                {"skipratio [ratio]", "Show or set skip ratio"},
                 {"queuetype [fair|linear]", "Show or set queue type"}
         });
         if(event.isOwner())
@@ -385,6 +393,20 @@ public class JMusicBot
         StringBuilder section = new StringBuilder("\n\n__").append(category).append("__:");
         for(String[] command : commands)
             section.append("\n`").append(prefix).append(command[0]).append("` - ").append(command[1]);
+
+        if(builder.length() > 0 && builder.length() + section.length() > HELP_MESSAGE_LIMIT)
+        {
+            pages.add(builder.toString());
+            builder.setLength(0);
+        }
+        builder.append(section);
+    }
+
+    private static void appendPlainHelp(List<String> pages, StringBuilder builder, String category, String[][] commands)
+    {
+        StringBuilder section = new StringBuilder("\n\n__").append(category).append("__:");
+        for(String[] command : commands)
+            section.append("\n`").append(command[0]).append("` - ").append(command[1]);
 
         if(builder.length() > 0 && builder.length() + section.length() > HELP_MESSAGE_LIMIT)
         {
