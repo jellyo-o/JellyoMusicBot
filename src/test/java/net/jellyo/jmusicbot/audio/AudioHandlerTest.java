@@ -54,6 +54,13 @@ public class AudioHandlerTest
         assertNull(AudioHandler.getNowPlayingThumbnail(new TestTrack("dQw4w9WgXcQ", null, "soundcloud")));
     }
 
+    @Test
+    public void discordTimestampUsesRequestedStyle()
+    {
+        assertEquals("<t:1714600000:R>", AudioHandler.formatDiscordTimestamp(1714600000L, "R"));
+        assertEquals("<t:1714600000:t>", AudioHandler.formatDiscordTimestamp(1714600000L, "t"));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;

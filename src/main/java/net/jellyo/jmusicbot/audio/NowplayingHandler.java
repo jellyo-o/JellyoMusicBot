@@ -43,6 +43,8 @@ import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 import net.dv8tion.jda.api.utils.messages.MessageEditBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageEditData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -50,6 +52,9 @@ import net.dv8tion.jda.api.utils.messages.MessageEditData;
  */
 public class NowplayingHandler
 {
+    private final static Logger LOG = LoggerFactory.getLogger(NowplayingHandler.class);
+
+    public static final String BUTTON_RESTART = "jmb-np:restart";
     public static final String BUTTON_PLAY_PAUSE = "jmb-np:play-pause";
     public static final String BUTTON_SKIP = "jmb-np:skip";
     public static final String BUTTON_LOOP = "jmb-np:loop";
@@ -96,7 +101,14 @@ public class NowplayingHandler
     {
         for(long guildId: panels.keySet())
         {
-            updatePanels(guildId);
+            try
+            {
+                updatePanels(guildId);
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.warn("Failed to update music panel for guild {}; future panel updates will continue", guildId, ex);
+            }
         }
     }
 
@@ -114,7 +126,17 @@ public class NowplayingHandler
             return;
 
         AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
-        MessageCreateData msg = handler.getMusicPanel(bot.getJDA());
+        MessageCreateData msg;
+        try
+        {
+            msg = handler.getMusicPanel(bot.getJDA());
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to build music panel for guild {}", guild.getId(), ex);
+            return;
+        }
+
         for(Map.Entry<Long, Long> entry : channelPanels.entrySet())
         {
             TextChannel channel = guild.getTextChannelById(entry.getKey());
@@ -126,8 +148,45 @@ public class NowplayingHandler
 
             long channelId = entry.getKey();
             long messageId = entry.getValue();
-            channel.editMessageById(messageId, MessageEditData.fromCreateData(msg))
-                    .queue(m -> {}, t -> channelPanels.remove(channelId, messageId));
+            try
+            {
+                channel.editMessageById(messageId, MessageEditData.fromCreateData(msg))
+                        .queue(m -> {}, t ->
+                        {
+                            LOG.debug("Removing stale music panel {} in channel {} for guild {}",
+                                    messageId, channelId, guild.getId());
+                            channelPanels.remove(channelId, messageId);
+                        });
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.warn("Failed to queue music panel update for message {} in channel {} for guild {}",
+                        messageId, channelId, guild.getId(), ex);
+                channelPanels.remove(channelId, messageId);
+            }
+        }
+    }
+
+    public void collapsePanels(Guild guild, String reason)
+    {
+        if(guild == null)
+            return;
+
+        Map<Long, Long> channelPanels = panels.remove(guild.getIdLong());
+        if(channelPanels == null || channelPanels.isEmpty())
+            return;
+
+        MessageEditData closedPanel = new MessageEditBuilder()
+                .setContent(bot.getConfig().getWarning() + " " + reason)
+                .setEmbeds(Collections.emptyList())
+                .setComponents(Collections.emptyList())
+                .build();
+        for(Map.Entry<Long, Long> entry : channelPanels.entrySet())
+        {
+            TextChannel channel = guild.getTextChannelById(entry.getKey());
+            if(channel == null)
+                continue;
+            channel.editMessageById(entry.getValue(), closedPanel).queue(m -> {}, t -> {});
         }
     }
 
@@ -183,6 +242,9 @@ public class NowplayingHandler
 
         switch(componentId)
         {
+            case BUTTON_RESTART:
+                handleRestart(event);
+                break;
             case BUTTON_PLAY_PAUSE:
                 handlePlayPause(event);
                 break;
@@ -289,11 +351,31 @@ public class NowplayingHandler
 
     private boolean isPanelButton(String componentId)
     {
-        return BUTTON_PLAY_PAUSE.equals(componentId)
+        return BUTTON_RESTART.equals(componentId)
+                || BUTTON_PLAY_PAUSE.equals(componentId)
                 || BUTTON_SKIP.equals(componentId)
                 || BUTTON_LOOP.equals(componentId)
                 || BUTTON_LYRICS.equals(componentId)
                 || BUTTON_STOP.equals(componentId);
+    }
+
+    private void handleRestart(ButtonInteractionEvent event)
+    {
+        AudioHandler handler = requirePlaying(event);
+        if(handler == null || !requireListening(event) || !requireDJ(event))
+            return;
+
+        AudioTrack track = handler.getPlayer().getPlayingTrack();
+        if(track == null || !track.isSeekable())
+        {
+            event.reply(bot.getConfig().getError() + " This track cannot be restarted.").setEphemeral(true).queue();
+            return;
+        }
+
+        track.setPosition(0L);
+        handler.getPlayer().setPaused(false);
+        event.deferEdit().queue();
+        handler.updateMusicPanels();
     }
 
     private void handlePlayPause(ButtonInteractionEvent event)
@@ -310,7 +392,17 @@ public class NowplayingHandler
     private void handleSkip(ButtonInteractionEvent event)
     {
         AudioHandler handler = requirePlaying(event);
-        if(handler == null || !requireListening(event))
+        if(handler == null)
+            return;
+
+        if(checkDJPermission(event.getMember(), event.getGuild()))
+        {
+            handler.getPlayer().stopTrack();
+            event.deferEdit().queue();
+            return;
+        }
+
+        if(!requireListening(event))
             return;
 
         RequestMetadata rm = handler.getRequestMetadata();
@@ -358,7 +450,7 @@ public class NowplayingHandler
             return;
 
         handler.stopAndClear();
-        event.getGuild().getAudioManager().closeAudioConnection();
+        bot.closeAudioConnection(event.getGuild().getIdLong());
         event.deferEdit().queue();
     }
 

@@ -57,7 +57,7 @@ public class StopCmd extends DJCommand implements UnifiedCommand
                 event.getAuthor().getName(), event.getAuthor().getId(), handler != null);
         if(handler != null)
             handler.stopAndClear();
-        event.getGuild().getAudioManager().closeAudioConnection();
+        bot.closeAudioConnection(event.getGuild().getIdLong());
         event.reply(event.getSuccess()+" The player has stopped and the queue has been cleared.");
     }
 }
