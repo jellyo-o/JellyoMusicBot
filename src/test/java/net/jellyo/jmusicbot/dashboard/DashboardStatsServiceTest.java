@@ -43,8 +43,10 @@ public class DashboardStatsServiceTest
             assertEquals(0, snapshot.getJSONObject("summary").getLong("minutesPlayed"));
             assertEquals(0, snapshot.getJSONArray("requesters").length());
             assertEquals(0, snapshot.getJSONArray("guilds").length());
+            assertEquals(0, snapshot.getJSONArray("serverDetails").length());
             assertEquals(0, snapshot.getJSONArray("tracks").length());
             assertEquals(0, snapshot.getJSONArray("sources").length());
+            assertEquals(0, snapshot.getJSONArray("history").length());
             assertEquals(0, snapshot.getJSONArray("recent").length());
         }
         finally
@@ -109,6 +111,16 @@ public class DashboardStatsServiceTest
             assertEquals("456", snapshot.getJSONArray("requesters").getJSONObject(0).getString("id"));
             assertEquals("Song", snapshot.getJSONArray("tracks").getJSONObject(0).getString("title"));
             assertEquals(1, snapshot.getJSONArray("skippedTracks").getJSONObject(0).getLong("skips"));
+            assertEquals(1, snapshot.getJSONArray("history").length());
+            assertEquals("Song", snapshot.getJSONArray("history").getJSONObject(0).getJSONObject("track").getString("title"));
+            assertEquals("Server", snapshot.getJSONArray("history").getJSONObject(0).getJSONObject("guild").getString("name"));
+            assertEquals(true, snapshot.getJSONArray("history").getJSONObject(0).getBoolean("skipped"));
+            assertEquals(1, snapshot.getJSONArray("guilds").getJSONObject(0).getLong("tracks"));
+            assertEquals(1.0, snapshot.getJSONArray("guilds").getJSONObject(0).getDouble("skipRate"), 0.001);
+            assertEquals(1, snapshot.getJSONArray("serverDetails").length());
+            assertEquals("123", snapshot.getJSONArray("serverDetails").getJSONObject(0).getString("id"));
+            assertEquals(1, snapshot.getJSONArray("serverDetails").getJSONObject(0).getJSONArray("history").length());
+            assertEquals("Song", snapshot.getJSONArray("serverDetails").getJSONObject(0).getJSONArray("topTracks").getJSONObject(0).getString("title"));
             assertEquals(1, snapshot.getJSONArray("recent").length());
         }
         finally
