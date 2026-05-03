@@ -31,14 +31,13 @@ import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
+import com.jagrosh.jmusicbot.playlist.PlaylistTrackLoader;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.TimeUnit;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Message;
@@ -310,117 +309,22 @@ public class PlayCmd extends MusicCommand
                 LOG.info("Loading user playlist '{}' in guild {} ({}) with {} configured entries",
                         playlist.getName(), event.getGuild().getName(), event.getGuild().getId(), items.size());
                 AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-                AtomicInteger remaining = new AtomicInteger(items.size());
-                AtomicInteger failed = new AtomicInteger();
-                AtomicReferenceArray<List<AudioTrack>> loadedTracks = new AtomicReferenceArray<>(items.size());
-                long startedAt = System.nanoTime();
-                for(int i = 0; i < items.size(); i++)
-                {
-                    int index = i;
-                    PlaylistTrack item = items.get(i);
-                    bot.getPlayerManager().loadItem(item.getLoadQuery(), new AudioLoadResultHandler()
-                    {
-                        private void done(List<AudioTrack> tracks)
+                PlaylistTrackLoader.load(bot.getPlayerManager(), bot.getThreadpool(), playlist.getName(), items,
+                        bot.getConfig()::isTooLong, result ->
                         {
-                            loadedTracks.set(index, tracks);
-                            if(remaining.decrementAndGet() == 0)
-                            {
-                                List<QueuedTrack> queuedTracks = new ArrayList<>();
-                                for(int i = 0; i < items.size(); i++)
-                                {
-                                    List<AudioTrack> itemTracks = loadedTracks.get(i);
-                                    if(itemTracks == null)
-                                        continue;
-                                    for(AudioTrack track : itemTracks)
-                                        queuedTracks.add(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getAuthor(), playlist.getId(),
-                                                playlist.getName(), track, event.getTextChannel().getIdLong())));
-                                }
-                                handler.addTracks(queuedTracks);
-                                long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-                                LOG.info("User playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}; elapsedMs={}",
-                                        playlist.getName(), event.getGuild().getName(), event.getGuild().getId(),
-                                        queuedTracks.size(), failed.get(), elapsedMillis);
-                                String str = event.getClient().getSuccess()+" Loaded **"+queuedTracks.size()+"** tracks!"
-                                        +(failed.get() == 0 ? "" : "\n"+event.getClient().getWarning()+" `"+failed.get()+"` entries failed.");
-                                m.editMessage(FormatUtil.filter(str)).queue();
-                            }
-                        }
-
-                        private List<AudioTrack> acceptedTrack(AudioTrack track)
-                        {
-                            if(bot.getConfig().isTooLong(track))
-                            {
-                                failed.incrementAndGet();
-                                return Collections.emptyList();
-                            }
-                            return List.of(track);
-                        }
-
-                        private List<AudioTrack> acceptedTracks(List<AudioTrack> tracks)
-                        {
-                            if(tracks.isEmpty())
-                            {
-                                failed.incrementAndGet();
-                                return Collections.emptyList();
-                            }
-                            List<AudioTrack> accepted = new ArrayList<>();
-                            for(AudioTrack track : tracks)
-                            {
-                                if(bot.getConfig().isTooLong(track))
-                                    failed.incrementAndGet();
-                                else
-                                    accepted.add(track);
-                            }
-                            return accepted;
-                        }
-
-                        @Override
-                        public void trackLoaded(AudioTrack track)
-                        {
-                            done(acceptedTrack(track));
-                        }
-
-                        @Override
-                        public void playlistLoaded(AudioPlaylist audioPlaylist)
-                        {
-                            if(audioPlaylist.isSearchResult())
-                            {
-                                if(audioPlaylist.getTracks().isEmpty())
-                                {
-                                    failed.incrementAndGet();
-                                    done(Collections.emptyList());
-                                }
-                                else
-                                    done(acceptedTrack(audioPlaylist.getTracks().get(0)));
-                            }
-                            else if(audioPlaylist.getSelectedTrack() != null)
-                            {
-                                done(acceptedTrack(audioPlaylist.getSelectedTrack()));
-                            }
-                            else
-                            {
-                                done(acceptedTracks(audioPlaylist.getTracks()));
-                            }
-                        }
-
-                        @Override
-                        public void noMatches()
-                        {
-                            failed.incrementAndGet();
-                            done(Collections.emptyList());
-                        }
-
-                        @Override
-                        public void loadFailed(FriendlyException throwable)
-                        {
-                            failed.incrementAndGet();
-                            LOG.warn("Prefix playlist item load failed in guild {} ({}); playlist='{}'; query='{}'; severity={}; message={}",
-                                    event.getGuild().getName(), event.getGuild().getId(), playlist.getName(), item.getLoadQuery(),
-                                    throwable.severity, throwable.getMessage(), throwable);
-                            done(Collections.emptyList());
-                        }
-                    });
-                }
+                            List<QueuedTrack> queuedTracks = new ArrayList<>();
+                            for(List<AudioTrack> itemTracks : result.getTracksByItem())
+                                for(AudioTrack track : itemTracks)
+                                    queuedTracks.add(new QueuedTrack(track, RequestMetadata.fromPlaylist(event.getAuthor(), playlist.getId(),
+                                            playlist.getName(), track, event.getTextChannel().getIdLong())));
+                            handler.addTracks(queuedTracks);
+                            LOG.info("User playlist '{}' loaded in guild {} ({}); loadedTracks={}; errors={}; retries={}; elapsedMs={}",
+                                    playlist.getName(), event.getGuild().getName(), event.getGuild().getId(),
+                                    queuedTracks.size(), result.getFailed(), result.getRetries(), result.getElapsedMillis());
+                            String str = event.getClient().getSuccess()+" Loaded **"+queuedTracks.size()+"** tracks!"
+                                    +(result.getFailed() == 0 ? "" : "\n"+event.getClient().getWarning()+" `"+result.getFailed()+"` entries failed.");
+                            m.editMessage(FormatUtil.filter(str)).queue();
+                        });
             });
         }
     }
