@@ -136,8 +136,11 @@ public class BotConfig
             if(token==null || token.isEmpty() || token.equalsIgnoreCase("BOT_TOKEN_HERE"))
             {
                 token = prompt.prompt("Please provide a bot token."
-                        + "\nInstructions for obtaining a token can be found here:"
-                        + "\nhttps://github.com/jagrosh/MusicBot/wiki/Getting-a-Bot-Token."
+                        + "\nMinimal steps:"
+                        + "\n1. Open https://discord.com/developers/applications"
+                        + "\n2. Create or select an application."
+                        + "\n3. Open the Bot page and use Reset Token to show a bot token."
+                        + "\n4. Paste the bot token here. Do not paste a client secret or user token."
                         + "\nBot Token: ");
                 if(token==null)
                 {
@@ -157,8 +160,10 @@ public class BotConfig
                 {
                     owner = Long.parseLong(prompt.prompt("Owner ID was missing, or the provided owner ID is not valid."
                         + "\nPlease provide the User ID of the bot's owner."
-                        + "\nInstructions for obtaining your User ID can be found here:"
-                        + "\nhttps://github.com/jagrosh/MusicBot/wiki/Finding-Your-User-ID"
+                        + "\nMinimal steps:"
+                        + "\n1. In Discord, open User Settings > Advanced and enable Developer Mode."
+                        + "\n2. Right-click your user and choose Copy User ID."
+                        + "\n3. Paste the numeric ID here, without quotes."
                         + "\nOwner User ID: "));
                 }
                 catch(NumberFormatException | NullPointerException ex)
@@ -205,7 +210,7 @@ public class BotConfig
         }
     }
     
-    private static String loadDefaultConfig()
+    static String loadDefaultConfig()
     {
         String original = OtherUtil.loadResource(new JMusicBot(), "/reference.conf");
         return original==null 
