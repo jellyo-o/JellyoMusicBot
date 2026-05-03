@@ -1,101 +1,298 @@
-# ![Jellyo Music Bot Logo](./JellyoMusicBotLogo.png) JellyoMusicBot (Enhanced JMusicBot Fork)  
+# ![JellyoMusicBot logo](./JellyoMusicBotLogo.png) JellyoMusicBot
 
-> A fork of the original [jagrosh/MusicBot](https://github.com/jagrosh/MusicBot), via the intermediate fork [SeVile/MusicBot](https://github.com/SeVile/MusicBot), adding Spotify playback support and Automatic Lyrics support.
+JellyoMusicBot is a self-hosted Discord music bot based on
+[jagrosh/MusicBot](https://github.com/jagrosh/MusicBot), with updates from the
+[SeVile/MusicBot](https://github.com/SeVile/MusicBot) fork and additional
+features for modern Discord music servers.
 
-## ✨ What’s New In This Fork
+The bot supports both prefix and slash commands, Spotify-backed loading,
+YouTube/SoundCloud search, saved user playlists, Liked Songs, lyrics lookup,
+audio filters, autoplay/radio mode, playback history, persistent music panels,
+and an optional local playback dashboard.
 
-| Feature | Description |
-|---------|-------------|
-| Spotify Support | Powered by `lavasrc` + protocol modules (configure `spotifyid` & `spotifysecret`). |
-| Lyrics Integration | Internal lyrics package (no external API key required for core behavior). |
+## Highlights
 
-## 🔧 Requirements
+- Music playback through Lavaplayer and source managers for YouTube,
+  SoundCloud, Spotify, Bandcamp, Vimeo, Twitch, HTTP streams, local files, and
+  other bundled sources.
+- Discord slash commands registered per guild, with prefix command support kept
+  for existing servers and owner maintenance commands.
+- Saved user playlists, shared/followed playlists, Liked Songs, playlist
+  pagination, and throttled playlist loading to reduce source rate limits.
+- Persistent now-playing music panels with queue previews, playback controls,
+  like/unlike actions, loop/autoplay status, and safer refresh behavior.
+- Lyrics through LRCLIB with Genius fallback, local caching, and a correction
+  command for cached lyrics.
+- DJ tools for filters, volume, repeat, autoplay/radio, queue movement,
+  force-skip, and queue cleanup.
+- Playback history for the current voice session and persistent per-server
+  history.
+- Optional local read-only dashboard with playback stats and currently active
+  sessions.
+- Discord DAVE audio support through the bundled JDA/libdave integration.
+- CalVer releases such as `2026.5.0`; see [VERSIONING.md](VERSIONING.md).
 
-* Java 11+ (JRE or JDK)
-* (Optional) Docker Engine running locally (for automatic YouTube tokens)
-* A Discord Bot Token (create via the [Discord Developer Portal](https://discord.com/developers/applications))
+## Requirements
 
-## 🚀 Quick Start
+- Java 11 or newer.
+- A Discord application with a bot token.
+- The bot owner's Discord user ID.
+- The `bot` and `applications.commands` invite scopes.
+- Message Content Intent if you use a custom text prefix instead of mention
+  commands.
+- Optional: Spotify application Client ID and Client Secret for Spotify links.
+- Optional: Docker if you want to generate YouTube PO token and visitor data.
+- Optional for development: Maven 3.x.
 
-1. Download (or build) the shaded JAR: `JMusicBot-<version>-All.jar`.
-2. Place it in an empty folder (so generated files stay organized).
-3. First run (will generate default config template if missing):
+## Quick Start
 
-  ```bash
-  java -Dnogui=true -jar JMusicBot.jar
-  ```
+1. Download the latest release jar from
+   <https://github.com/jellyo-o/JellyoMusicBot/releases/latest>.
+2. Put the jar in its own folder. The bot writes config, database, and settings
+   files beside the jar by default.
+3. Generate a config template, or just run the bot once and follow the prompts:
 
-1. Edit `config.txt` with at least: `token`, `owner`, and (optionally) Spotify + YouTube keys.
-2. Re-run the bot. Type your prefix + `help` in Discord to explore commands.
+   ```bash
+   java -Dnogui=true -jar JMusicBot-2026.5.0.jar generate-config
+   ```
 
-### Building From Source
+4. Edit `config.txt`.
+
+   At minimum, set:
+
+   ```hocon
+   token = BOT_TOKEN_HERE
+   owner = 123456789012345678
+   ```
+
+5. Start the bot:
+
+   ```bash
+   java -Dnogui=true -jar JMusicBot-2026.5.0.jar
+   ```
+
+6. In Discord, use `/help` or your configured prefix plus `help`.
+
+For a different config path, pass either system property:
+
+```bash
+java -Dnogui=true -Dconfig=/path/to/config.txt -jar JMusicBot-2026.5.0.jar
+```
+
+## Configuration
+
+The full example lives in [config.txt.example](config.txt.example), and the
+runtime defaults are embedded in
+[src/main/resources/reference.conf](src/main/resources/reference.conf).
+
+Common settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `token` | Discord bot token. Do not use a client secret or user token. |
+| `owner` | Discord user ID for owner-only commands and alerts. |
+| `spotifyid`, `spotifysecret` | Enables Spotify loading through lavasrc. Set both to `"NONE"` to disable. |
+| `prefix`, `altprefix`, `help` | Prefix command behavior. Custom prefixes require Message Content Intent. |
+| `npimages` | Adds YouTube thumbnails to now-playing messages. Thumbnail messages do not refresh. |
+| `stayinchannel` | Keeps the bot connected after the queue ends. |
+| `maxtime`, `autoplaymaxtime` | Track length limits for normal loads and autoplay/radio picks. |
+| `maxytplaylistpages` | Maximum YouTube playlist pages to load. |
+| `skipratio` | Default skip vote ratio before a server-specific value is set. |
+| `alonetimeuntilstop` | Leaves voice after being alone for the configured number of seconds. |
+| `dashboard.*` | Enables and configures the local read-only dashboard. |
+| `loglevel` | Runtime logging level. |
+| `ytpotoken`, `ytvisitordata` | Optional YouTube Proof of Origin token and visitor data. |
+| `ytroutingplanner`, `ytipblocks` | Advanced YouTube IP routing for operators with their own IP blocks. |
+| `eval`, `evalengine` | Owner-only code execution. Keep disabled unless you fully understand the risk. |
+
+Never commit a filled-in `config.txt`. It contains secrets.
+
+## Discord Setup Notes
+
+- Invite the bot with both `bot` and `applications.commands` scopes. The bot
+  also generates invite URLs with both scopes.
+- Recommended permissions include viewing and sending messages, reading message
+  history, adding reactions, embedding links, attaching files, managing bot
+  messages, connecting and speaking in voice, and changing its nickname.
+- Slash commands are guild-scoped and sync on startup when the registered
+  command data is stale.
+- Prefix commands using `@mention` do not require Message Content Intent.
+  Custom text prefixes do.
+
+## Commands
+
+Use `/help` or prefix `help` in Discord for the current command list. This is a
+high-level overview.
+
+| Area | Commands |
+| --- | --- |
+| General | `/about`, `/help`, `/ping`, `/settings` |
+| Playback | `/play`, `/playtop`, `/playnext`, `/search`, `/scsearch`, `/nowplaying`, `/queue`, `/history`, `/skip`, `/remove`, `/shuffle`, `/seek` |
+| Lyrics | `/lyrics`, `/correctlyrics` |
+| Playlists | `/playlist`, `/playplaylist`, `/playlists`, `/like`, `/unlike`, `/liked` |
+| DJ | `/forceskip`, `/pause`, `/resume`, `/stop`, `/volume`, `/filter`, `/repeat`, `/loop`, `/autoplay`, `/radio`, `/skipto`, `/move`, `/forceremove` |
+| Admin | `/prefix`, `/setdj`, `/settc`, `/setvc`, `/skipratio`, `/setskip`, `/queuetype` |
+
+Most user-facing music, DJ, and admin commands also have prefix equivalents.
+Owner maintenance commands remain prefix-only: `debug`, `setavatar`, `setgame`,
+`setname`, `setstatus`, `shutdown`, and optional `eval`.
+
+Playlist commands support creating, renaming, deleting, viewing, playing,
+adding current/queued/query tracks, moving/removing entries, sharing, following
+shared playlists, unfollowing, and copying followed playlists into editable
+personal playlists.
+
+Audio filter presets are:
+
+```text
+off, bassboost, nightcore, 8d, vaporwave, tremolo, karaoke
+```
+
+Autoplay/radio modes are:
+
+```text
+off, smart, related, artist, playlist, server
+```
+
+## Runtime Files
+
+Run the bot from a dedicated folder. It may create or update:
+
+| Path | Purpose |
+| --- | --- |
+| `config.txt` | Local secrets and runtime configuration. |
+| `serversettings.json` | Per-server prefix, DJ role, text/voice channel, volume, repeat, autoplay, skip ratio, and queue type. |
+| `playlists.db` | User playlists, Liked Songs, shares, and followed playlists. |
+| `playback-history.db` | Persistent per-server playback history. |
+| `lyrics-cache.db` | Cached lyrics results and corrections. |
+| `dashboard.db` | Optional dashboard telemetry database. |
+| `Playlists/` | Legacy text-file playlists imported for the owner. |
+
+These files are intentionally ignored by Git.
+
+## Dashboard
+
+Set `dashboard.enabled = true` to start the local dashboard server. By default
+it listens on `127.0.0.1:8080`.
+
+Available routes:
+
+- `/dashboard` or `/`
+- `/api/health`
+- `/api/snapshot`
+
+The dashboard is intended for the machine running the bot. It is read-only, but
+it is not an authenticated public web app. Keep `bindaddress = "127.0.0.1"`
+unless you intentionally want another machine on your network to access it.
+
+## YouTube and Spotify
+
+Spotify support uses a Spotify application Client ID and Client Secret. The bot
+does not use short-lived Spotify access tokens in `config.txt`.
+
+YouTube PO token and visitor data are optional. They are not Google API keys.
+If YouTube playback starts failing, generate fresh values with the trusted
+session generator documented in `config.txt.example`, then set both
+`ytpotoken` and `ytvisitordata`.
+
+Playback availability depends on the upstream source managers and on the
+platforms they load from.
+
+## Updating
+
+Replace the jar with a newer release and restart the bot. Keep `config.txt`,
+database files, and `serversettings.json` in place.
+
+The helper script can download the latest release jar and restart the bot in a
+loop:
+
+```bash
+scripts/run_jmusicbot.sh
+```
+
+Review release notes before updating if you run a busy server or rely on a
+specific source provider.
+
+## Building From Source
+
+This is a Java 11 Maven project.
+
+Run tests:
+
+```bash
+mvn test
+```
+
+Run the same validation used by release prep:
+
+```bash
+mvn integration-test
+```
+
+Build the regular and shaded jars:
 
 ```bash
 mvn -q -DskipTests package
 ```
 
-Artifact will appear under `target/` (use the `*-All.jar` for a self‑contained build).
+Use the shaded jar for normal self-hosting:
 
-## ⚙️ Configuration Overview (config.txt)
+```text
+target/JMusicBot-<version>-All.jar
+```
 
-Most options are embedded in the shipped `reference.conf`; on first run a minimal file is created if needed. Key additions in this fork:
+## Troubleshooting
 
-| Key | Purpose | Notes |
-|-----|---------|-------|
-| `spotifyid` / `spotifysecret` | Enable Spotify track/playlist lookup via lavasrc. | Get from a Spotify Developer application. |
-
-## 📝 Lyrics
-
-The fork bundles an internal lyrics module (no separate setup). Use the lyrics command (see in‑bot help) while a track is playing to fetch and display lyrics when available.
-
-## 🔄 Updating
-
-* Replace the existing JAR with a newer release and restart.
-* The `scripts/run_jmusicbot.sh` helper can auto‑download the latest release from this fork.
+- If login fails, verify `token` is a bot token from the Discord Developer
+  Portal, not a client secret.
+- If slash commands do not appear, restart the bot and check that it was invited
+  with the `applications.commands` scope.
+- If prefix commands do not work with a custom prefix, enable Message Content
+  Intent on the Discord Developer Portal Bot page.
+- If Spotify links do not load, verify both `spotifyid` and `spotifysecret` are
+  set and are from the same Spotify application.
+- If YouTube playback fails, try fresh `ytpotoken` and `ytvisitordata`, or wait
+  for upstream source manager fixes.
+- If the dashboard does not start, check whether another process is already
+  using the configured port.
 
 ## Versioning
 
-This fork uses its own CalVer release line instead of continuing upstream-style `0.6.0.x` versions:
+This fork uses a fork-owned CalVer scheme:
 
 ```text
 YYYY.M.patch[-qualifier]
 ```
 
-Example stable releases: `2026.5.0`, `2026.5.1`, `2026.6.0`. Example prereleases: `2026.5.0-a1`, `2026.5.0-b1`, `2026.5.0-rc1`.
+Examples:
 
-See [`VERSIONING.md`](VERSIONING.md) for the release rules.
+- `2026.5.0`
+- `2026.5.1`
+- `2026.6.0`
+- `2026.5.0-a1`
+- `2026.5.0-b1`
+- `2026.5.0-rc1`
 
-## ❓ Support & Feedback
+Tags match the Maven version exactly and do not use a leading `v`. See
+[VERSIONING.md](VERSIONING.md) for the full release rules.
 
-This fork is maintained on a best‑effort basis. For general JMusicBot usage questions, the original project resources and community still apply.
+## Security
 
-| Need | Where |
-|------|-------|
-| Upstream bugs/features | <https://github.com/jagrosh/MusicBot> |
-| Fork‑specific issues | Open an Issue in this repo |
-| Idea / discussion | GitHub Discussions (if enabled) |
+- Do not publish `config.txt`, Discord bot tokens, Spotify credentials, local
+  databases, generated jars, or `target/` output.
+- Keep `eval = false` unless you need owner-only runtime code execution and
+  understand that it can expose secrets or damage the host.
+- Treat dashboard data as operational telemetry. Bind it locally unless you
+  place it behind your own access controls.
 
-## 📜 Attribution & Licensing
+## Lineage and License
 
-This project is licensed under the **Apache License 2.0** (see `LICENSE`).
+JellyoMusicBot is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
 
 Lineage:
 
-1. Original: © 2017‑2025 John Grosh (jagrosh) – JMusicBot
-2. Intermediate fork: SeVile/MusicBot (YouTube session‑related fixes)
-3. Current fork: This repository (Spotify Integration + Automatic Lyrics)
+1. Original project: [jagrosh/MusicBot](https://github.com/jagrosh/MusicBot).
+2. Intermediate fork: [SeVile/MusicBot](https://github.com/SeVile/MusicBot).
+3. Current fork: [jellyo-o/JellyoMusicBot](https://github.com/jellyo-o/JellyoMusicBot).
 
-All original notices are retained. Add your own notice if you redistribute further.
-
-## ⚠️ Disclaimer
-
-Spotify playback resolves tracks via available source managers; quality/availability may vary. Automated YouTube session handling is provided for convenience; ensure your usage complies with YouTube & Discord Terms of Service.
-
-## 💎 Original READMEs
-
-[Original README](https://github.com/jagrosh/MusicBot/blob/master/README.md)
-
-[Fork that fixed YouTube sources README](https://github.com/SeVile/MusicBot/blob/master/README.md)
-
----
-Enjoy the music! 🎶
+Original notices are retained in source files where applicable.
