@@ -30,7 +30,54 @@ and an optional local playback dashboard.
 - Optional local read-only dashboard with playback stats and currently active
   sessions.
 - Discord DAVE audio support through the bundled JDA/libdave integration.
+- Global, per-user economy with currency, XP/levels, achievements, a daily
+  chest, gambling games, and a guess-the-song game that pays out rewards.
+- Sleep timer, a per-server autoplay avoid list, and automatic crash recovery
+  with queue restore.
+- A single unified database (`jmusicbot.db`) that older split databases are
+  migrated into automatically on first launch.
 - CalVer releases such as `2026.5.0`; see [VERSIONING.md](VERSIONING.md).
+
+## Economy, XP, and achievements
+
+The bot tracks a **global** profile for every user, keyed by their Discord
+account (so it follows username changes and is shared across every server).
+
+- **Currency (coins) and XP.** Requesting songs earns coins and XP; XP
+  determines your level. Listening also earns XP — but only while music is
+  actually playing (autoplay counts) and only once you've queued a song during
+  the current session, so idle lurkers don't farm it. Level-ups and achievement
+  unlocks are announced in chat, tagging only you.
+- **`/stats [user]`** shows level, XP, balance, listening time, songs
+  requested, guess-game record, gambling record, and achievement progress.
+- **`/balance [user]`** is a quick balance + global wealth rank check.
+- **`/daily`** claims a once-per-day coin chest with a growing streak bonus.
+- **`/gamble <amount> [coinflip|dice|slots]`** bets coins on a game of chance
+  (`all`/`half` are accepted by the prefix command).
+- **`/leaderboard [coins|xp|time|songs|wins]`** shows the global top ten.
+- **`/achievements [user]`** lists earned and locked achievements. Achievements
+  (e.g. *First Request*, *Night Owl*, *Champion*, *Tycoon*) grant bonus coins
+  and XP and are announced in chat when unlocked.
+- The economy can be turned off with `economy.enabled = false` in the config.
+
+The guess-the-song game (`/guess`) awards coins and XP for correct guesses and
+wins, feeding the same global profile.
+
+## Sleep timer, avoid list, and crash recovery
+
+- **`/sleep <30m | 1h30m | track | 3 tracks | status | off>`** stops playback
+  after a duration, after the current song, or after a number of songs, fading
+  out gracefully before disconnecting. It is cancelled automatically if a new
+  song is queued or everyone leaves the channel.
+- **`/avoid [song]`** blocks a song from autoplay (and skips it if it is
+  playing); **`/unavoid <song>`** removes it; **`/avoided`** lists the
+  server's avoid list. The list is per-server and persistent, so autoplay will
+  never pick an avoided song again.
+- **Crash recovery.** The playing track and queue are saved periodically and on
+  shutdown. After a crash, restart, or everyone leaving, **`/restore`** brings
+  the queue back (resuming the current song's position). If you try to play
+  something while a saved queue exists and nothing is playing, the bot asks
+  whether to restore or start fresh.
 
 ## Requirements
 
@@ -97,6 +144,7 @@ Common settings:
 | `stayinchannel` | Keeps the bot connected after the queue ends. |
 | `maxtime`, `autoplaymaxtime` | Track length limits for normal loads and autoplay/radio picks. |
 | `maxytplaylistpages` | Maximum YouTube playlist pages to load. |
+| `maxspotifyplaylistpages` | Maximum Spotify playlist pages to load. |
 | `skipratio` | Default skip vote ratio before a server-specific value is set. |
 | `alonetimeuntilstop` | Leaves voice after being alone for the configured number of seconds. |
 | `dashboard.*` | Enables and configures the local read-only dashboard. |

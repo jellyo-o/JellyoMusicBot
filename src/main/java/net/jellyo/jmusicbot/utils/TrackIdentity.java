@@ -36,9 +36,33 @@ public class TrackIdentity
             "official lyrics",
             "official lyric",
             "visualizer",
+            "audio only",
+            "full audio",
+            "full version",
+            "album version",
+            "single version",
+            "acoustic version",
+            "piano version",
+            "live version",
+            "clean version",
+            "explicit version",
+            "radio edit",
+            "video edit",
+            "extended mix",
+            "radio mix",
+            "club mix",
+            "original mix",
+            "bonus track",
+            "deluxe edition",
+            "remastered",
+            "remaster",
+            "remixed",
+            "remix",
             "official",
             "lyrics",
-            "lyric"
+            "lyric",
+            "mix",
+            "mv"
     );
 
     private static final List<String> ARTIST_SUFFIXES = Arrays.asList("official", "music", "vevo", "topic");
@@ -188,7 +212,7 @@ public class TrackIdentity
             return "";
         return value.toLowerCase(Locale.ROOT)
                 .replace('&', ' ')
-                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
                 .trim()
                 .replaceAll("\\s+", " ");
     }

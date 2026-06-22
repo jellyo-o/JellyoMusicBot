@@ -26,17 +26,29 @@ import com.jagrosh.jmusicbot.commands.admin.PrefixCmd;
 import com.jagrosh.jmusicbot.commands.admin.QueueTypeCmd;
 import com.jagrosh.jmusicbot.commands.admin.SkipratioCmd;
 import com.jagrosh.jmusicbot.commands.dj.AutoplayCmd;
+import com.jagrosh.jmusicbot.commands.dj.AvoidCmd;
 import com.jagrosh.jmusicbot.commands.dj.ForceskipCmd;
+import com.jagrosh.jmusicbot.commands.dj.UnavoidCmd;
 import com.jagrosh.jmusicbot.commands.dj.FilterCmd;
 import com.jagrosh.jmusicbot.commands.dj.MoveTrackCmd;
 import com.jagrosh.jmusicbot.commands.dj.RepeatCmd;
 import com.jagrosh.jmusicbot.commands.dj.SkiptoCmd;
+import com.jagrosh.jmusicbot.commands.dj.SleepCmd;
 import com.jagrosh.jmusicbot.commands.dj.StopCmd;
 import com.jagrosh.jmusicbot.commands.dj.VolumeCmd;
+import com.jagrosh.jmusicbot.commands.economy.AchievementsCmd;
+import com.jagrosh.jmusicbot.commands.economy.BalanceCmd;
+import com.jagrosh.jmusicbot.commands.economy.DailyCmd;
+import com.jagrosh.jmusicbot.commands.economy.GambleCmd;
+import com.jagrosh.jmusicbot.commands.economy.LeaderboardCmd;
+import com.jagrosh.jmusicbot.commands.economy.StatsCmd;
 import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
+import com.jagrosh.jmusicbot.guessmusic.GuessMusicService;
+import com.jagrosh.jmusicbot.commands.music.AvoidedCmd;
 import com.jagrosh.jmusicbot.commands.music.HistoryCmd;
+import com.jagrosh.jmusicbot.commands.music.RestoreCmd;
 import com.jagrosh.jmusicbot.commands.music.PlaylistViewPaginator;
 import com.jagrosh.jmusicbot.commands.music.QueueCmd;
 import com.jagrosh.jmusicbot.commands.music.RemoveCmd;
@@ -45,6 +57,7 @@ import com.jagrosh.jmusicbot.commands.music.ShuffleCmd;
 import com.jagrosh.jmusicbot.commands.music.SkipCmd;
 import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
 import com.jagrosh.jmusicbot.playlist.PlaylistTrackLoader;
+import com.jagrosh.jmusicbot.playlist.SpotifyPlaylistFallback;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.AddResult;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
@@ -139,6 +152,17 @@ public class SlashCommandListener extends ListenerAdapter
     private final PrefixCmd prefixCmd;
     private final SkipratioCmd skipratioCmd;
     private final QueueTypeCmd queueTypeCmd;
+    private final StatsCmd statsCmd;
+    private final BalanceCmd balanceCmd;
+    private final DailyCmd dailyCmd;
+    private final GambleCmd gambleCmd;
+    private final LeaderboardCmd leaderboardCmd;
+    private final AchievementsCmd achievementsCmd;
+    private final AvoidCmd avoidCmd;
+    private final UnavoidCmd unavoidCmd;
+    private final AvoidedCmd avoidedCmd;
+    private final SleepCmd sleepCmd;
+    private final RestoreCmd restoreCmd;
 
     public SlashCommandListener(Bot bot)
     {
@@ -160,6 +184,17 @@ public class SlashCommandListener extends ListenerAdapter
         this.prefixCmd = new PrefixCmd(bot);
         this.skipratioCmd = new SkipratioCmd(bot);
         this.queueTypeCmd = new QueueTypeCmd(bot);
+        this.statsCmd = new StatsCmd(bot);
+        this.balanceCmd = new BalanceCmd(bot);
+        this.dailyCmd = new DailyCmd(bot);
+        this.gambleCmd = new GambleCmd(bot);
+        this.leaderboardCmd = new LeaderboardCmd(bot);
+        this.achievementsCmd = new AchievementsCmd(bot);
+        this.avoidCmd = new AvoidCmd(bot);
+        this.unavoidCmd = new UnavoidCmd(bot);
+        this.avoidedCmd = new AvoidedCmd(bot);
+        this.sleepCmd = new SleepCmd(bot);
+        this.restoreCmd = new RestoreCmd(bot);
     }
 
     @Override
@@ -319,6 +354,44 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(
                         new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true),
                         new OptionData(OptionType.STRING, "query", "Song to correct", true)));
+        commands.add(slashCommand("guess", "Play or answer a guess the music game")
+                .addSubcommands(
+                        new SubcommandData("start", "Start a guess the music lobby")
+                                .addOptions(guessModeOption(), guessWinOption(), guessInputOption(), guessMatchOption(),
+                                        new OptionData(OptionType.INTEGER, "rounds", "Rounds for rounds mode", false).setRequiredRange(1, 50),
+                                        new OptionData(OptionType.INTEGER, "points", "Target points for points mode", false).setRequiredRange(1, 200),
+                                        new OptionData(OptionType.INTEGER, "seconds", "Clip seconds for custom mode", false).setRequiredRange(1, 60),
+                                        guessClipPositionOption(),
+                                        new OptionData(OptionType.INTEGER, "timeout", "Seconds before an unanswered round reveals; omitted uses auto", false).setRequiredRange(5, 600),
+                                        new OptionData(OptionType.INTEGER, "guesses", "Guesses per user per round; 0 means unlimited", false).setRequiredRange(0, 20),
+                                        new OptionData(OptionType.INTEGER, "winners", "Correct guesses before a round ends", false).setRequiredRange(1, 10),
+                                        new OptionData(OptionType.INTEGER, "known_percent", "Percent of rounds from known songs", false).setRequiredRange(0, 100),
+                                        new OptionData(OptionType.BOOLEAN, "hints", "Progressively replay longer clips until someone guesses", false),
+                                        new OptionData(OptionType.INTEGER, "hint_interval", "Seconds between progressive hints", false).setRequiredRange(5, 60),
+                                        new OptionData(OptionType.INTEGER, "hint_seconds", "Seconds added by each hint", false).setRequiredRange(1, 30),
+                                        new OptionData(OptionType.INTEGER, "hint_replays", "Number of progressive hint replays", false).setRequiredRange(0, 8),
+                                        new OptionData(OptionType.INTEGER, "replay_interval", "Seconds between same-length replays after a correct guess", false).setRequiredRange(5, 60),
+                                        new OptionData(OptionType.INTEGER, "buffer", "Seconds after the final replay before reveal in auto timeout", false).setRequiredRange(5, 60),
+                                        new OptionData(OptionType.STRING, "playlist", "Optional host playlist name", false).setAutoComplete(true),
+                                        new OptionData(OptionType.STRING, "artist", "Only use songs by these artists; separate names with commas", false)),
+                        new SubcommandData("submit", "Privately guess the current song")
+                                .addOptions(new OptionData(OptionType.STRING, "answer", "Song title", true)),
+                        new SubcommandData("join", "Join the current guess the music game"),
+                        new SubcommandData("leave", "Leave the current guess the music game"),
+                        new SubcommandData("status", "Show the current guess the music game"),
+                        new SubcommandData("settings", "Show interactive game settings"),
+                        new SubcommandData("reveal", "Reveal the current round"),
+                        new SubcommandData("stop", "Stop the current guess the music game"),
+                        new SubcommandData("hints", "Configure progressive hints")
+                                .addOptions(new OptionData(OptionType.BOOLEAN, "enabled", "Enable progressive hints", false),
+                                        new OptionData(OptionType.INTEGER, "hint_interval", "Seconds between progressive hints", false).setRequiredRange(5, 60),
+                                        new OptionData(OptionType.INTEGER, "hint_seconds", "Seconds added by each hint", false).setRequiredRange(1, 30),
+                                        new OptionData(OptionType.INTEGER, "hint_replays", "Number of progressive hint replays", false).setRequiredRange(0, 8)),
+                        new SubcommandData("highlight", "Set this round's answer reveal highlight")
+                                .addOptions(new OptionData(OptionType.STRING, "timestamp", "Optional timestamp like 1:05; omitted uses current playback", false))));
+        commands.add(slashCommand("g", "Fast private guess for guess the music")
+                .addOptions(new OptionData(OptionType.STRING, "answer", "Song title", true)));
+        commands.add(slashCommand("idk", "Toggle passing the current guess the music round"));
         commands.add(slashCommand("playlists", "Shows your playlists"));
         commands.add(slashCommand("search", "Search YouTube and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
@@ -384,6 +457,39 @@ public class SlashCommandListener extends ListenerAdapter
                         .addChoice("linear", "linear"))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
 
+        // Economy, XP, achievements and games (global per-user)
+        commands.add(slashCommand("stats", "Show your global XP, coins and achievements")
+                .addOptions(new OptionData(OptionType.USER, "user", "Whose stats to show", false)));
+        commands.add(slashCommand("balance", "Show your coin balance")
+                .addOptions(new OptionData(OptionType.USER, "user", "Whose balance to show", false)));
+        commands.add(slashCommand("daily", "Claim your daily coin chest"));
+        commands.add(slashCommand("gamble", "Bet coins on a game of chance")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.STRING, "game", "Which game to play", false)
+                                .addChoice("coinflip", "coinflip")
+                                .addChoice("dice", "dice")
+                                .addChoice("slots", "slots")));
+        commands.add(slashCommand("leaderboard", "Show the global leaderboard")
+                .addOptions(new OptionData(OptionType.STRING, "metric", "Ranking metric", false)
+                        .addChoice("coins", "coins")
+                        .addChoice("xp", "xp")
+                        .addChoice("time", "time")
+                        .addChoice("songs", "songs")
+                        .addChoice("wins", "wins")));
+        commands.add(slashCommand("achievements", "Show earned and locked achievements")
+                .addOptions(new OptionData(OptionType.USER, "user", "Whose achievements to show", false)));
+
+        // Avoid list (per-guild)
+        commands.add(slashCommand("avoid", "Block a song from autoplay (skips it if playing)")
+                .addOptions(new OptionData(OptionType.STRING, "song", "Song to avoid; leave empty for the current song", false)));
+        commands.add(slashCommand("unavoid", "Remove a song from the server's avoid list")
+                .addOptions(new OptionData(OptionType.STRING, "song", "Song name to unavoid", true)));
+        commands.add(slashCommand("avoided", "Show the songs avoided on this server"));
+        commands.add(slashCommand("sleep", "Stop playback after a time or a number of songs")
+                .addOptions(new OptionData(OptionType.STRING, "when",
+                        "e.g. 30m, 1h30m, track, 3 tracks, status, off", false)));
+        commands.add(slashCommand("restore", "Restore the queue saved before a crash, restart or everyone leaving"));
+
         return commands;
     }
 
@@ -437,6 +543,47 @@ public class SlashCommandListener extends ListenerAdapter
                 .addChoice("server", "server");
     }
 
+    private static OptionData guessModeOption()
+    {
+        return new OptionData(OptionType.STRING, "mode", "Game mode", false)
+                .addChoice("classic", "classic")
+                .addChoice("hardcore", "hardcore")
+                .addChoice("impossible", "impossible")
+                .addChoice("custom", "custom");
+    }
+
+    private static OptionData guessWinOption()
+    {
+        return new OptionData(OptionType.STRING, "win", "Win condition", false)
+                .addChoice("rounds", "rounds")
+                .addChoice("points", "points")
+                .addChoice("endless", "endless");
+    }
+
+    private static OptionData guessInputOption()
+    {
+        return new OptionData(OptionType.STRING, "input", "Guess input mode", false)
+                .addChoice("private", "private")
+                .addChoice("chat", "chat")
+                .addChoice("both", "both");
+    }
+
+    private static OptionData guessMatchOption()
+    {
+        return new OptionData(OptionType.STRING, "match", "Guess matching strictness", false)
+                .addChoice("forgiving", "forgiving")
+                .addChoice("strict", "strict");
+    }
+
+    private static OptionData guessClipPositionOption()
+    {
+        return new OptionData(OptionType.STRING, "clip_position", "Where the clip starts", false)
+                .addChoice("intro", "intro")
+                .addChoice("outro", "outro")
+                .addChoice("random", "random")
+                .addChoice("first audible", "first_audible");
+    }
+
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event)
     {
@@ -474,6 +621,9 @@ public class SlashCommandListener extends ListenerAdapter
             case "seek": handleSharedMusicCommand(event, seekCmd, event.getOption("time").getAsString(), false, true, true); break;
             case "lyrics": handleLyrics(event); break;
             case "correctlyrics": handleCorrectLyrics(event); break;
+            case "guess": handleGuess(event); break;
+            case "g": bot.getGuessMusicService().guess(event, event.getOption("answer").getAsString()); break;
+            case "idk": bot.getGuessMusicService().idk(event); break;
             case "playlists": handlePlaylists(event); break;
             case "search": handleSearch(event, "ytsearch:", "YouTube"); break;
             case "scsearch": handleSearch(event, "scsearch:", "SoundCloud"); break;
@@ -498,6 +648,18 @@ public class SlashCommandListener extends ListenerAdapter
             case "skipratio": handleSkipRatio(event); break;
             case "setskip": handleSharedAdminCommand(event, skipratioCmd, String.valueOf(event.getOption("percent").getAsLong())); break;
             case "queuetype": handleSharedAdminCommand(event, queueTypeCmd, getOptionalStringArg(event, "type")); break;
+            case "stats": handleEconomyCommand(event, statsCmd, userArg(event)); break;
+            case "balance": handleEconomyCommand(event, balanceCmd, userArg(event)); break;
+            case "daily": handleEconomyCommand(event, dailyCmd, ""); break;
+            case "gamble": handleEconomyCommand(event, gambleCmd,
+                    event.getOption("amount").getAsLong() + " " + getOptionalStringArg(event, "game")); break;
+            case "leaderboard": handleEconomyCommand(event, leaderboardCmd, getOptionalStringArg(event, "metric")); break;
+            case "achievements": handleEconomyCommand(event, achievementsCmd, userArg(event)); break;
+            case "avoid": handleSharedDJCommand(event, avoidCmd, getOptionalStringArg(event, "song")); break;
+            case "unavoid": handleSharedDJCommand(event, unavoidCmd, event.getOption("song").getAsString()); break;
+            case "avoided": handleEconomyCommand(event, avoidedCmd, ""); break;
+            case "sleep": handleSharedDJCommand(event, sleepCmd, getOptionalStringArg(event, "when")); break;
+            case "restore": handleSharedMusicCommand(event, restoreCmd, "", false, false, true); break;
             default: event.reply("Unknown command.").setEphemeral(true).queue();
         }
     }
@@ -545,6 +707,74 @@ public class SlashCommandListener extends ListenerAdapter
                 false, false, false);
     }
 
+    private void handleGuess(SlashCommandInteractionEvent event)
+    {
+        String subcommand = event.getSubcommandName();
+        if(subcommand == null)
+        {
+            event.reply(bot.getConfig().getError() + " Unknown guess command.").setEphemeral(true).queue();
+            return;
+        }
+
+        if("submit".equals(subcommand))
+        {
+            bot.getGuessMusicService().guess(event, event.getOption("answer").getAsString());
+            return;
+        }
+
+        SlashCommandContext context = new SlashCommandContext(event, bot, "");
+        switch(subcommand)
+        {
+            case "start":
+                if(!CommandChecks.checkMusicCommand(bot, context, false, true))
+                    return;
+                bot.getGuessMusicService().start(context, bot.getGuessMusicService().optionsFromSlash(event));
+                break;
+            case "join":
+                bot.getGuessMusicService().join(context);
+                break;
+            case "leave":
+                bot.getGuessMusicService().leave(context);
+                break;
+            case "status":
+                bot.getGuessMusicService().status(context);
+                break;
+            case "settings":
+                bot.getGuessMusicService().settings(context);
+                break;
+            case "reveal":
+                bot.getGuessMusicService().reveal(context);
+                break;
+            case "stop":
+                bot.getGuessMusicService().stop(context);
+                break;
+            case "hints":
+                bot.getGuessMusicService().setHints(context,
+                        event.getOption("enabled") == null ? null : event.getOption("enabled").getAsBoolean(),
+                        event.getOption("hint_interval") == null ? null : (int)event.getOption("hint_interval").getAsLong(),
+                        event.getOption("hint_seconds") == null ? null : (int)event.getOption("hint_seconds").getAsLong(),
+                        event.getOption("hint_replays") == null ? null : (int)event.getOption("hint_replays").getAsLong());
+                break;
+            case "highlight":
+                bot.getGuessMusicService().setHighlight(context,
+                        event.getOption("timestamp") == null ? null : event.getOption("timestamp").getAsString());
+                break;
+            default:
+                event.reply(bot.getConfig().getError() + " Unknown guess command.").setEphemeral(true).queue();
+                break;
+        }
+    }
+
+    private void handleEconomyCommand(SlashCommandInteractionEvent event, UnifiedCommand command, String args)
+    {
+        command.doCommand(new SlashCommandContext(event, bot, args));
+    }
+
+    private String userArg(SlashCommandInteractionEvent event)
+    {
+        return event.getOption("user") == null ? "" : event.getOption("user").getAsUser().getId();
+    }
+
     private String getOptionalStringArg(SlashCommandInteractionEvent event, String name)
     {
         return event.getOption(name) == null ? "" : event.getOption(name).getAsString();
@@ -560,7 +790,7 @@ public class SlashCommandListener extends ListenerAdapter
     {
         try
         {
-            if ("name".equals(event.getFocusedOption().getName()) && isPlaylistNameCommand(event))
+            if (isPlaylistNameOption(event))
             {
                 event.replyChoices(getPlaylistNameChoices(event)).queue();
                 return;
@@ -587,8 +817,17 @@ public class SlashCommandListener extends ListenerAdapter
     private boolean isPlaylistNameCommand(CommandAutoCompleteInteractionEvent event)
     {
         return "playplaylist".equals(event.getName())
+                || ("guess".equals(event.getName()) && "start".equals(event.getSubcommandName()))
                 || ("playlist".equals(event.getName()) && !"create".equals(event.getSubcommandName())
                         && !"addshared".equals(event.getSubcommandName()));
+    }
+
+    private boolean isPlaylistNameOption(CommandAutoCompleteInteractionEvent event)
+    {
+        String optionName = event.getFocusedOption().getName();
+        return ("name".equals(optionName) && isPlaylistNameCommand(event))
+                || ("playlist".equals(optionName) && "guess".equals(event.getName())
+                && "start".equals(event.getSubcommandName()));
     }
 
     private boolean isSongQueryCommand(CommandAutoCompleteInteractionEvent event)
@@ -734,6 +973,8 @@ public class SlashCommandListener extends ListenerAdapter
             event.reply(bot.getConfig().getError() + " This search result cannot be used here.").setEphemeral(true).queue();
             return;
         }
+        if (blockIfGuessMusicActive(event))
+            return;
         if (!isListeningInVoice(event))
         {
             event.reply(bot.getConfig().getError() + " You must be in a voice channel to choose a search result.").setEphemeral(true).queue();
@@ -823,6 +1064,30 @@ public class SlashCommandListener extends ListenerAdapter
 
         AudioChannel current = event.getGuild().getSelfMember().getVoiceState().getChannel();
         return current == null || current.equals(member.getVoiceState().getChannel());
+    }
+
+    private boolean blockIfGuessMusicActive(SlashCommandInteractionEvent event)
+    {
+        if(!bot.getGuessMusicService().isActive(event.getGuild()))
+            return false;
+        event.reply(bot.getGuessMusicService().activeGameBlockMessage()).setEphemeral(true).queue();
+        return true;
+    }
+
+    private boolean blockIfGuessMusicActive(StringSelectInteractionEvent event)
+    {
+        if(!bot.getGuessMusicService().isActive(event.getGuild()))
+            return false;
+        event.reply(bot.getGuessMusicService().activeGameBlockMessage()).setEphemeral(true).queue();
+        return true;
+    }
+
+    private boolean editIfGuessMusicActive(InteractionHook hook, Guild guild)
+    {
+        if(!bot.getGuessMusicService().isActive(guild))
+            return false;
+        hook.editOriginal(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+        return true;
     }
 
     private boolean connectToVoiceChannel(SlashCommandInteractionEvent event)
@@ -926,7 +1191,10 @@ public class SlashCommandListener extends ListenerAdapter
                 {"shuffle", "shuffle", "Shuffle your queued songs; DJs shuffle the full queue"},
                 {"seek <time>", "seek time:<time>", "Seek the current song"},
                 {"lyrics [song]", "lyrics [query]", "Fetch lyrics"},
-                {"correctlyrics <genius-url> | <song>", "correctlyrics url:<genius-url> query:<song>", "Correct cached lyrics for a song"}
+                {"correctlyrics <genius-url> | <song>", "correctlyrics url:<genius-url> query:<song>", "Correct cached lyrics for a song"},
+                {"guess [start|status|join|leave|reveal|stop|hints|highlight]", "guess <start|settings|join|leave|status|reveal|stop|hints|highlight>", "Play a guess the music game"},
+                {"", "g", "Fast private guess for the active guess the music round"},
+                {"", "idk", "Toggle pass for the active guess the music round"}
         }, prefix);
         addHelpFields(eb, "DJ", new String[][]{
                 {"forceskip", "forceskip", "Force skip"},
@@ -1016,8 +1284,22 @@ public class SlashCommandListener extends ListenerAdapter
     // Music Commands
     // ========================
 
+    /** If a saved queue is pending and nothing is playing, asks the user to restore or start fresh. */
+    private boolean blockIfRestorePending(SlashCommandInteractionEvent event)
+    {
+        if(bot.getCrashRecoveryService() == null)
+            return false;
+        String prompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
+        if(prompt == null)
+            return false;
+        event.reply(prompt).setEphemeral(true).queue();
+        return true;
+    }
+
     private void handlePlay(SlashCommandInteractionEvent event, boolean playTop)
     {
+        if (blockIfGuessMusicActive(event)) return;
+        if (blockIfRestorePending(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
         String query = event.getOption("query").getAsString();
@@ -1031,6 +1313,7 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlayPlaylist(SlashCommandInteractionEvent event)
     {
+        if (blockIfRestorePending(event)) return;
         try
         {
             String name = event.getOption("name").getAsString();
@@ -1088,17 +1371,18 @@ public class SlashCommandListener extends ListenerAdapter
         String liked = UserPlaylistService.LIKED_SONGS;
         try
         {
-            bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
-            if("current".equals(source))
-            {
-                handlePlaylistAddCurrent(event, liked);
-            }
-            else if("queue".equals(source))
+            if("queue".equals(source))
             {
                 handlePlaylistAddQueue(event, liked);
             }
+            else if("current".equals(source))
+            {
+                bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+                handlePlaylistAddCurrent(event, liked);
+            }
             else
             {
+                bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
                 if(event.getOption("query") == null || event.getOption("query").getAsString().trim().isEmpty())
                 {
                     event.reply(bot.getConfig().getError() + " Please provide a query when liking by query.").setEphemeral(true).queue();
@@ -1269,6 +1553,7 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlaylistPlay(SlashCommandInteractionEvent event, String name)
     {
+        if (blockIfGuessMusicActive(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
 
@@ -1307,28 +1592,40 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlaylistAddQueue(SlashCommandInteractionEvent event, String name)
     {
-        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
-        if(handler == null)
+        event.deferReply(true).queue(hook ->
         {
-            event.reply(bot.getConfig().getWarning() + " There is no music in the queue.").setEphemeral(true).queue();
-            return;
-        }
+            try
+            {
+                AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+                if(handler == null)
+                {
+                    hook.editOriginal(bot.getConfig().getWarning() + " There is no music in the queue.").queue();
+                    return;
+                }
 
-        List<PlaylistTrack> tracks = new ArrayList<>();
-        AudioTrack current = handler.getPlayer().getPlayingTrack();
-        if(current != null)
-            tracks.add(PlaylistTrack.fromAudioTrack(current, current.getInfo().uri));
-        tracks.addAll(handler.getQueue().getList().stream()
-                .map(queued -> PlaylistTrack.fromAudioTrack(queued.getTrack(), queued.getTrack().getInfo().uri))
-                .collect(Collectors.toList()));
-        if(tracks.isEmpty())
-        {
-            event.reply(bot.getConfig().getWarning() + " There is no music in the queue.").setEphemeral(true).queue();
-            return;
-        }
+                List<PlaylistTrack> tracks = new ArrayList<>();
+                AudioTrack current = handler.getPlayer().getPlayingTrack();
+                if(current != null)
+                    tracks.add(PlaylistTrack.fromAudioTrack(current, current.getInfo().uri));
+                tracks.addAll(handler.getQueue().getList().stream()
+                        .map(queued -> PlaylistTrack.fromAudioTrack(queued.getTrack(), queued.getTrack().getInfo().uri))
+                        .collect(Collectors.toList()));
+                if(tracks.isEmpty())
+                {
+                    hook.editOriginal(bot.getConfig().getWarning() + " There is no music in the queue.").queue();
+                    return;
+                }
 
-        AddResult result = bot.getUserPlaylistService().addTracksToOwned(event.getUser().getIdLong(), name, tracks);
-        event.reply(formatPlaylistAddResult(name, result, UserPlaylistService.LIKED_SONGS.equals(name))).setEphemeral(true).queue();
+                if(UserPlaylistService.LIKED_SONGS.equals(name))
+                    bot.getUserPlaylistService().getOrCreateLikedPlaylist(event.getUser().getIdLong());
+                AddResult result = bot.getUserPlaylistService().addTracksToOwned(event.getUser().getIdLong(), name, tracks);
+                hook.editOriginal(formatPlaylistAddResult(name, result, UserPlaylistService.LIKED_SONGS.equals(name))).queue();
+            }
+            catch(PlaylistException ex)
+            {
+                hook.editOriginal(bot.getConfig().getError() + " " + ex.getMessage()).queue();
+            }
+        });
     }
 
     private String formatPlaylistAddResult(String name, AddResult result, boolean liked)
@@ -1484,10 +1781,14 @@ public class SlashCommandListener extends ListenerAdapter
     private void queuePlaylistItems(SlashCommandInteractionEvent event, InteractionHook hook,
                                     PlaylistSummary playlist, List<PlaylistTrack> items)
     {
+        if(editIfGuessMusicActive(hook, event.getGuild()))
+            return;
         AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
         PlaylistTrackLoader.load(bot.getPlayerManager(), bot.getThreadpool(), playlist.getName(), items,
                 bot.getConfig()::isTooLong, result ->
                 {
+                    if(editIfGuessMusicActive(hook, event.getGuild()))
+                        return;
                     List<QueuedTrack> queuedTracks = new ArrayList<>();
                     for(List<AudioTrack> itemTracks : result.getTracksByItem())
                         for(AudioTrack track : itemTracks)
@@ -1608,6 +1909,8 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handleSearch(SlashCommandInteractionEvent event, String searchPrefix, String provider)
     {
+        if (blockIfGuessMusicActive(event)) return;
+        if (blockIfRestorePending(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
 
@@ -1776,6 +2079,8 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlayNext(SlashCommandInteractionEvent event)
     {
+        if (blockIfGuessMusicActive(event)) return;
+        if (blockIfRestorePending(event)) return;
         if (!checkDJPermission(event))
         {
             event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
@@ -1924,6 +2229,77 @@ public class SlashCommandListener extends ListenerAdapter
                 + ", duration=" + TimeUtil.formatTime(track.getDuration()) + "]";
     }
 
+    private void loadSpotifyPlaylistFallback(InteractionHook hook, SlashCommandInteractionEvent event,
+                                             String args, boolean playTop)
+    {
+        hook.editOriginal(FormatUtil.filter(SpotifyPlaylistFallback.fallbackNotice(bot.getConfig().getWarning()))).queue();
+        bot.getBlockingThreadpool().submit(() ->
+        {
+            SpotifyPlaylistFallback.PublicPlaylist playlist;
+            try
+            {
+                playlist = SpotifyPlaylistFallback.fetch(args);
+            }
+            catch(Exception ex)
+            {
+                LOG.warn("Failed to fetch Spotify public playlist fallback for slash /{} in guild {} ({}); query='{}'",
+                        event.getName(), event.getGuild().getName(), event.getGuild().getId(), args, ex);
+                hook.editOriginal(FormatUtil.filter(bot.getConfig().getWarning()
+                        + " Spotify did not expose this playlist through the API, and I could not read the public page fallback.")).queue();
+                return;
+            }
+
+            List<PlaylistTrack> items = playlist.toPlaylistTracks();
+            if(items.isEmpty())
+            {
+                LOG.warn("Spotify public playlist fallback found no tracks for slash /{} in guild {} ({}); query='{}'",
+                        event.getName(), event.getGuild().getName(), event.getGuild().getId(), args);
+                hook.editOriginal(FormatUtil.filter(bot.getConfig().getWarning()
+                        + " Spotify did not expose this playlist through the API, and the public page had no readable tracks.")).queue();
+                return;
+            }
+
+            hook.editOriginal(FormatUtil.filter(bot.getConfig().getLoading() + " Found `" + items.size() + "` tracks from **"
+                    + playlist.getName() + "**. Loading them now...")).queue();
+            PlaylistTrackLoader.load(bot.getPlayerManager(), bot.getThreadpool(), playlist.getName(), items,
+                    bot.getConfig()::isTooLong, result ->
+                    {
+                        if(editIfGuessMusicActive(hook, event.getGuild()))
+                            return;
+
+                        List<QueuedTrack> queuedTracks = new ArrayList<>();
+                        for(List<AudioTrack> itemTracks : result.getTracksByItem())
+                            for(AudioTrack track : itemTracks)
+                                queuedTracks.add(new QueuedTrack(track, RequestMetadata.fromSlash(event.getUser(),
+                                        args, track, event.getChannel().getIdLong())));
+                        if(queuedTracks.isEmpty())
+                        {
+                            hook.editOriginal(FormatUtil.filter(bot.getConfig().getWarning()
+                                    + " I found `" + items.size() + "` public Spotify tracks, but none could be loaded.")).queue();
+                            return;
+                        }
+
+                        AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+                        if(playTop)
+                            handler.addTracksToFront(queuedTracks);
+                        else
+                            handler.addTracks(queuedTracks);
+
+                        LOG.info("Spotify public playlist fallback loaded for slash /{} in guild {} ({}); playTop={}; query='{}'; playlist='{}'; loadedTracks={}; failed={}; retries={}; elapsedMs={}",
+                                event.getName(), event.getGuild().getName(), event.getGuild().getId(), playTop, args,
+                                playlist.getName(), queuedTracks.size(), result.getFailed(), result.getRetries(), result.getElapsedMillis());
+                        String message = bot.getConfig().getSuccess()
+                                + (playTop ? " Added `" : " Loaded `") + queuedTracks.size()
+                                + "` tracks from **" + playlist.getName() + "**"
+                                + (playTop ? " to the top of the queue." : ".")
+                                + (result.getFailed() == 0 ? "" : "\n" + bot.getConfig().getWarning()
+                                + " `" + result.getFailed() + "` entries failed.")
+                                + "\n\n" + SpotifyPlaylistFallback.fallbackFootnote(bot.getConfig().getWarning());
+                        hook.editOriginal(FormatUtil.filter(message)).queue();
+                    });
+        });
+    }
+
     private class SearchResultHandler implements AudioLoadResultHandler
     {
         private final InteractionHook hook;
@@ -1942,6 +2318,8 @@ public class SlashCommandListener extends ListenerAdapter
         @Override
         public void trackLoaded(AudioTrack track)
         {
+            if(editIfGuessMusicActive(hook, event.getGuild()))
+                return;
             if (bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected slash search track in guild {} ({}): track too long; provider={}; query='{}'; track={}",
@@ -2047,6 +2425,8 @@ public class SlashCommandListener extends ListenerAdapter
 
         private void loadSingle(AudioTrack track)
         {
+            if(editIfGuessMusicActive(hook, event.getGuild()))
+                return;
             if (bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected slash /{} track in guild {} ({}): track too long; query='{}'; track={}",
@@ -2070,6 +2450,8 @@ public class SlashCommandListener extends ListenerAdapter
 
         private int loadPlaylist(AudioPlaylist playlist, AudioTrack exclude)
         {
+            if(editIfGuessMusicActive(hook, event.getGuild()))
+                return 0;
             List<QueuedTrack> tracks = new ArrayList<>();
             playlist.getTracks().forEach(track -> {
                 if (!bot.getConfig().isTooLong(track) && !track.equals(exclude))
@@ -2078,7 +2460,10 @@ public class SlashCommandListener extends ListenerAdapter
                 }
             });
             AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
-            handler.addTracks(tracks);
+            if(playTop)
+                handler.addTracksToFront(tracks);
+            else
+                handler.addTracks(tracks);
             LOG.info("Slash /{} playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
                     event.getName(), event.getGuild().getName(), event.getGuild().getId(), args,
                     playlist.getName(), tracks.size(), playlist.getTracks().size());
@@ -2129,6 +2514,11 @@ public class SlashCommandListener extends ListenerAdapter
             }
             else
             {
+                if(SpotifyPlaylistFallback.isSpotifyPlaylistUrl(args))
+                {
+                    loadSpotifyPlaylistFallback(hook, event, args, playTop);
+                    return;
+                }
                 LOG.info("Slash /{} found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
                         event.getName(), event.getGuild().getName(), event.getGuild().getId(), args);
                 bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:" + args, new PlayResultHandler(hook, event, args, playTop, true));
@@ -2140,6 +2530,11 @@ public class SlashCommandListener extends ListenerAdapter
         {
             LOG.warn("Slash /{} load failed in guild {} ({}); query='{}'; severity={}; message={}",
                     event.getName(), event.getGuild().getName(), event.getGuild().getId(), args, throwable.severity, throwable.getMessage(), throwable);
+            if(!ytsearch && SpotifyPlaylistFallback.isSpotifyPlaylistUrl(args))
+            {
+                loadSpotifyPlaylistFallback(hook, event, args, playTop);
+                return;
+            }
             if (throwable.severity == Severity.COMMON)
                 hook.editOriginal(bot.getConfig().getError() + " Error loading: " + throwable.getMessage()).queue();
             else
@@ -2163,6 +2558,8 @@ public class SlashCommandListener extends ListenerAdapter
         @Override
         public void trackLoaded(AudioTrack track)
         {
+            if(editIfGuessMusicActive(hook, event.getGuild()))
+                return;
             if (bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected slash /playnext track in guild {} ({}): track too long; query='{}'; track={}",

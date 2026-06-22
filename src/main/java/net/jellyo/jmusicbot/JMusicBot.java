@@ -22,6 +22,7 @@ import com.jagrosh.jdautilities.commons.waiter.EventWaiter;
 import com.jagrosh.jdautilities.examples.command.*;
 import com.jagrosh.jmusicbot.commands.admin.*;
 import com.jagrosh.jmusicbot.commands.dj.*;
+import com.jagrosh.jmusicbot.commands.economy.*;
 import com.jagrosh.jmusicbot.commands.general.*;
 import com.jagrosh.jmusicbot.commands.music.*;
 import com.jagrosh.jmusicbot.commands.owner.*;
@@ -229,6 +230,7 @@ public class JMusicBot
                         
                         new LyricsCmd(bot),
                         new CorrectLyricsCmd(bot),
+                        new GuessMusicCmd(bot),
                         new NowplayingCmd(bot),
                         new PlayCmd(bot),
                         new PlaytopCmd(bot),
@@ -241,6 +243,15 @@ public class JMusicBot
                         new SeekCmd(bot),
                         new ShuffleCmd(bot),
                         new SkipCmd(bot),
+                        new AvoidedCmd(bot),
+                        new RestoreCmd(bot),
+
+                        new StatsCmd(bot),
+                        new BalanceCmd(bot),
+                        new DailyCmd(bot),
+                        new GambleCmd(bot),
+                        new LeaderboardCmd(bot),
+                        new AchievementsCmd(bot),
 
                         new ForceRemoveCmd(bot),
                         new ForceskipCmd(bot),
@@ -249,6 +260,9 @@ public class JMusicBot
                         new PauseCmd(bot),
                         new PlaynextCmd(bot),
                         new AutoplayCmd(bot),
+                        new AvoidCmd(bot),
+                        new UnavoidCmd(bot),
+                        new SleepCmd(bot),
                         new RepeatCmd(bot),
                         new SkiptoCmd(bot),
                         new StopCmd(bot),
@@ -321,9 +335,12 @@ public class JMusicBot
                 {"shuffle", "Shuffle your queued songs; DJs shuffle the full queue"},
                 {"seek <time>", "Seek the current song"},
                 {"lyrics [song]", "Fetch lyrics"},
-                {"correctlyrics <genius-url> | <song>", "Correct cached lyrics for a song"}
+                {"correctlyrics <genius-url> | <song>", "Correct cached lyrics for a song"},
+                {"guess [start|status|join|reveal|stop|hints|highlight]", "Play a guess the music game"}
         });
         appendPlainHelp(pages, builder, "Slash-Only", new String[][]{
+                {"/g", "Fast private guess for the active guess the music round"},
+                {"/guess <start|settings|join|status|reveal|stop|hints|highlight>", "Control a guess the music game"},
                 {"/playlist <list|create|rename|delete|view|play|add|addcurrent|addqueue|remove|move|clear|share|addshared|unshare|unfollow|copy>", "Manage editable, shared, and followed playlists"},
                 {"/like source:<current|queue|query>", "Add music to Liked Songs"},
                 {"/unlike target:<current|index|query>", "Remove music from Liked Songs"},

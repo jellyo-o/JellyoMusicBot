@@ -32,6 +32,7 @@ import com.jagrosh.jmusicbot.commands.DJCommand;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.playlist.PlaylistTrack;
 import com.jagrosh.jmusicbot.playlist.PlaylistTrackLoader;
+import com.jagrosh.jmusicbot.playlist.SpotifyPlaylistFallback;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistException;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService.PlaylistSummary;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
@@ -68,12 +69,24 @@ public class PlayCmd extends MusicCommand
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = false;
+        this.blockDuringGuessMusic = true;
         this.children = new Command[]{new PlaylistCmd(bot)};
     }
 
     @Override
-    public void doCommand(CommandEvent event) 
+    public void doCommand(CommandEvent event)
     {
+        // Prompt to restore a saved queue if one is pending (no-op during active playback,
+        // so resuming a paused track via bare `play` still works).
+        if(bot.getCrashRecoveryService() != null)
+        {
+            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
+            if(restorePrompt != null)
+            {
+                event.replyWarning(restorePrompt);
+                return;
+            }
+        }
         if(event.getArgs().isEmpty() && event.getMessage().getAttachments().isEmpty())
         {
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
@@ -102,7 +115,7 @@ public class PlayCmd extends MusicCommand
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
         LOG.info("Loading prefix play request in guild {} ({}); query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), args);
-        event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,false)));
+        event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,args,false)));
     }
 
     private String describeTrack(AudioTrack track)
@@ -121,17 +134,24 @@ public class PlayCmd extends MusicCommand
     {
         private final Message m;
         private final CommandEvent event;
+        private final String args;
         private final boolean ytsearch;
         
-        private ResultHandler(Message m, CommandEvent event, boolean ytsearch)
+        private ResultHandler(Message m, CommandEvent event, String args, boolean ytsearch)
         {
             this.m = m;
             this.event = event;
+            this.args = args;
             this.ytsearch = ytsearch;
         }
         
         private void loadSingle(AudioTrack track, AudioPlaylist playlist)
         {
+            if(bot.getGuessMusicService().isActive(event.getGuild()))
+            {
+                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                return;
+            }
             if(bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected prefix play track in guild {} ({}): track too long; query='{}'; track={}",
@@ -170,6 +190,11 @@ public class PlayCmd extends MusicCommand
         
         private int loadPlaylist(AudioPlaylist playlist, AudioTrack exclude)
         {
+            if(bot.getGuessMusicService().isActive(event.getGuild()))
+            {
+                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                return 0;
+            }
             List<QueuedTrack> tracks = new ArrayList<>();
             playlist.getTracks().stream().forEach((track) -> {
                 if(!bot.getConfig().isTooLong(track) && !track.equals(exclude))
@@ -180,9 +205,77 @@ public class PlayCmd extends MusicCommand
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
             handler.addTracks(tracks);
             LOG.info("Prefix play playlist loaded in guild {} ({}); query='{}'; playlist='{}'; acceptedTracks={}; sourceTracks={}",
-                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(),
+                    event.getGuild().getName(), event.getGuild().getId(), args,
                     playlist.getName(), tracks.size(), playlist.getTracks().size());
             return tracks.size();
+        }
+
+        private boolean trySpotifyPlaylistFallback()
+        {
+            if(ytsearch || !SpotifyPlaylistFallback.isSpotifyPlaylistUrl(args))
+                return false;
+
+            m.editMessage(FormatUtil.filter(SpotifyPlaylistFallback.fallbackNotice(event.getClient().getWarning()))).queue();
+            bot.getBlockingThreadpool().submit(() ->
+            {
+                SpotifyPlaylistFallback.PublicPlaylist playlist;
+                try
+                {
+                    playlist = SpotifyPlaylistFallback.fetch(args);
+                }
+                catch(Exception ex)
+                {
+                    LOG.warn("Failed to fetch Spotify public playlist fallback in guild {} ({}); query='{}'",
+                            event.getGuild().getName(), event.getGuild().getId(), args, ex);
+                    m.editMessage(FormatUtil.filter(event.getClient().getWarning()
+                            + " Spotify did not expose this playlist through the API, and I could not read the public page fallback.")).queue();
+                    return;
+                }
+
+                List<PlaylistTrack> items = playlist.toPlaylistTracks();
+                if(items.isEmpty())
+                {
+                    LOG.warn("Spotify public playlist fallback found no tracks in guild {} ({}); query='{}'",
+                            event.getGuild().getName(), event.getGuild().getId(), args);
+                    m.editMessage(FormatUtil.filter(event.getClient().getWarning()
+                            + " Spotify did not expose this playlist through the API, and the public page had no readable tracks.")).queue();
+                    return;
+                }
+
+                m.editMessage(FormatUtil.filter(loadingEmoji + " Found `" + items.size() + "` tracks from **"
+                        + playlist.getName() + "**. Loading them now...")).queue();
+                PlaylistTrackLoader.load(bot.getPlayerManager(), bot.getThreadpool(), playlist.getName(), items,
+                        bot.getConfig()::isTooLong, result ->
+                        {
+                            if(bot.getGuessMusicService().isActive(event.getGuild()))
+                            {
+                                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                                return;
+                            }
+                            List<QueuedTrack> queuedTracks = new ArrayList<>();
+                            for(List<AudioTrack> itemTracks : result.getTracksByItem())
+                                for(AudioTrack track : itemTracks)
+                                    queuedTracks.add(new QueuedTrack(track, RequestMetadata.fromResultHandler(track, event)));
+                            if(queuedTracks.isEmpty())
+                            {
+                                m.editMessage(FormatUtil.filter(event.getClient().getWarning()
+                                        + " I found `" + items.size() + "` public Spotify tracks, but none could be loaded.")).queue();
+                                return;
+                            }
+                            AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
+                            handler.addTracks(queuedTracks);
+                            LOG.info("Spotify public playlist fallback loaded in guild {} ({}); query='{}'; playlist='{}'; loadedTracks={}; failed={}; retries={}; elapsedMs={}",
+                                    event.getGuild().getName(), event.getGuild().getId(), args, playlist.getName(),
+                                    queuedTracks.size(), result.getFailed(), result.getRetries(), result.getElapsedMillis());
+                            String message = event.getClient().getSuccess() + " Loaded `" + queuedTracks.size()
+                                    + "` tracks from **" + playlist.getName() + "**."
+                                    + (result.getFailed() == 0 ? "" : "\n" + event.getClient().getWarning()
+                                    + " `" + result.getFailed() + "` entries failed.")
+                                    + "\n\n" + SpotifyPlaylistFallback.fallbackFootnote(event.getClient().getWarning());
+                            m.editMessage(FormatUtil.filter(message)).queue();
+                        });
+            });
+            return true;
         }
         
         @Override
@@ -243,9 +336,11 @@ public class PlayCmd extends MusicCommand
             }
             else
             {
+                if(trySpotifyPlaylistFallback())
+                    return;
                 LOG.info("Prefix play found no direct matches in guild {} ({}); retrying as YouTube search; query='{}'",
                         event.getGuild().getName(), event.getGuild().getId(), event.getArgs());
-                bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:"+event.getArgs(), new ResultHandler(m,event,true));
+                bot.getPlayerManager().loadItemOrdered(event.getGuild(), "ytsearch:"+args, new ResultHandler(m,event,args,true));
             }
         }
 
@@ -253,7 +348,9 @@ public class PlayCmd extends MusicCommand
         public void loadFailed(FriendlyException throwable)
         {
             LOG.warn("Prefix play load failed in guild {} ({}); query='{}'; severity={}; message={}",
-                    event.getGuild().getName(), event.getGuild().getId(), event.getArgs(), throwable.severity, throwable.getMessage(), throwable);
+                    event.getGuild().getName(), event.getGuild().getId(), args, throwable.severity, throwable.getMessage(), throwable);
+            if(trySpotifyPlaylistFallback())
+                return;
             if(throwable.severity==Severity.COMMON)
                 m.editMessage(event.getClient().getError()+" Error loading: "+throwable.getMessage()).queue();
             else
@@ -274,6 +371,7 @@ public class PlayCmd extends MusicCommand
             this.help = "plays the provided playlist";
             this.beListening = true;
             this.bePlaying = false;
+            this.blockDuringGuessMusic = true;
         }
 
         @Override
@@ -312,6 +410,11 @@ public class PlayCmd extends MusicCommand
                 PlaylistTrackLoader.load(bot.getPlayerManager(), bot.getThreadpool(), playlist.getName(), items,
                         bot.getConfig()::isTooLong, result ->
                         {
+                            if(bot.getGuessMusicService().isActive(event.getGuild()))
+                            {
+                                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                                return;
+                            }
                             List<QueuedTrack> queuedTracks = new ArrayList<>();
                             for(List<AudioTrack> itemTracks : result.getTracksByItem())
                                 for(AudioTrack track : itemTracks)

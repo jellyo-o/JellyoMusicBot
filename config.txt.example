@@ -144,6 +144,13 @@ autoplaymaxtime = "10m"
 maxytplaylistpages = 10
 
 
+// Maximum Spotify playlist pages to load.
+// Spotify pages contain up to 100 tracks.
+// Example: 50 pages can load up to 5000 tracks.
+
+maxspotifyplaylistpages = 50
+
+
 // Default skip vote ratio for servers that have not set their own ratio.
 // 0.55 means 55% of eligible listening users must vote to skip.
 
@@ -173,12 +180,27 @@ updatealerts = true
 // When enabled, the bot starts a separate read-only HTTP server that exposes
 // playback stats and the currently playing tracks. Bind to 127.0.0.1 unless
 // you intentionally want another machine on your network to view it.
+//
+// All bot data now lives in one unified database file (jmusicbot.db). The
+// 'database' path below is only used to import an older split dashboard
+// database the first time the bot starts after upgrading.
 
 dashboard {
   enabled = false
   port = 8080
   bindaddress = "127.0.0.1"
   database = "dashboard.db"
+}
+
+
+// Economy, XP, achievements and games.
+// Master switch for the global per-user economy: currency, XP, levels,
+// achievements, the daily chest, gambling, and the guess-the-song rewards.
+// All progress is global (shared across every server) and keyed to the user,
+// so it follows username changes. Set to false to disable the entire system.
+
+economy {
+  enabled = true
 }
 
 

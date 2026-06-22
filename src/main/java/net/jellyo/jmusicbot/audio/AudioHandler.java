@@ -17,6 +17,7 @@ package com.jagrosh.jmusicbot.audio;
 
 import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
+import com.jagrosh.jmusicbot.economy.EconomyService;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService.SkipInfo;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
@@ -32,10 +33,15 @@ import com.sedmelluq.discord.lavaplayer.track.AudioTrackEndReason;
 import com.sedmelluq.discord.lavaplayer.track.playback.AudioFrame;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import java.nio.ByteBuffer;
@@ -93,6 +99,30 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private String currentStatsSessionKey;
     private long currentTrackStartedAt;
     private SkipInfo pendingSkip;
+    private boolean guessMusicMode = false;
+    private final Set<AudioTrack> suppressedTrackEnds = Collections.newSetFromMap(new IdentityHashMap<>());
+    private boolean guessMusicSnippetPlaying = false;
+    private boolean guessMusicSnippetStarted = false;
+    private Runnable guessMusicSnippetStart;
+    private Runnable guessMusicSnippetEnd;
+    private Consumer<String> guessMusicSnippetFailure;
+    private final List<ScheduledFuture<?>> guessMusicFadeTasks = new ArrayList<>();
+    private long guessMusicFadeSequence = 0L;
+    private int guessMusicFadeRestoreVolume = -1;
+    private AudioTrack guessMusicSavedTrack;
+    private RequestMetadata guessMusicSavedMetadata;
+    private long guessMusicSavedPosition;
+    private boolean guessMusicSavedPaused;
+    private List<QueuedTrack> guessMusicSavedQueue = new ArrayList<>();
+
+    // Sleep timer (per-guild): either a wall-clock deadline or a number of songs to finish.
+    private ScheduledFuture<?> sleepFuture;
+    private long sleepDeadlineMs = 0L;
+    private int sleepTracksRemaining = 0;
+    private long sleepChannelId = 0L;
+
+    // Users who have queued a song this playback session; gates minimal listening XP.
+    private final Set<Long> sessionContributors = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     protected AudioHandler(PlayerManager manager, Guild guild, AudioPlayer player)
     {
@@ -112,6 +142,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     public int addTrackToFront(QueuedTrack qtrack)
     {
+        onManualEnqueue(qtrack);
         if(audioPlayer.getPlayingTrack()==null)
         {
             LOG.info("Starting track immediately at front for guild {}: {}", guildId, trackSummary(qtrack.getTrack()));
@@ -138,6 +169,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     
     public int addTrack(QueuedTrack qtrack)
     {
+        onManualEnqueue(qtrack);
         if(audioPlayer.getPlayingTrack()==null)
         {
             LOG.info("Starting track immediately for guild {}: {}", guildId, trackSummary(qtrack.getTrack()));
@@ -166,6 +198,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         if(qtracks == null || qtracks.isEmpty())
             return 0;
+        onManualEnqueue(qtracks.get(0));
 
         if(audioPlayer.getPlayingTrack()==null)
         {
@@ -197,6 +230,41 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             return qtracks.size();
         }
     }
+
+    public int addTracksToFront(List<QueuedTrack> qtracks)
+    {
+        if(qtracks == null || qtracks.isEmpty())
+            return 0;
+        onManualEnqueue(qtracks.get(0));
+
+        if(audioPlayer.getPlayingTrack()==null)
+        {
+            QueuedTrack first = qtracks.get(0);
+            for(int i = qtracks.size() - 1; i >= 1; i--)
+                queue.addAt(0, qtracks.get(i));
+            LOG.info("Starting first bulk front-track immediately for guild {}; tracks={}; first={}",
+                    guildId, qtracks.size(), trackSummary(first.getTrack()));
+            audioPlayer.playTrack(first.getTrack());
+            return qtracks.size();
+        }
+
+        for(int i = qtracks.size() - 1; i >= 0; i--)
+            queue.addAt(0, qtracks.get(i));
+        if(shouldInterruptAutoplay(qtracks.get(0)))
+        {
+            autoplayStopQueued = true;
+            LOG.info("Manual bulk front-queue request interrupted autoplay for guild {}; tracks={}; first={}",
+                    guildId, qtracks.size(), trackSummary(qtracks.get(0).getTrack()));
+            audioPlayer.stopTrack();
+        }
+        else
+        {
+            LOG.debug("Queued tracks in bulk at front for guild {}; tracks={}; queueSize={}",
+                    guildId, qtracks.size(), queue.size());
+            updateMusicPanels();
+        }
+        return qtracks.size();
+    }
     
     public AbstractQueue<QueuedTrack> getQueue()
     {
@@ -205,6 +273,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     
     public void stopAndClear()
     {
+        cancelSleepTimer();
         AudioTrack playing = audioPlayer.getPlayingTrack();
         int queueSize = queue == null ? 0 : queue.size();
         LOG.info("Stopping player and clearing queue for guild {}; playing={}; queueSize={}",
@@ -214,6 +283,11 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         suppressAutoplayOnce = playing != null;
         clearPlaybackSessionHistory();
         audioPlayer.stopTrack();
+        synchronized(this)
+        {
+            // Drop any stale guess-music suppression markers on a full teardown.
+            suppressedTrackEnds.clear();
+        }
         updateMusicPanels();
         //current = null;
     }
@@ -221,6 +295,165 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public boolean isMusicPlaying(JDA jda)
     {
         return guild(jda).getSelfMember().getVoiceState().inAudioChannel() && audioPlayer.getPlayingTrack()!=null;
+    }
+
+    // ===== Sleep timer =====
+
+    /** Schedules a graceful stop+disconnect after the given duration. */
+    public synchronized void scheduleSleepDuration(long millis, long channelId)
+    {
+        cancelSleepTimerInternal();
+        sleepDeadlineMs = System.currentTimeMillis() + millis;
+        sleepChannelId = channelId;
+        sleepFuture = manager.getBot().getThreadpool().schedule(this::onSleepDurationElapsed, millis, TimeUnit.MILLISECONDS);
+        LOG.info("Sleep timer set for guild {} in {} ms", guildId, millis);
+    }
+
+    /** Schedules a stop+disconnect after the given number of songs finish playing. */
+    public synchronized void scheduleSleepTracks(int tracks, long channelId)
+    {
+        cancelSleepTimerInternal();
+        sleepTracksRemaining = Math.max(1, tracks);
+        sleepChannelId = channelId;
+        LOG.info("Sleep timer set for guild {} after {} track(s)", guildId, sleepTracksRemaining);
+    }
+
+    public synchronized boolean cancelSleepTimer()
+    {
+        boolean wasActive = sleepDeadlineMs > 0 || sleepTracksRemaining > 0;
+        cancelSleepTimerInternal();
+        return wasActive;
+    }
+
+    private void cancelSleepTimerInternal()
+    {
+        if(sleepFuture != null)
+        {
+            sleepFuture.cancel(false);
+            sleepFuture = null;
+        }
+        sleepDeadlineMs = 0L;
+        sleepTracksRemaining = 0;
+        sleepChannelId = 0L;
+    }
+
+    public synchronized boolean isSleepActive()
+    {
+        return sleepDeadlineMs > 0 || sleepTracksRemaining > 0;
+    }
+
+    /** @return milliseconds left on a duration sleep, or -1 if not in duration mode */
+    public synchronized long sleepRemainingMillis()
+    {
+        return sleepDeadlineMs > 0 ? Math.max(0, sleepDeadlineMs - System.currentTimeMillis()) : -1;
+    }
+
+    /** @return songs left to finish for a track-count sleep, or 0 if not in that mode */
+    public synchronized int getSleepTracksRemaining()
+    {
+        return sleepTracksRemaining;
+    }
+
+    private void onSleepDurationElapsed()
+    {
+        long channelId;
+        synchronized(this)
+        {
+            if(sleepDeadlineMs <= 0)
+                return; // cancelled before firing
+            channelId = sleepChannelId;
+            sleepDeadlineMs = 0L;
+            sleepFuture = null;
+            sleepChannelId = 0L;
+        }
+        fadeOutAndStop(channelId);
+    }
+
+    /**
+     * Counts a finished song toward a track-count sleep. Returns the announce
+     * channel id (&ge; 0) when the timer should fire now, or -1 otherwise. The
+     * channel id is read under the lock to avoid a concurrent cancel zeroing it.
+     */
+    private synchronized long consumeSleepTrackEnd(AudioTrackEndReason endReason)
+    {
+        if(sleepTracksRemaining <= 0 || endReason != AudioTrackEndReason.FINISHED)
+            return -1;
+        sleepTracksRemaining--;
+        return sleepTracksRemaining <= 0 ? sleepChannelId : -1;
+    }
+
+    private void fadeOutAndStop(long channelId)
+    {
+        int startVol = audioPlayer.getVolume();
+        if(audioPlayer.getPlayingTrack() == null || startVol <= 0)
+        {
+            finishSleep(channelId, startVol);
+            return;
+        }
+        final int steps = 8;
+        final long stepMs = 250L; // ~2 second fade
+        for(int i = 1; i <= steps; i++)
+        {
+            final int vol = Math.max(0, startVol - (int)((long) startVol * i / steps));
+            manager.getBot().getThreadpool().schedule(() ->
+            {
+                if(audioPlayer.getPlayingTrack() != null)
+                    audioPlayer.setVolume(vol);
+            }, stepMs * i, TimeUnit.MILLISECONDS);
+        }
+        manager.getBot().getThreadpool().schedule(() -> finishSleep(channelId, startVol),
+                stepMs * (steps + 1), TimeUnit.MILLISECONDS);
+    }
+
+    private void finishSleep(long channelId, int restoreVolume)
+    {
+        LOG.info("Sleep timer reached for guild {}; stopping playback and disconnecting", guildId);
+        stopAndClear();
+        audioPlayer.setVolume(restoreVolume);
+        manager.getBot().closeAudioConnection(guildId);
+        if(channelId > 0 && manager.getBot().getJDA() != null)
+        {
+            net.dv8tion.jda.api.entities.channel.concrete.TextChannel ch =
+                    manager.getBot().getJDA().getTextChannelById(channelId);
+            if(ch != null)
+                ch.sendMessage("💤 Sleep timer reached — stopping playback. Goodnight!").queue(m -> {}, f -> {});
+        }
+    }
+
+    private void onManualEnqueue(QueuedTrack qtrack)
+    {
+        if(qtrack == null || qtrack.getTrack() == null)
+            return;
+        RequestMetadata md = qtrack.getTrack().getUserData(RequestMetadata.class);
+        if(md != null && (md.origin == RequestMetadata.Origin.MANUAL || md.origin == RequestMetadata.Origin.SAVED_PLAYLIST))
+        {
+            cancelSleepTimer();
+            // Queuing a song this session unlocks (minimal) listening XP for the requester.
+            if(md.getOwner() > 0)
+                sessionContributors.add(md.getOwner());
+        }
+    }
+
+    /** @return true if the user has queued a song during the current playback session */
+    public boolean isSessionContributor(long userId)
+    {
+        return sessionContributors.contains(userId);
+    }
+
+    /** Best channel to announce economy milestones for a request: where it was requested, else the music text channel. */
+    private net.dv8tion.jda.api.entities.channel.middleman.MessageChannel announceChannelFor(RequestMetadata metadata)
+    {
+        JDA jda = manager.getBot().getJDA();
+        if(jda == null)
+            return null;
+        if(metadata != null && metadata.getTextChannelId() > 0)
+        {
+            net.dv8tion.jda.api.entities.channel.concrete.TextChannel tc = jda.getTextChannelById(metadata.getTextChannelId());
+            if(tc != null)
+                return tc;
+        }
+        Guild g = jda.getGuildById(guildId);
+        return g == null ? null : manager.getBot().getSettingsManager().getSettings(guildId).getTextChannel(g);
     }
     
     public Set<String> getVotes()
@@ -231,6 +464,12 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public AudioPlayer getPlayer()
     {
         return audioPlayer;
+    }
+
+    /** @return true while a guess-the-song session has commandeered playback in this guild */
+    public boolean isInGuessMusicMode()
+    {
+        return guessMusicMode;
     }
 
     public AudioFilterPreset getFilterPreset()
@@ -312,17 +551,252 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         RequestMetadata rm = audioPlayer.getPlayingTrack().getUserData(RequestMetadata.class);
         return rm == null ? RequestMetadata.EMPTY : rm;
     }
+
+    public synchronized void beginGuessMusicMode()
+    {
+        if(guessMusicMode)
+            return;
+
+        AudioTrack playing = audioPlayer.getPlayingTrack();
+        guessMusicMode = true;
+        guessMusicSavedQueue = new ArrayList<>(queue.getList());
+        queue.clear();
+        votes.clear();
+        autoplayStopQueued = false;
+        suppressAutoplayOnce = false;
+        guessMusicSavedPaused = audioPlayer.isPaused();
+        if(playing != null)
+        {
+            guessMusicSavedTrack = playing.makeClone();
+            guessMusicSavedPosition = Math.max(0L, playing.getPosition());
+            guessMusicSavedMetadata = playing.getUserData(RequestMetadata.class);
+            guessMusicSavedTrack.setUserData(guessMusicSavedMetadata);
+            suppressTrackEnd(playing);
+            audioPlayer.stopTrack();
+        }
+        else
+        {
+            guessMusicSavedTrack = null;
+            guessMusicSavedMetadata = null;
+            guessMusicSavedPosition = 0L;
+        }
+        LOG.info("Guess music mode started for guild {}; savedQueueSize={}; savedTrack={}",
+                guildId, guessMusicSavedQueue.size(), trackSummary(playing));
+    }
+
+    public synchronized boolean playGuessMusicSnippet(AudioTrack source, long startPositionMs, Runnable onEnd)
+    {
+        return playGuessMusicSnippet(source, startPositionMs, null, onEnd, null, 0L, 0L);
+    }
+
+    public synchronized boolean playGuessMusicSnippet(AudioTrack source, long startPositionMs, Runnable onEnd,
+                                                      long playDurationMs, long fadeMs)
+    {
+        return playGuessMusicSnippet(source, startPositionMs, null, onEnd, null, playDurationMs, fadeMs);
+    }
+
+    public synchronized boolean playGuessMusicSnippet(AudioTrack source, long startPositionMs, Runnable onStart,
+                                                      Runnable onEnd, Consumer<String> onFailure)
+    {
+        return playGuessMusicSnippet(source, startPositionMs, onStart, onEnd, onFailure, 0L, 0L);
+    }
+
+    public synchronized boolean playGuessMusicSnippet(AudioTrack source, long startPositionMs, Runnable onStart,
+                                                      Runnable onEnd, Consumer<String> onFailure,
+                                                      long playDurationMs, long fadeMs)
+    {
+        if(!guessMusicMode || source == null)
+            return false;
+
+        cancelGuessMusicFade(true);
+        AudioTrack playing = audioPlayer.getPlayingTrack();
+        if(guessMusicSnippetPlaying && playing != null && getRequestMetadata().isGuessGame())
+        {
+            guessMusicSnippetPlaying = false;
+            guessMusicSnippetStarted = false;
+            guessMusicSnippetStart = null;
+            guessMusicSnippetEnd = null;
+            guessMusicSnippetFailure = null;
+            suppressTrackEnd(playing);
+            audioPlayer.stopTrack();
+        }
+
+        AudioTrack snippet = source.makeClone();
+        snippet.setUserData(RequestMetadata.guessGame(snippet));
+        if(snippet.isSeekable())
+            snippet.setPosition(Math.max(0L, startPositionMs));
+        guessMusicSnippetStart = onStart;
+        guessMusicSnippetEnd = onEnd;
+        guessMusicSnippetFailure = onFailure;
+        guessMusicSnippetStarted = false;
+        guessMusicSnippetPlaying = true;
+        audioPlayer.setPaused(false);
+        if(fadeMs > 0L && playDurationMs > fadeMs)
+            startGuessMusicFade(playDurationMs, fadeMs);
+        audioPlayer.playTrack(snippet);
+        LOG.info("Guess music snippet started for guild {}; start={}; track={}",
+                guildId, TimeUtil.formatTime(Math.max(0L, startPositionMs)), trackSummary(snippet));
+        return true;
+    }
+
+    private void startGuessMusicFade(long playDurationMs, long fadeMs)
+    {
+        int originalVolume = audioPlayer.getVolume();
+        guessMusicFadeRestoreVolume = originalVolume;
+        long token = ++guessMusicFadeSequence;
+        int fadeVolume = Math.max(0, originalVolume);
+        audioPlayer.setVolume(0);
+        scheduleGuessMusicFade(token, 0L, fadeMs, 0, fadeVolume);
+
+        long fadeOutDelay = Math.max(0L, playDurationMs - fadeMs);
+        scheduleGuessMusicFade(token, fadeOutDelay, fadeMs, fadeVolume, 0);
+    }
+
+    private void scheduleGuessMusicFade(long token, long delayMs, long durationMs, int fromVolume, int toVolume)
+    {
+        int steps = 10;
+        long stepDelay = Math.max(50L, durationMs / steps);
+        for(int i = 0; i <= steps; i++)
+        {
+            int step = i;
+            long delay = delayMs + (stepDelay * i);
+            ScheduledFuture<?> future = manager.getBot().getThreadpool().schedule(() ->
+            {
+                synchronized(AudioHandler.this)
+                {
+                    if(token != guessMusicFadeSequence || !guessMusicSnippetPlaying)
+                        return;
+                    double progress = steps == 0 ? 1.0 : (double)step / steps;
+                    int volume = (int)Math.round(fromVolume + ((toVolume - fromVolume) * progress));
+                    audioPlayer.setVolume(Math.max(0, volume));
+                }
+            }, delay, TimeUnit.MILLISECONDS);
+            guessMusicFadeTasks.add(future);
+        }
+    }
+
+    private synchronized void cancelGuessMusicFade(boolean restoreVolume)
+    {
+        guessMusicFadeSequence++;
+        for(ScheduledFuture<?> future : guessMusicFadeTasks)
+            future.cancel(false);
+        guessMusicFadeTasks.clear();
+        if(restoreVolume && guessMusicFadeRestoreVolume >= 0)
+            audioPlayer.setVolume(guessMusicFadeRestoreVolume);
+        guessMusicFadeRestoreVolume = -1;
+    }
+
+    public synchronized void stopGuessMusicSnippet()
+    {
+        if(!guessMusicMode || !guessMusicSnippetPlaying || audioPlayer.getPlayingTrack() == null)
+            return;
+        audioPlayer.stopTrack();
+        cancelGuessMusicFade(true);
+    }
+
+    public synchronized void endGuessMusicMode()
+    {
+        if(!guessMusicMode)
+            return;
+
+        AudioTrack playing = audioPlayer.getPlayingTrack();
+        if(playing != null && getRequestMetadata().isGuessGame())
+        {
+            guessMusicSnippetPlaying = false;
+            guessMusicSnippetStarted = false;
+            guessMusicSnippetStart = null;
+            guessMusicSnippetEnd = null;
+            guessMusicSnippetFailure = null;
+            suppressTrackEnd(playing);
+            audioPlayer.stopTrack();
+            cancelGuessMusicFade(true);
+        }
+
+        queue.clear();
+        queue.getList().addAll(guessMusicSavedQueue);
+        AudioTrack restore = guessMusicSavedTrack == null ? null : guessMusicSavedTrack.makeClone();
+        RequestMetadata restoreMetadata = guessMusicSavedMetadata;
+        long restorePosition = guessMusicSavedPosition;
+        boolean restorePaused = guessMusicSavedPaused;
+
+        guessMusicMode = false;
+        guessMusicSavedTrack = null;
+        guessMusicSavedMetadata = null;
+        guessMusicSavedPosition = 0L;
+        guessMusicSavedPaused = false;
+        guessMusicSavedQueue = new ArrayList<>();
+        guessMusicSnippetPlaying = false;
+        guessMusicSnippetStarted = false;
+        guessMusicSnippetStart = null;
+        guessMusicSnippetEnd = null;
+        guessMusicSnippetFailure = null;
+
+        if(restore != null)
+        {
+            restore.setUserData(restoreMetadata);
+            if(restore.isSeekable())
+                restore.setPosition(Math.min(Math.max(0L, restorePosition), Math.max(0L, restore.getDuration())));
+            audioPlayer.playTrack(restore);
+            audioPlayer.setPaused(restorePaused);
+        }
+        else
+        {
+            updateMusicPanels();
+        }
+        LOG.info("Guess music mode ended for guild {}; restoredTrack={}; restoredQueueSize={}",
+                guildId, trackSummary(restore), queue.size());
+    }
     
     // Audio Events
     @Override
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) 
     {
+        if(consumeSuppressedTrackEnd(track))
+        {
+            LOG.debug("Suppressed track end while transitioning guess music mode for guild {}; track={}",
+                    guildId, trackSummary(track));
+            return;
+        }
+        RequestMetadata endedMetadata = track == null ? null : track.getUserData(RequestMetadata.class);
+        if(endedMetadata != null && endedMetadata.isGuessGame())
+        {
+            // This runs on the lavaplayer playback thread; the snippet fields are mutated
+            // elsewhere only under this monitor, so take the lock here too. Capture the
+            // callback under the lock and run it outside to keep audio teardown non-blocking.
+            Runnable callback = null;
+            synchronized(this)
+            {
+                if(guessMusicSnippetPlaying)
+                {
+                    guessMusicSnippetPlaying = false;
+                    guessMusicSnippetStarted = false;
+                    guessMusicSnippetStart = null;
+                    callback = guessMusicSnippetEnd;
+                    guessMusicSnippetEnd = null;
+                    guessMusicSnippetFailure = null;
+                    cancelGuessMusicFade(true);
+                }
+            }
+            if(callback != null)
+                manager.getBot().getThreadpool().submit(callback);
+            LOG.debug("Guess music snippet ended for guild {}; reason={}; track={}",
+                    guildId, endReason, trackSummary(track));
+            return;
+        }
+
         RepeatMode repeatMode = manager.getBot().getSettingsManager().getSettings(guildId).getRepeatMode();
         SkipInfo skipInfo = endReason == AudioTrackEndReason.STOPPED ? pendingSkip : null;
         recordTrackEnd(track, endReason, skipInfo);
         currentStatsSessionKey = null;
         currentTrackStartedAt = 0L;
         pendingSkip = null;
+        long sleepChannel = consumeSleepTrackEnd(endReason);
+        if(sleepChannel != -1)
+        {
+            LOG.info("Sleep timer (track count) reached for guild {}", guildId);
+            finishSleep(sleepChannel, audioPlayer.getVolume());
+            return;
+        }
         LOG.info("Track ended for guild {}; reason={}; mayStartNext={}; repeatMode={}; queueSize={}; track={}",
                 guildId, endReason, endReason.mayStartNext, repeatMode, queue.size(), trackSummary(track));
         // if the track ended normally, and we're in repeat mode, re-add it to the queue
@@ -361,10 +835,25 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         }
     }
 
+    private synchronized void suppressTrackEnd(AudioTrack track)
+    {
+        // Only suppress the track that is actually playing: the caller stops it right after,
+        // so a matching onTrackEnd is guaranteed to consume the entry. Suppressing anything
+        // else would leave a permanent entry (no onTrackEnd ever arrives) and leak the set.
+        if(track != null && track == audioPlayer.getPlayingTrack())
+            suppressedTrackEnds.add(track);
+    }
+
+    private synchronized boolean consumeSuppressedTrackEnd(AudioTrack track)
+    {
+        return track != null && suppressedTrackEnds.remove(track);
+    }
+
     @Override
     public void onTrackException(AudioPlayer player, AudioTrack track, FriendlyException exception) {
         LOG.error("Track failed to play for guild {}: {}", guildId, trackSummary(track), exception);
         recordTrackIssue(track, "track_exception", exception.getMessage());
+        failGuessMusicSnippet(track, exception.getMessage());
     }
 
     @Override
@@ -372,20 +861,45 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         LOG.warn("Track stuck for guild {} after {}ms: {}", guildId, thresholdMs, trackSummary(track));
         recordTrackIssue(track, "track_stuck", "Stuck after " + thresholdMs + "ms");
+        failGuessMusicSnippet(track, "Track stuck after " + thresholdMs + "ms");
     }
 
     @Override
     public void onTrackStart(AudioPlayer player, AudioTrack track) 
     {
+        RequestMetadata metadata = track.getUserData(RequestMetadata.class);
+        if(metadata != null && metadata.isGuessGame())
+        {
+            votes.clear();
+            pendingSkip = null;
+            currentTrackStartedAt = System.currentTimeMillis();
+            Runnable startCallback = null;
+            synchronized(this)
+            {
+                if(guessMusicSnippetPlaying && !guessMusicSnippetStarted)
+                {
+                    guessMusicSnippetStarted = true;
+                    startCallback = guessMusicSnippetStart;
+                    guessMusicSnippetStart = null;
+                }
+            }
+            if(startCallback != null)
+                manager.getBot().getThreadpool().submit(startCallback);
+            LOG.info("Guess music snippet playback started for guild {}; volume={}; track={}",
+                    guildId, player.getVolume(), trackSummary(track));
+            return;
+        }
+
         votes.clear();
         pendingSkip = null;
         autoplayStopQueued = false;
         currentTrackStartedAt = System.currentTimeMillis();
+        boolean firstPlayThisSession = !playbackSessionHistory.contains(track);
         recordTrackStart(player, track);
         recordPlaybackHistory(track);
         rememberRecentTrack(track);
         playbackSessionHistory.remember(track);
-        RequestMetadata metadata = track.getUserData(RequestMetadata.class);
+        creditSongRequest(metadata, firstPlayThisSession);
         if(metadata != null && metadata.origin == RequestMetadata.Origin.SAVED_PLAYLIST)
         {
             lastPlaylistName = metadata.playlistName;
@@ -402,7 +916,39 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, track);
     }
 
-    
+    /**
+     * Credits the requester with a "song requested" toward the global economy.
+     * Only genuine user requests count (manual plays and saved-playlist plays);
+     * autoplay and guess-game snippets are excluded, and the per-session
+     * de-duplication prevents farming via repeat mode or duplicate queueing.
+     */
+    private void creditSongRequest(RequestMetadata metadata, boolean firstPlayThisSession)
+    {
+        if(!firstPlayThisSession || metadata == null)
+            return;
+        if(metadata.origin != RequestMetadata.Origin.MANUAL
+                && metadata.origin != RequestMetadata.Origin.SAVED_PLAYLIST)
+            return;
+        long owner = metadata.getOwner();
+        if(owner <= 0)
+            return;
+        EconomyService economy = manager.getBot().getEconomyService();
+        if(economy == null || !economy.isEnabled())
+            return;
+        manager.getBot().getThreadpool().submit(() ->
+        {
+            try
+            {
+                economy.onSongRequested(owner, announceChannelFor(metadata));
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.warn("Failed to credit song request for user {}", owner, ex);
+            }
+        });
+    }
+
+
     // Formatting
     public MessageCreateData getMusicPanel(JDA jda)
     {
@@ -727,6 +1273,29 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         }
     }
 
+    private void failGuessMusicSnippet(AudioTrack track, String reason)
+    {
+        RequestMetadata metadata = track == null ? null : track.getUserData(RequestMetadata.class);
+        if(metadata == null || !metadata.isGuessGame())
+            return;
+
+        Consumer<String> callback;
+        synchronized(this)
+        {
+            if(!guessMusicSnippetPlaying)
+                return;
+            guessMusicSnippetPlaying = false;
+            guessMusicSnippetStarted = false;
+            guessMusicSnippetStart = null;
+            guessMusicSnippetEnd = null;
+            callback = guessMusicSnippetFailure;
+            guessMusicSnippetFailure = null;
+            cancelGuessMusicFade(true);
+        }
+        if(callback != null)
+            manager.getBot().getThreadpool().submit(() -> callback.accept(reason));
+    }
+
     private String getNextUpSummary()
     {
         List<QueuedTrack> queuedTracks = snapshotQueue();
@@ -843,6 +1412,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     {
         recentTrackKeys.clear();
         playbackSessionHistory.clear();
+        sessionContributors.clear();
     }
 
     private static Set<String> trackKeys(AudioTrack track)
