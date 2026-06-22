@@ -17,6 +17,7 @@ package com.jagrosh.jmusicbot.dashboard;
 
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
 import com.jagrosh.jmusicbot.audio.RequestMetadata.UserInfo;
+import com.jagrosh.jmusicbot.database.Database;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.sedmelluq.discord.lavaplayer.player.AudioPlayer;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
@@ -320,13 +321,7 @@ public class DashboardStatsService
 
     private Connection openConnection() throws SQLException
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath());
-        try(Statement st = connection.createStatement())
-        {
-            st.execute("PRAGMA foreign_keys=ON");
-            st.execute("PRAGMA busy_timeout=5000");
-        }
-        return connection;
+        return Database.open(dbPath);
     }
 
     private JSONObject querySummary(Connection connection) throws SQLException

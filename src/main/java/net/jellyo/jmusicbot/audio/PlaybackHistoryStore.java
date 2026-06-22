@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot.audio;
 
+import com.jagrosh.jmusicbot.database.Database;
 import com.jagrosh.jmusicbot.utils.TrackIdentity;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrackInfo;
@@ -45,7 +46,7 @@ public class PlaybackHistoryStore
 
     public synchronized void init() throws SQLException
     {
-        connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath());
+        connection = Database.open(dbPath);
         try(Statement st = connection.createStatement())
         {
             st.executeUpdate("PRAGMA busy_timeout=5000");

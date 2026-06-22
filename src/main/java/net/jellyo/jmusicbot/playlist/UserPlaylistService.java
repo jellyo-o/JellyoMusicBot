@@ -16,6 +16,7 @@
 package com.jagrosh.jmusicbot.playlist;
 
 import com.jagrosh.jmusicbot.BotConfig;
+import com.jagrosh.jmusicbot.database.Database;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader.Playlist;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
 import java.nio.file.Files;
@@ -59,7 +60,7 @@ public class UserPlaylistService
 
     public synchronized void init() throws SQLException
     {
-        connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath());
+        connection = Database.open(dbPath);
         try(Statement st = connection.createStatement())
         {
             st.executeUpdate("PRAGMA foreign_keys = ON");
@@ -628,38 +629,87 @@ public class UserPlaylistService
         int position = nextPosition(playlistId);
         String sql = "INSERT INTO playlist_items(playlist_id, position, duplicate_key, query, url, title, author, duration_ms, source, created_at) "
                 + "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(playlist_id, duplicate_key) DO NOTHING";
-        try(PreparedStatement ps = connection.prepareStatement(sql))
+        boolean restoreAutoCommit = false;
+        try
         {
-            int inserted = 0;
-            for(PlaylistTrack track : uniqueTracks)
+            if(connection.getAutoCommit())
             {
-                ps.setLong(1, playlistId);
-                ps.setInt(2, position);
-                ps.setString(3, track.getDuplicateKey());
-                ps.setString(4, nonBlank(track.getQuery(), track.getLoadQuery()));
-                ps.setString(5, nullIfBlank(track.getUrl()));
-                ps.setString(6, nullIfBlank(track.getTitle()));
-                ps.setString(7, nullIfBlank(track.getAuthor()));
-                ps.setLong(8, Math.max(0, track.getDuration()));
-                ps.setString(9, nullIfBlank(track.getSource()));
-                ps.setLong(10, now());
-                if(ps.executeUpdate() > 0)
+                connection.setAutoCommit(false);
+                restoreAutoCommit = true;
+            }
+
+            int inserted = 0;
+            try(PreparedStatement ps = connection.prepareStatement(sql))
+            {
+                for(PlaylistTrack track : uniqueTracks)
                 {
-                    inserted++;
-                    position++;
-                }
-                else
-                {
-                    skippedDuplicates++;
+                    ps.setLong(1, playlistId);
+                    ps.setInt(2, position);
+                    ps.setString(3, track.getDuplicateKey());
+                    ps.setString(4, nonBlank(track.getQuery(), track.getLoadQuery()));
+                    ps.setString(5, nullIfBlank(track.getUrl()));
+                    ps.setString(6, nullIfBlank(track.getTitle()));
+                    ps.setString(7, nullIfBlank(track.getAuthor()));
+                    ps.setLong(8, Math.max(0, track.getDuration()));
+                    ps.setString(9, nullIfBlank(track.getSource()));
+                    ps.setLong(10, now());
+                    if(ps.executeUpdate() > 0)
+                    {
+                        inserted++;
+                        position++;
+                    }
+                    else
+                    {
+                        skippedDuplicates++;
+                    }
                 }
             }
             if(inserted > 0)
                 touchPlaylist(playlistId);
+            if(restoreAutoCommit)
+                connection.commit();
             return new AddResult(inserted, skippedDuplicates);
         }
         catch(SQLException ex)
         {
+            if(restoreAutoCommit)
+                rollbackQuietly();
             throw new PlaylistException("Failed to add tracks", ex);
+        }
+        catch(RuntimeException ex)
+        {
+            if(restoreAutoCommit)
+                rollbackQuietly();
+            throw ex;
+        }
+        finally
+        {
+            if(restoreAutoCommit)
+                restoreAutoCommitQuietly();
+        }
+    }
+
+    private void rollbackQuietly()
+    {
+        try
+        {
+            connection.rollback();
+        }
+        catch(SQLException ex)
+        {
+            LOG.debug("Failed to roll back playlist transaction", ex);
+        }
+    }
+
+    private void restoreAutoCommitQuietly()
+    {
+        try
+        {
+            connection.setAutoCommit(true);
+        }
+        catch(SQLException ex)
+        {
+            LOG.debug("Failed to restore playlist auto-commit mode", ex);
         }
     }
 
