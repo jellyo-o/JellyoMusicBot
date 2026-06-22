@@ -122,6 +122,18 @@ public class PlaylistTrack
         return getDisplayTitle();
     }
 
+    public String getFallbackLoadQuery()
+    {
+        if(title == null || title.isBlank())
+            return "";
+        if(!isSpotifyTrackQuery(query) && !isSpotifyTrackQuery(url))
+            return "";
+        StringBuilder builder = new StringBuilder("ytsearch:").append(title.trim());
+        if(author != null && !author.isBlank())
+            builder.append(' ').append(author.trim());
+        return builder.toString();
+    }
+
     public String getDuplicateKey()
     {
         String cleanUrl = normalizeDuplicateValue(url);
@@ -147,5 +159,15 @@ public class PlaylistTrack
         if(fragment >= 0)
             clean = clean.substring(0, fragment);
         return clean.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    }
+
+    private static boolean isSpotifyTrackQuery(String value)
+    {
+        if(value == null)
+            return false;
+        String clean = value.trim().toLowerCase(Locale.ROOT);
+        return clean.startsWith("https://open.spotify.com/track/")
+                || clean.startsWith("http://open.spotify.com/track/")
+                || clean.startsWith("spotify:track:");
     }
 }
