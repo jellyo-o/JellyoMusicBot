@@ -14,6 +14,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
@@ -221,6 +222,25 @@ public class UserPlaylistServiceTest
         assertEquals(0, duplicate.getAdded());
         assertEquals(1, duplicate.getSkippedDuplicates());
         assertEquals(2, service.listItems(1L, "Legacy").size());
+    }
+
+    @Test
+    public void bulkAddLargeQueuePreservesAllUniqueTracks() throws Exception
+    {
+        UserPlaylistService service = newService();
+        service.createPlaylist(1L, "Long Queue");
+        List<PlaylistTrack> tracks = new ArrayList<>();
+        for(int i = 0; i < 600; i++)
+            tracks.add(track("queue-" + i, "Song " + i));
+
+        AddResult result = service.addTracksToOwned(1L, "Long Queue", tracks);
+
+        assertEquals(600, result.getAdded());
+        assertEquals(0, result.getSkippedDuplicates());
+        List<PlaylistTrack> items = service.listItems(1L, "Long Queue");
+        assertEquals(600, items.size());
+        assertEquals("Song 0", items.get(0).getTitle());
+        assertEquals("Song 599", items.get(599).getTitle());
     }
 
     private UserPlaylistService newService() throws Exception
