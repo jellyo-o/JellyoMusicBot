@@ -80,6 +80,44 @@ public class PlaylistTrackLoaderTest
     }
 
     @Test
+    public void spotifyTrackFallsBackToSearchWhenExactLoadHasNoMatches()
+            throws Exception
+    {
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        try
+        {
+            PlaylistTrack item = new PlaylistTrack(0, "https://open.spotify.com/track/spotify-id", null,
+                    "Correct Title", "Correct Artist", 1000L, "spotify");
+            List<String> queries = Collections.synchronizedList(new ArrayList<>());
+            AtomicReference<PlaylistTrackLoader.Result> result = new AtomicReference<>();
+            CountDownLatch complete = new CountDownLatch(1);
+
+            PlaylistTrackLoader.load((query, handler) ->
+            {
+                queries.add(query);
+                if(query.startsWith("https://open.spotify.com/track/"))
+                    handler.noMatches();
+                else
+                    handler.trackLoaded(new TestTrack("fallback"));
+            }, scheduler, "Spotify fallback", List.of(item), track -> false, loaded ->
+            {
+                result.set(loaded);
+                complete.countDown();
+            }, 1, 0L, 0, 1L);
+
+            assertTrue(complete.await(2, TimeUnit.SECONDS));
+            assertEquals(List.of("https://open.spotify.com/track/spotify-id",
+                    "ytsearch:Correct Title Correct Artist"), queries);
+            assertEquals(1, result.get().getLoadedTrackCount());
+            assertEquals(0, result.get().getFailed());
+        }
+        finally
+        {
+            scheduler.shutdownNow();
+        }
+    }
+
+    @Test
     public void loaderLimitsConcurrentStarts()
             throws Exception
     {

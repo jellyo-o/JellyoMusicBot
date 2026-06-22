@@ -292,7 +292,7 @@ public class PlaylistTrackLoader
 
             if(hasNewItem)
             {
-                LoadAttempt attempt = new LoadAttempt(nextIndex++, 0, now);
+                LoadAttempt attempt = new LoadAttempt(nextIndex++, 0, now, false);
                 nextDispatchAtNanos = now + TimeUnit.MILLISECONDS.toNanos(dispatchIntervalMillis);
                 return attempt;
             }
@@ -313,9 +313,10 @@ public class PlaylistTrackLoader
         private void load(LoadAttempt attempt)
         {
             PlaylistTrack item = items.get(attempt.index);
+            String loadQuery = attempt.loadQuery(item);
             try
             {
-                loader.load(item.getLoadQuery(), new AudioLoadResultHandler()
+                loader.load(loadQuery, new AudioLoadResultHandler()
                 {
                     @Override
                     public void trackLoaded(AudioTrack track)
@@ -352,7 +353,7 @@ public class PlaylistTrackLoader
                     @Override
                     public void noMatches()
                     {
-                        finish(attempt.index, Collections.emptyList(), 1);
+                        handleNoMatches(attempt, item);
                     }
 
                     @Override
@@ -403,19 +404,46 @@ public class PlaylistTrackLoader
                     inFlight--;
                     retries++;
                     long readyAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(delayMillis);
-                    retryQueue.add(new LoadAttempt(attempt.index, attempt.retry + 1, readyAt));
+                    retryQueue.add(new LoadAttempt(attempt.index, attempt.retry + 1, readyAt, attempt.fallback));
                     nextDispatchAtNanos = Math.max(nextDispatchAtNanos, readyAt);
                     pauseGlobalDispatchUntil(readyAt);
                     LOG.warn("Rate limited while loading playlist '{}' item {} ('{}'); retry {}/{} in {}ms",
-                            playlistName, attempt.index + 1, item.getLoadQuery(), attempt.retry + 1, maxRetries, delayMillis);
+                            playlistName, attempt.index + 1, attempt.loadQuery(item), attempt.retry + 1, maxRetries, delayMillis);
                     scheduleDrainLocked(delayMillis);
                 }
                 return;
             }
 
+            if(scheduleFallback(attempt, item, "load failure"))
+                return;
+
             LOG.warn("Failed to load playlist '{}' item {} ('{}'); retries={}",
-                    playlistName, attempt.index + 1, item.getLoadQuery(), attempt.retry, exception);
+                    playlistName, attempt.index + 1, attempt.loadQuery(item), attempt.retry, exception);
             finish(attempt.index, Collections.emptyList(), 1);
+        }
+
+        private void handleNoMatches(LoadAttempt attempt, PlaylistTrack item)
+        {
+            if(scheduleFallback(attempt, item, "no matches"))
+                return;
+            finish(attempt.index, Collections.emptyList(), 1);
+        }
+
+        private boolean scheduleFallback(LoadAttempt attempt, PlaylistTrack item, String reason)
+        {
+            String fallbackQuery = item.getFallbackLoadQuery();
+            if(attempt.fallback || fallbackQuery.isBlank())
+                return false;
+
+            synchronized(lock)
+            {
+                inFlight--;
+                retryQueue.add(new LoadAttempt(attempt.index, 0, System.nanoTime(), true));
+                LOG.info("Retrying playlist '{}' item {} with fallback query after {}; primary='{}'; fallback='{}'",
+                        playlistName, attempt.index + 1, reason, attempt.loadQuery(item), fallbackQuery);
+                scheduleDrainLocked(0L);
+            }
+            return true;
         }
 
         private long retryDelayMillis(int retry)
@@ -493,12 +521,19 @@ public class PlaylistTrackLoader
         private final int index;
         private final int retry;
         private final long readyAtNanos;
+        private final boolean fallback;
 
-        private LoadAttempt(int index, int retry, long readyAtNanos)
+        private LoadAttempt(int index, int retry, long readyAtNanos, boolean fallback)
         {
             this.index = index;
             this.retry = retry;
             this.readyAtNanos = readyAtNanos;
+            this.fallback = fallback;
+        }
+
+        private String loadQuery(PlaylistTrack item)
+        {
+            return fallback ? item.getFallbackLoadQuery() : item.getLoadQuery();
         }
     }
 
