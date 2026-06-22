@@ -57,6 +57,7 @@ public class SearchCmd extends MusicCommand
         this.help = "searches Youtube for a provided query";
         this.beListening = true;
         this.bePlaying = false;
+        this.blockDuringGuessMusic = true;
         this.botPermissions = new Permission[]{Permission.MESSAGE_EMBED_LINKS};
         builder = new OrderedMenu.Builder()
                 .allowTextInput(true)
@@ -72,6 +73,15 @@ public class SearchCmd extends MusicCommand
         {
             event.replyError("Please include a query.");
             return;
+        }
+        if(bot.getCrashRecoveryService() != null)
+        {
+            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
+            if(restorePrompt != null)
+            {
+                event.replyWarning(restorePrompt);
+                return;
+            }
         }
         LOG.info("Loading prefix search in guild {} ({}); prefix='{}'; query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), searchPrefix, event.getArgs());
@@ -105,6 +115,11 @@ public class SearchCmd extends MusicCommand
         @Override
         public void trackLoaded(AudioTrack track)
         {
+            if(bot.getGuessMusicService().isActive(event.getGuild()))
+            {
+                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                return;
+            }
             if(bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected prefix search track in guild {} ({}): track too long; query='{}'; track={}",
@@ -132,6 +147,11 @@ public class SearchCmd extends MusicCommand
                     .setChoices(new String[0])
                     .setSelection((msg,i) -> 
                     {
+                        if(bot.getGuessMusicService().isActive(event.getGuild()))
+                        {
+                            event.replyWarning("A guess the music game is active, so I can't play music right now.");
+                            return;
+                        }
                         AudioTrack track = playlist.getTracks().get(i-1);
                         if(bot.getConfig().isTooLong(track))
                         {

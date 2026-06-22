@@ -51,9 +51,9 @@ public class BotConfig
     private YouTubeUtil.RoutingPlanner ytRoutingPlanner;
     private List<IpBlock> ytIpBlocks;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots,
-            dashboardEnabled;
+            dashboardEnabled, economyEnabled;
     private long owner, maxSeconds, autoplayMaxDurationMillis, aloneTimeUntilStop;
-    private int maxYTPlaylistPages, dashboardPort;
+    private int maxYTPlaylistPages, maxSpotifyPlaylistPages, dashboardPort;
     private double skipratio;
     private OnlineStatus status;
     private Activity game;
@@ -107,11 +107,13 @@ public class BotConfig
             dashboardPort = config.getInt("dashboard.port");
             dashboardBindAddress = config.getString("dashboard.bindaddress");
             dashboardDatabase = config.getString("dashboard.database");
+            economyEnabled = config.getBoolean("economy.enabled");
             maxSeconds = config.getLong("maxtime");
             autoplayMaxDurationMillis = parseAutoplayMaxDuration(config.hasPath("autoplaymaxtime")
                     ? config.getValue("autoplaymaxtime").unwrapped()
                     : null);
             maxYTPlaylistPages = config.getInt("maxytplaylistpages");
+            maxSpotifyPlaylistPages = config.getInt("maxspotifyplaylistpages");
             aloneTimeUntilStop = config.getLong("alonetimeuntilstop");
             playlistsFolder = config.getString("playlistsfolder");
             aliases = config.getConfig("aliases");
@@ -411,6 +413,11 @@ public class BotConfig
     {
         return maxYTPlaylistPages;
     }
+
+    public int getMaxSpotifyPlaylistPages()
+    {
+        return maxSpotifyPlaylistPages;
+    }
     
     public String getMaxTime()
     {
@@ -482,5 +489,10 @@ public class BotConfig
     public String getDashboardDatabase()
     {
         return dashboardDatabase;
+    }
+
+    public boolean isEconomyEnabled()
+    {
+        return economyEnabled;
     }
 }

@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>net.jellyo</groupId>
     <artifactId>JMusicBot</artifactId>
-    <version>2026.5.0</version>
+    <version>2026.6.0-a1</version>
     <packaging>jar</packaging>
 
     <repositories>
@@ -114,7 +114,7 @@
         <dependency>
             <groupId>dev.lavalink.youtube</groupId>
             <artifactId>common</artifactId>
-            <version>1.18.0</version>
+            <version>9d4dbeeb51f16d53078486d69d27654d4acfa7fb-SNAPSHOT</version>
             <scope>compile</scope>
         </dependency>
         <!-- Lyrics integration dependencies (replacing legacy JLyrics) -->

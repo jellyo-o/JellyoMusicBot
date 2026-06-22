@@ -88,6 +88,7 @@ public class AloneInVoiceHandler
 
             LOG.warn("Guild {} ({}) has been alone in voice for at least {} seconds; stopping playback and disconnecting",
                     guild.getName(), guild.getId(), aloneTimeUntilStop);
+            bot.getGuessMusicService().onVoiceTimeout(guild);
             AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
             if(handler != null)
                 handler.stopAndClear();
@@ -121,9 +122,11 @@ public class AloneInVoiceHandler
                 aloneSince.remove(guild.getIdLong());
             }
             resumeIfAutoPaused(guild);
+            bot.getGuessMusicService().onVoiceAvailabilityChanged(guild, false);
         }
         else
         {
+            bot.getGuessMusicService().onVoiceAvailabilityChanged(guild, true);
             pauseIfNeeded(guild);
             if(aloneTimeUntilStop > 0 && !inList)
             {

@@ -51,6 +51,7 @@ public class PlaynextCmd extends DJCommand
         this.aliases = bot.getConfig().getAliases(this.name);
         this.beListening = true;
         this.bePlaying = false;
+        this.blockDuringGuessMusic = true;
     }
     
     @Override
@@ -61,7 +62,16 @@ public class PlaynextCmd extends DJCommand
             event.replyWarning("Please include a song title or URL!");
             return;
         }
-        String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">") 
+        if(bot.getCrashRecoveryService() != null)
+        {
+            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
+            if(restorePrompt != null)
+            {
+                event.replyWarning(restorePrompt);
+                return;
+            }
+        }
+        String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">")
                 ? event.getArgs().substring(1,event.getArgs().length()-1) 
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
         LOG.info("Loading prefix playnext request in guild {} ({}); query='{}'",
@@ -96,6 +106,11 @@ public class PlaynextCmd extends DJCommand
         
         private void loadSingle(AudioTrack track)
         {
+            if(bot.getGuessMusicService().isActive(event.getGuild()))
+            {
+                m.editMessage(bot.getGuessMusicService().activeGameBlockMessage()).queue();
+                return;
+            }
             if(bot.getConfig().isTooLong(track))
             {
                 LOG.warn("Rejected prefix playnext track in guild {} ({}): track too long; query='{}'; track={}",

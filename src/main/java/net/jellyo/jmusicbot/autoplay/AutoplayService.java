@@ -242,6 +242,8 @@ public class AutoplayService
             }
             items.removeIf(item -> !isStoredPlaylistDurationAcceptable(item, bot.getConfig().getAutoplayMaxDurationMillis()));
             items.removeIf(item -> handler.hasPlayedThisSession(item.getQuery(), item.getUrl(), item.getTitle(), item.getAuthor()));
+            items.removeIf(item -> bot.getAvoidStore() != null
+                    && bot.getAvoidStore().isAvoided(handler.getGuildId(), null, item.getUrl(), item.getTitle(), item.getAuthor()));
             if(items.isEmpty())
                 return false;
 
@@ -328,6 +330,12 @@ public class AutoplayService
                         handler.getGuildId(), describeTrack(track));
                 return false;
             }
+            if(isAvoided(track))
+            {
+                LOG.debug("Skipping avoided autoplay candidate for guild {}; track={}",
+                        handler.getGuildId(), describeTrack(track));
+                return false;
+            }
 
             LOG.info("Starting autoplay track for guild {}; query='{}'; track={}",
                     handler.getGuildId(), query, describeTrack(track));
@@ -355,7 +363,18 @@ public class AutoplayService
                         handler.getGuildId(), describeTrack(track));
                 return false;
             }
+            if(isAvoided(track))
+            {
+                LOG.debug("Skipping avoided autoplay candidate for guild {}; track={}",
+                        handler.getGuildId(), describeTrack(track));
+                return false;
+            }
             return true;
+        }
+
+        private boolean isAvoided(AudioTrack track)
+        {
+            return bot.getAvoidStore() != null && bot.getAvoidStore().isAvoided(handler.getGuildId(), track);
         }
 
         private AudioTrack chooseCandidate(List<AudioTrack> tracks, AutoplaySource source)

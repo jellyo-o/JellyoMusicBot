@@ -39,6 +39,7 @@ public abstract class MusicCommand extends Command
     protected final Bot bot;
     protected boolean bePlaying;
     protected boolean beListening;
+    protected boolean blockDuringGuessMusic;
     
     public MusicCommand(Bot bot)
     {
@@ -63,6 +64,13 @@ public abstract class MusicCommand extends Command
                 event.getMessage().delete().queue();
             } catch(PermissionException ignore){}
             event.replyInDm(event.getClient().getError()+" You can only use that command in "+tchannel.getAsMention()+"!");
+            return;
+        }
+        if(blockDuringGuessMusic && bot.getGuessMusicService().isActive(event.getGuild()))
+        {
+            LOG.debug("Rejected prefix music command '{}' in guild {} ({}): guess music active",
+                    name, event.getGuild().getName(), event.getGuild().getId());
+            event.replyWarning("A guess the music game is active, so I can't play music right now.");
             return;
         }
         bot.getPlayerManager().setUpHandler(event.getGuild()); // no point constantly checking for this later

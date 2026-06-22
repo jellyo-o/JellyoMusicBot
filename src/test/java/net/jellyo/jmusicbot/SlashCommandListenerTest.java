@@ -56,6 +56,7 @@ public class SlashCommandListenerTest
         assertQueryAutocompleteEnabled("playtop");
         assertQueryAutocompleteEnabled("playnext");
         assertOptionAutocompleteEnabled("unlike", "target");
+        assertSubcommandOptionAutocompleteEnabled("guess", "start", "playlist");
     }
 
     @Test
@@ -68,7 +69,7 @@ public class SlashCommandListenerTest
         String[] expected = {
                 "about", "help", "ping", "settings",
                 "play", "playtop", "playplaylist", "playlist", "like", "unlike", "liked", "nowplaying", "queue", "history", "skip", "remove", "shuffle", "seek",
-                "lyrics", "correctlyrics", "playlists", "search", "scsearch",
+                "lyrics", "correctlyrics", "guess", "g", "idk", "playlists", "search", "scsearch",
                 "forceskip", "pause", "resume", "stop", "volume", "filter", "repeat", "loop", "autoplay", "radio", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
         };
@@ -152,6 +153,73 @@ public class SlashCommandListenerTest
     }
 
     @Test
+    public void guessMusicCommandsHaveExpectedShape()
+    {
+        SlashCommandData guess = findSlashCommand("guess");
+        assertNotNull(guess);
+        Set<String> subcommands = guess.getSubcommands().stream()
+                .map(subcommand -> subcommand.getName())
+                .collect(Collectors.toSet());
+
+        String[] expected = {"start", "submit", "settings", "join", "leave", "status", "reveal", "stop", "hints", "highlight"};
+        for(String subcommand : expected)
+            assertTrue("Missing guess subcommand: " + subcommand, subcommands.contains(subcommand));
+
+        SubcommandData start = guess.getSubcommands().stream()
+                .filter(subcommand -> "start".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(start);
+        assertTrue(hasOption(start.getOptions(), "known_percent"));
+        assertTrue(hasOption(start.getOptions(), "timeout"));
+        assertTrue(hasOption(start.getOptions(), "hints"));
+        assertTrue(hasOption(start.getOptions(), "hint_interval"));
+        assertTrue(hasOption(start.getOptions(), "hint_seconds"));
+        assertTrue(hasOption(start.getOptions(), "hint_replays"));
+        assertTrue(hasOption(start.getOptions(), "replay_interval"));
+        assertTrue(hasOption(start.getOptions(), "buffer"));
+        assertTrue(hasOption(start.getOptions(), "playlist"));
+        assertTrue(hasOption(start.getOptions(), "artist"));
+
+        SubcommandData submit = guess.getSubcommands().stream()
+                .filter(subcommand -> "submit".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(submit);
+        OptionData fullGuess = submit.getOptions().stream()
+                .filter(option -> "answer".equals(option.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(fullGuess);
+        assertTrue(fullGuess.isRequired());
+
+        SubcommandData highlight = guess.getSubcommands().stream()
+                .filter(subcommand -> "highlight".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(highlight);
+        OptionData timestamp = highlight.getOptions().stream()
+                .filter(option -> "timestamp".equals(option.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(timestamp);
+        assertFalse(timestamp.isRequired());
+
+        SlashCommandData shorthand = findSlashCommand("g");
+        assertNotNull(shorthand);
+        OptionData answer = shorthand.getOptions().stream()
+                .filter(option -> "answer".equals(option.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(answer);
+        assertTrue(answer.isRequired());
+
+        SlashCommandData idk = findSlashCommand("idk");
+        assertNotNull(idk);
+        assertTrue(idk.getOptions().isEmpty());
+    }
+
+    @Test
     public void paginatedCommandsUseButtonsInsteadOfPageOptions()
     {
         SlashCommandData queue = findSlashCommand("queue");
@@ -232,6 +300,25 @@ public class SlashCommandListenerTest
 
         assertNotNull(command);
         OptionData option = command.getOptions().stream()
+                .filter(candidate -> optionName.equals(candidate.getName()))
+                .findFirst()
+                .orElse(null);
+
+        assertNotNull(option);
+        assertTrue(option.isAutoComplete());
+    }
+
+    private void assertSubcommandOptionAutocompleteEnabled(String commandName, String subcommandName, String optionName)
+    {
+        SlashCommandData command = findSlashCommand(commandName);
+
+        assertNotNull(command);
+        SubcommandData subcommand = command.getSubcommands().stream()
+                .filter(candidate -> subcommandName.equals(candidate.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(subcommand);
+        OptionData option = subcommand.getOptions().stream()
                 .filter(candidate -> optionName.equals(candidate.getName()))
                 .findFirst()
                 .orElse(null);

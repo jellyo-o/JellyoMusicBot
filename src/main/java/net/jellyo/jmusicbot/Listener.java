@@ -27,8 +27,10 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.events.guild.GuildJoinEvent;
 import net.dv8tion.jda.api.events.guild.voice.GuildVoiceUpdateEvent;
+import net.dv8tion.jda.api.events.interaction.ModalInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageDeleteEvent;
+import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.events.session.ShutdownEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
@@ -115,6 +117,8 @@ public class Listener extends ListenerAdapter
     @Override
     public void onButtonInteraction(ButtonInteractionEvent event)
     {
+        if(bot.getGuessMusicService().handleButtonInteraction(event))
+            return;
         if(HistoryCmd.handleButtonInteraction(bot, event))
             return;
         if(QueueCmd.handleButtonInteraction(bot, event))
@@ -122,6 +126,18 @@ public class Listener extends ListenerAdapter
         if(PlaylistViewPaginator.handleButtonInteraction(bot, event))
             return;
         bot.getNowplayingHandler().onButtonInteraction(event);
+    }
+
+    @Override
+    public void onModalInteraction(ModalInteractionEvent event)
+    {
+        bot.getGuessMusicService().handleModalInteraction(event);
+    }
+
+    @Override
+    public void onMessageReceived(MessageReceivedEvent event)
+    {
+        bot.getGuessMusicService().handleMessageReceived(event);
     }
 
     @Override

@@ -29,14 +29,15 @@ import java.util.regex.Pattern;
  */
 public class RequestMetadata
 {
-    public static final RequestMetadata EMPTY = new RequestMetadata(null, null, Origin.UNKNOWN, null, 0L, 0L);
+    public static final RequestMetadata EMPTY = new RequestMetadata((User) null, null, Origin.UNKNOWN, null, 0L, 0L);
 
     public enum Origin
     {
         UNKNOWN,
         MANUAL,
         SAVED_PLAYLIST,
-        AUTOPLAY
+        AUTOPLAY,
+        GUESS_GAME
     }
     
     public final UserInfo user;
@@ -64,6 +65,32 @@ public class RequestMetadata
         this.playlistName = playlistName;
         this.playlistId = playlistId;
         this.textChannelId = textChannelId;
+    }
+
+    private RequestMetadata(UserInfo user, RequestInfo requestInfo, Origin origin, String playlistName, long playlistId, long textChannelId)
+    {
+        this.user = user;
+        this.requestInfo = requestInfo;
+        this.origin = origin == null ? Origin.UNKNOWN : origin;
+        this.playlistName = playlistName;
+        this.playlistId = playlistId;
+        this.textChannelId = textChannelId;
+    }
+
+    /**
+     * Rebuilds request metadata for a track being restored from a saved queue
+     * snapshot. The original requester is reconstructed from stored fields (the
+     * JDA {@link User} may no longer be cached), and {@code startMillis} resumes
+     * the track at the position it was saved at.
+     */
+    public static RequestMetadata restored(long userId, String username, String avatar, String query,
+                                           String url, long startMillis)
+    {
+        UserInfo user = userId > 0 ? new UserInfo(userId, username, null, avatar) : null;
+        RequestInfo info = new RequestInfo(query == null ? "" : query, url == null ? "" : url, Math.max(0, startMillis));
+        // UNKNOWN origin: restored tracks keep their requester for display/fair-queue but are
+        // not re-counted as new "song requests" (the requester was already credited originally).
+        return new RequestMetadata(user, info, Origin.UNKNOWN, null, 0L, 0L);
     }
     
     public long getOwner()
@@ -114,12 +141,22 @@ public class RequestMetadata
 
     public static RequestMetadata autoplay(String query, AudioTrack track)
     {
-        return new RequestMetadata(null, new RequestInfo(query, track.getInfo().uri), Origin.AUTOPLAY, null, 0L, 0L);
+        return new RequestMetadata((User) null, new RequestInfo(query, track.getInfo().uri), Origin.AUTOPLAY, null, 0L, 0L);
+    }
+
+    public static RequestMetadata guessGame(AudioTrack track)
+    {
+        return new RequestMetadata((User) null, new RequestInfo("guessmusic", track.getInfo().uri), Origin.GUESS_GAME, null, 0L, 0L);
     }
 
     public boolean isAutoplay()
     {
         return origin == Origin.AUTOPLAY;
+    }
+
+    public boolean isGuessGame()
+    {
+        return origin == Origin.GUESS_GAME;
     }
 
     public boolean shouldRecordInHistory()

@@ -39,7 +39,12 @@ import com.sedmelluq.lava.extensions.youtuberotator.tools.ip.IpBlock;
 import com.sedmelluq.lava.extensions.youtuberotator.tools.ip.Ipv4Block;
 import com.sedmelluq.lava.extensions.youtuberotator.tools.ip.Ipv6Block;
 import dev.lavalink.youtube.YoutubeAudioSourceManager;
+import dev.lavalink.youtube.clients.AndroidVr;
+import dev.lavalink.youtube.clients.MWeb;
+import dev.lavalink.youtube.clients.Music;
+import dev.lavalink.youtube.clients.TvHtml5Simply;
 import dev.lavalink.youtube.clients.Web;
+import dev.lavalink.youtube.clients.WebEmbedded;
 import net.dv8tion.jda.api.entities.Guild;
 import com.github.topi314.lavasrc.spotify.SpotifySourceManager;
 import org.slf4j.Logger;
@@ -79,7 +84,8 @@ public class PlayerManager extends DefaultAudioPlayerManager
             LOG.debug("YouTube PO token and visitor data are not configured");
         }
 
-        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true);
+        YoutubeAudioSourceManager yt = new YoutubeAudioSourceManager(true,
+                new Music(), new AndroidVr(), new TvHtml5Simply(), new Web(), new MWeb(), new WebEmbedded());
         if (config.getYTRoutingPlanner() != YouTubeUtil.RoutingPlanner.NONE)
         {
             LOG.info("Configuring YouTube routing planner {} with {} IP blocks",
@@ -102,8 +108,10 @@ public class PlayerManager extends DefaultAudioPlayerManager
                 "US",                            // market (change as you like)
                 this                             // your AudioPlayerManager instance
             );
+            spotify.setPlaylistPageLimit(bot.getConfig().getMaxSpotifyPlaylistPages());
             this.registerSourceManager(spotify);
-            LOG.info("Registered Spotify source manager");
+            LOG.info("Registered Spotify source manager with playlist page limit {}",
+                    bot.getConfig().getMaxSpotifyPlaylistPages());
         }
         else
         {
