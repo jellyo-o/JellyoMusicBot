@@ -147,6 +147,56 @@ public class GuessMusicServiceTest
     }
 
     @Test
+    public void coverDetectionUsesWordBoundaries()
+    {
+        // Legit titles that merely contain the substring "cover"/"review" must NOT be blocked.
+        assertFalse(GuessMusicService.isBlockedAudioCandidate("Daft Punk - Discovery", "Daft Punk"));
+        assertFalse(GuessMusicService.isBlockedAudioCandidate("Two Door Cinema Club - Undercover Martyn",
+                "Two Door Cinema Club"));
+        assertFalse(GuessMusicService.isBlockedAudioCandidate("Eminem - Recovery", "Eminem"));
+        assertFalse(GuessMusicService.isBlockedAudioCandidate(
+                GuessMusicTitleMatcher.normalize("Madeon Shelter Preview official audio")));
+
+        // Genuine covers / tributes / reviews must still be blocked.
+        assertTrue(GuessMusicService.isBlockedAudioCandidate("Wonderwall (Oasis Cover)", "Some Singer"));
+        assertTrue(GuessMusicService.isBlockedAudioCandidate("22 - Cover by Against The Current",
+                "Against The Current"));
+        assertTrue(GuessMusicService.isBlockedAudioCandidate("22 (Cover)", "Against The Current"));
+        assertTrue(GuessMusicService.isBlockedAudioCandidate("Bad Guy (Tribute to Billie Eilish)", "Some Singer"));
+    }
+
+    @Test
+    public void speedAndSpatialVariantsDedupeAgainstOriginal()
+    {
+        ParsedTitle original = GuessMusicTitleMatcher.parse("Blinding Lights", "The Weeknd");
+        for(String variant : List.of("Blinding Lights (Sped Up)", "Blinding Lights (Slowed + Reverb)",
+                "Blinding Lights (Nightcore)", "Blinding Lights (8D Audio)", "Blinding Lights - Sped Up"))
+        {
+            ParsedTitle parsedVariant = GuessMusicTitleMatcher.parse(variant, "The Weeknd");
+            assertFalse("Should dedupe variant against original: " + variant,
+                    Collections.disjoint(GuessMusicService.songIdentityKeys(original),
+                            GuessMusicService.songIdentityKeys(parsedVariant)));
+        }
+
+        ParsedTitle bare = GuessMusicTitleMatcher.parse("Cruel Summer", "Taylor Swift");
+        ParsedTitle taylorsVersion = GuessMusicTitleMatcher.parse("Cruel Summer Taylor's Version", "Taylor Swift");
+        assertFalse(Collections.disjoint(GuessMusicService.songIdentityKeys(bare),
+                GuessMusicService.songIdentityKeys(taylorsVersion)));
+    }
+
+    @Test
+    public void songNamedAfterVersionWordIsNotCollapsedToEmpty()
+    {
+        ParsedTitle nightcore = GuessMusicTitleMatcher.parse("Nightcore", "Some Artist");
+        ParsedTitle spedUp = GuessMusicTitleMatcher.parse("Sped Up", "Some Artist");
+        assertFalse(GuessMusicService.songIdentityKeys(nightcore).isEmpty());
+        assertFalse(GuessMusicService.songIdentityKeys(spedUp).isEmpty());
+        // Two distinct songs that happen to be named after marker words are not merged together.
+        assertTrue(Collections.disjoint(GuessMusicService.songIdentityKeys(nightcore),
+                GuessMusicService.songIdentityKeys(spedUp)));
+    }
+
+    @Test
     public void roundPointsUseFloorWithMinimumPoint()
     {
         assertEquals(3, GuessMusicService.calculateRoundPoints(3, 1));

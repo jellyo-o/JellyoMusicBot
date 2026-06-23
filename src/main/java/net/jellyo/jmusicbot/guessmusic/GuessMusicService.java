@@ -114,13 +114,21 @@ public class GuessMusicService
     private static final long POST_REVEAL_FADE_MS = 1500L;
     private static final int COUNTDOWN_INTERVAL_SECONDS = 15;
     private static final int COUNTDOWN_FINAL_SECONDS = 10;
+    // How many seed artists to enrich with their real Spotify catalogue per game (bounds API calls).
+    private static final int SPOTIFY_ENRICH_ARTIST_LIMIT = 15;
+    // Cover skips don't count as load failures, but are bounded per round so a cover-heavy discovery
+    // pool can't spin indefinitely on MusicBrainz lookups.
+    private static final int MAX_COVER_SKIPS_PER_ROUND = 10;
 
     private final Bot bot;
     private final Map<Long, Session> sessions = new ConcurrentHashMap<>();
     private final Random random = new Random();
     private final GuessMusicHighlightStore highlightStore;
+    private final SpotifyArtistCatalog spotifyCatalog;
+    private final CoverDetector coverDetector;
     private final ExecutorService highlightExecutor;
     private final ExecutorService scanExecutor;
+    private final ExecutorService enrichExecutor;
 
     public GuessMusicService(Bot bot)
     {
@@ -140,6 +148,14 @@ public class GuessMusicService
             thread.setDaemon(true);
             return thread;
         });
+        // Spotify catalog enrichment is blocking HTTP; keep it on its own thread so a slow/unresponsive
+        // Spotify can never starve bot.getBlockingThreadpool() (which serves user-facing playback I/O).
+        this.enrichExecutor = Executors.newSingleThreadExecutor(r ->
+        {
+            Thread thread = new Thread(r, "guess-music-spotify-enrich");
+            thread.setDaemon(true);
+            return thread;
+        });
 
         GuessMusicHighlightStore store = new GuessMusicHighlightStore(com.jagrosh.jmusicbot.database.Database.defaultPath());
         try
@@ -152,12 +168,19 @@ public class GuessMusicService
             store = null;
         }
         this.highlightStore = store;
+        this.spotifyCatalog = new SpotifyArtistCatalog(bot.getConfig().getSpotifyID(), bot.getConfig().getSpotifySecret());
+        this.coverDetector = new CoverDetector();
+        if(spotifyCatalog.isEnabled())
+            LOG.info("Guess music discovery will enrich artists from the Spotify catalog");
+        if(coverDetector.isEnabled())
+            LOG.info("Guess music discovery rounds will be cover-filtered via MusicBrainz");
     }
 
     public void close()
     {
         highlightExecutor.shutdownNow();
         scanExecutor.shutdownNow();
+        enrichExecutor.shutdownNow();
         if(highlightStore != null)
             highlightStore.close();
     }
@@ -758,15 +781,10 @@ public class GuessMusicService
                 .collect(Collectors.toCollection(ArrayList::new));
     }
 
-    private List<TrackReference> buildDiscoveryReferences(List<TrackReference> known, Options options)
+    private List<String> discoverySeedArtists(List<TrackReference> known, Options options)
     {
-        LinkedHashMap<String, TrackReference> refs = new LinkedHashMap<>();
         if(options.hasArtistFilter())
-        {
-            for(String artist : options.artistFilters())
-                addArtistDiscoveryReferences(refs, artist);
-            return new ArrayList<>(refs.values());
-        }
+            return new ArrayList<>(options.artistFilters());
 
         List<String> artists = known.stream()
                 .map(ref -> GuessMusicTitleMatcher.cleanArtist(ref.author))
@@ -775,11 +793,25 @@ public class GuessMusicService
                 .limit(40)
                 .collect(Collectors.toList());
         Collections.shuffle(artists, random);
-        for(String artist : artists)
+        return artists;
+    }
+
+    private List<TrackReference> buildDiscoveryReferences(List<String> seedArtists, Options options)
+    {
+        LinkedHashMap<String, TrackReference> refs = new LinkedHashMap<>();
+        boolean artistFilter = options.hasArtistFilter();
+        for(String artist : seedArtists)
         {
-            addDiscoveryReference(refs, artist + " lyric video", artist);
-            addDiscoveryReference(refs, artist + " official audio", artist);
-            addDiscoveryReference(refs, artist + " topic", artist);
+            if(artistFilter)
+            {
+                addArtistDiscoveryReferences(refs, artist);
+            }
+            else
+            {
+                addDiscoveryReference(refs, artist + " lyric video", artist);
+                addDiscoveryReference(refs, artist + " official audio", artist);
+                addDiscoveryReference(refs, artist + " topic", artist);
+            }
         }
         return new ArrayList<>(refs.values());
     }
@@ -917,6 +949,23 @@ public class GuessMusicService
         return keys;
     }
 
+    private static Set<String> trackSongKeys(AudioTrack track)
+    {
+        if(track == null || track.getInfo() == null)
+            return Collections.emptySet();
+        return songOnlyKeys(GuessMusicTitleMatcher.parse(track.getInfo().title, track.getInfo().author));
+    }
+
+    // Only the artist-qualified "guess:song:<artist>:<title>" keys — never the artist-independent
+    // "guess:title:" key, so two different songs that merely share a base title across artists
+    // (e.g. "Closer" by different artists) are not wrongly treated as duplicates.
+    private static Set<String> songOnlyKeys(ParsedTitle parsed)
+    {
+        return songIdentityKeys(parsed).stream()
+                .filter(key -> key.startsWith("guess:song:"))
+                .collect(Collectors.toSet());
+    }
+
     private static boolean containsAny(Set<String> haystack, Set<String> needles)
     {
         if(haystack == null || haystack.isEmpty() || needles == null || needles.isEmpty())
@@ -956,10 +1005,15 @@ public class GuessMusicService
         String clean = normalized == null ? "" : normalized.trim();
         clean = clean.replaceAll("\\s+from\\s+.+$", "");
         clean = clean.replaceAll("\\s+(live\\s+(at|from|in|on|version|performance|session)\\b.*)$", "");
+        // Speed/pitch/spatial edits: "(Sped Up)", "(Slowed + Reverb)", "(Nightcore)", "(8D Audio)", etc.
+        // (normalize() has already turned punctuation such as "+" and "'" into spaces).
+        clean = clean.replaceAll("\\s+(sped\\s+up|speed(?:ed)?\\s+up|slowed(?:\\s+(?:down|reverb|and\\s+reverb))?"
+                + "|reverb|nightcore|daycore|8d\\s+audio|spatial\\s+audio|chopped(?:\\s+(?:and|n)\\s+screwed)?"
+                + "|screwed|tiktok(?:\\s+(?:version|edit))?)\\b.*$", "");
         clean = clean.replaceAll("\\s+(acoustic|piano|demo|radio\\s+edit|video\\s+edit|album\\s+version|single\\s+version"
                 + "|clean\\s+version|explicit\\s+version|bonus\\s+track|deluxe\\s+edition|remaster(?:ed)?"
                 + "|remix(?:ed)?|revisited|reimagined|re\\s+recorded|rerecorded|anniversary\\s+edition"
-                + "|mix|edit|version)\\b.*$", "");
+                + "|taylor\\s+s\\s+version|instrumental|mix|edit|version)\\b.*$", "");
         return clean.trim().replaceAll("\\s+", " ");
     }
 
@@ -1089,6 +1143,11 @@ public class GuessMusicService
         private final Map<Long, PlayerScore> scores = new HashMap<>();
         private final Set<String> usedKeys = new HashSet<>();
         private final Set<String> failedKeys = new HashSet<>();
+        private final Set<String> knownSongKeys = new HashSet<>();
+        private int coverSkipsThisRound = 0;
+        private PreparedRound preparedRound;     // next round loaded/scanned ahead of time, ready to play
+        private boolean awaitingRound = false;   // a round is needed now and will play as soon as it is prepared
+        private boolean preparing = false;       // a load/prepare pipeline is currently in flight
         private final List<TrackReference> knownReferences = new ArrayList<>();
         private final List<TrackReference> discoveryReferences = new ArrayList<>();
         private boolean lobby = true;
@@ -1159,8 +1218,13 @@ public class GuessMusicService
             AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
             knownReferences.clear();
             knownReferences.addAll(buildKnownReferences(guild, hostId, handler, options));
+            List<String> seedArtists = discoverySeedArtists(knownReferences, options);
             discoveryReferences.clear();
-            discoveryReferences.addAll(buildDiscoveryReferences(knownReferences, options));
+            discoveryReferences.addAll(buildDiscoveryReferences(seedArtists, options));
+            knownSongKeys.clear();
+            for(TrackReference known : knownReferences)
+                if(known.hasKnownTitle())
+                    knownSongKeys.addAll(songOnlyKeys(GuessMusicTitleMatcher.parse(known.title, known.author)));
 
             if(knownReferences.size() < 2 && discoveryReferences.isEmpty())
             {
@@ -1174,9 +1238,73 @@ public class GuessMusicService
             handler.beginGuessMusicMode();
             lobby = false;
             ensurePlayer(event.getUser());
+            scheduleSpotifyDiscoveryEnrichment(seedArtists);
             event.editMessage(bot.getConfig().getSuccess() + " Guess the music is starting. Use `/g` to guess privately.")
                     .setComponents(Collections.emptyList()).queue();
             nextRound("Game started.");
+        }
+
+        // Bootstraps discovery with quick keyword searches, then asynchronously replaces each seed
+        // artist's freeform searches with their real Spotify catalogue so discovery rounds stop
+        // surfacing fan covers and other artists' songs. Runs on the blocking pool (Spotify HTTP).
+        private void scheduleSpotifyDiscoveryEnrichment(List<String> seedArtists)
+        {
+            if(!spotifyCatalog.isEnabled() || seedArtists.isEmpty())
+                return;
+            List<String> targets = new ArrayList<>(
+                    seedArtists.subList(0, Math.min(seedArtists.size(), SPOTIFY_ENRICH_ARTIST_LIMIT)));
+            enrichExecutor.submit(() -> enrichDiscoveryFromSpotify(targets));
+        }
+
+        private void enrichDiscoveryFromSpotify(List<String> artists)
+        {
+            for(String artist : artists)
+            {
+                if(isFinished() || Thread.currentThread().isInterrupted())
+                    return;
+                List<SpotifyArtistCatalog.Song> songs = spotifyCatalog.originalSongs(artist);
+                if(songs.isEmpty())
+                    continue;
+
+                LinkedHashMap<String, TrackReference> titled = new LinkedHashMap<>();
+                for(SpotifyArtistCatalog.Song song : songs)
+                {
+                    ParsedTitle parsed = GuessMusicTitleMatcher.parse(song.getTitle(), song.getArtist());
+                    if(!hasUsableTitle(parsed))
+                        continue;
+                    List<String> queries = preferredAudioQueries(parsed, null);
+                    if(queries.isEmpty())
+                        continue;
+                    String key = duplicateKey(queries.get(0), parsed.getTitle(), parsed.getArtist());
+                    titled.putIfAbsent(key, new TrackReference(queries, parsed.getTitle(), parsed.getArtist(),
+                            true, "spotify"));
+                }
+                if(!titled.isEmpty())
+                    mergeSpotifyDiscovery(artist, new ArrayList<>(titled.values()));
+            }
+        }
+
+        private synchronized void mergeSpotifyDiscovery(String artist, List<TrackReference> titled)
+        {
+            if(finished)
+                return;
+            Set<String> existing = discoveryReferences.stream()
+                    .map(TrackReference::normalizedKey)
+                    .collect(Collectors.toSet());
+            List<TrackReference> toAdd = titled.stream()
+                    .filter(ref -> !existing.contains(ref.normalizedKey())
+                            && !usedKeys.contains(ref.normalizedKey())
+                            && Collections.disjoint(knownSongKeys, songOnlyKeys(
+                                    GuessMusicTitleMatcher.parse(ref.title, ref.author))))
+                    .collect(Collectors.toList());
+            // Only drop this artist's freeform keyword refs if real catalogue refs survive to replace
+            // them — otherwise the artist would be left with no discovery coverage at all.
+            if(toAdd.isEmpty())
+                return;
+            String normArtist = GuessMusicTitleMatcher.normalize(GuessMusicTitleMatcher.cleanArtist(artist));
+            discoveryReferences.removeIf(ref -> !ref.hasKnownTitle() && normArtist.equals(
+                    GuessMusicTitleMatcher.normalize(GuessMusicTitleMatcher.cleanArtist(ref.author))));
+            discoveryReferences.addAll(toAdd);
         }
 
         private synchronized boolean ensurePlayer(User user)
@@ -1787,10 +1915,73 @@ public class GuessMusicService
                 currentRound.highlightFuture.cancel(true);
             currentRound = null;
             roundNumber++;
-            MessageChannel channel = channel();
-            if(channel != null)
-                channel.sendMessage(bot.getConfig().getSuccess() + " Loading round `" + roundNumber + "`...").queue();
+            // The next song is usually already prefetched during the previous round, so only tell the
+            // user we are loading when nothing is ready and nothing is in flight (e.g. the first round).
+            if(preparedRound == null && !preparing)
+            {
+                MessageChannel channel = channel();
+                if(channel != null)
+                    channel.sendMessage(bot.getConfig().getSuccess() + " Loading round `" + roundNumber + "`...").queue();
+            }
+            requestRoundToPlay();
+        }
+
+        // Ensures a round starts playing as soon as one is available — using the prefetched round if
+        // ready, otherwise waiting for an in-flight prefetch or kicking off a fresh load.
+        private synchronized void requestRoundToPlay()
+        {
+            if(finished)
+                return;
+            awaitingRound = true;
+            if(preparedRound != null)
+                playPreparedRound();
+            else if(!preparing)
+                startPreparePipeline();
+            // else: a prefetch is already in flight and will play this round when it completes.
+        }
+
+        // Loads/scans the next round ahead of time (while the current one is being guessed) so the
+        // transition between rounds is instant.
+        private synchronized void maybePrefetchNextRound()
+        {
+            if(finished || preparing || preparedRound != null)
+                return;
+            if(options.winMode == WinMode.ROUNDS && roundNumber >= options.rounds)
+                return; // the current round is the last one
+            startPreparePipeline();
+        }
+
+        private synchronized void startPreparePipeline()
+        {
+            if(finished || preparing)
+                return;
+            preparing = true;
+            coverSkipsThisRound = 0;
             loadRound(0);
+        }
+
+        // Pipeline terminus on success: stash the ready round and play it immediately if one is awaited.
+        private synchronized void onRoundReady(PreparedRound prepared)
+        {
+            preparing = false;
+            if(finished || prepared == null)
+                return;
+            preparedRound = prepared;
+            // Reserve this song now so a subsequent prefetch (or retry) never re-picks it.
+            usedKeys.add(prepared.reference.normalizedKey());
+            usedKeys.addAll(songIdentityKeys(answerFor(prepared.track, prepared.reference)));
+            usedKeys.addAll(trackIdentityKeys(prepared.track));
+            if(awaitingRound)
+                playPreparedRound();
+        }
+
+        // Pipeline terminus on failure: finish the game only if a round is actually needed now;
+        // a failed background prefetch is harmless and just stops.
+        private synchronized void abortOrFinish(String reason)
+        {
+            preparing = false;
+            if(awaitingRound)
+                finish(reason);
         }
 
         private synchronized void loadRound(int attempt)
@@ -1799,14 +1990,14 @@ public class GuessMusicService
                 return;
             if(attempt >= MAX_LOAD_ATTEMPTS)
             {
-                finish("I could not load enough playable songs for another round.");
+                abortOrFinish("I could not load enough playable songs for another round.");
                 return;
             }
 
             TrackReference reference = chooseReference();
             if(reference == null)
             {
-                finish("The game ran out of playable songs.");
+                abortOrFinish("The game ran out of playable songs.");
                 return;
             }
 
@@ -1833,11 +2024,19 @@ public class GuessMusicService
             boolean discovery = !discoveryReferences.isEmpty() && random.nextInt(100) >= options.knownPercent;
             List<TrackReference> primary = discovery ? discoveryReferences : knownReferences;
             List<TrackReference> fallback = discovery ? knownReferences : discoveryReferences;
-            TrackReference ref = chooseFrom(primary);
-            return ref == null ? chooseFrom(fallback) : ref;
+            // Exhaust fresh references in BOTH pools before reusing anything, so a fully-consumed
+            // primary pool no longer repeats songs while the other pool still has unplayed tracks.
+            TrackReference ref = chooseUnused(primary);
+            if(ref == null)
+                ref = chooseUnused(fallback);
+            if(ref == null)
+                ref = chooseFrom(primary);
+            if(ref == null)
+                ref = chooseFrom(fallback);
+            return ref;
         }
 
-        private TrackReference chooseFrom(List<TrackReference> refs)
+        private TrackReference chooseUnused(List<TrackReference> refs)
         {
             if(refs.isEmpty())
                 return null;
@@ -1849,35 +2048,129 @@ public class GuessMusicService
             for(TrackReference ref : shuffled)
                 if(!usedKeys.contains(ref.normalizedKey()))
                     return ref;
+            return null;
+        }
+
+        // Last-resort reuse (an already-played reference) so endless / long point games never stall.
+        private TrackReference chooseFrom(List<TrackReference> refs)
+        {
+            if(refs.isEmpty())
+                return null;
+            TrackReference unused = chooseUnused(refs);
+            if(unused != null)
+                return unused;
+            List<TrackReference> shuffled = new ArrayList<>(refs);
+            Collections.shuffle(shuffled, random);
             return shuffled.get(0);
         }
 
-        private synchronized void startRound(AudioTrack track, TrackReference reference)
+        private synchronized void startRound(AudioTrack track, TrackReference reference, int attempt)
         {
             if(finished || track == null || track.getInfo() == null)
                 return;
 
+            long clipMs = options.clipMillis();
             scanExecutor.submit(() ->
             {
-                GuessMusicAudioScanner.ScanResult scan = GuessMusicAudioScanner.findFirstAudible(track);
-                beginRound(track, reference, scan);
+                try
+                {
+                    // Cover filtering, the audio scan and the highlight cache read are all blocking I/O; do
+                    // them here on the scan executor (no lock held) and hand the results to onRoundReady.
+                    if(reference.discovery && isCoverRound(track, reference))
+                    {
+                        skipCoverRound(track, reference, attempt);
+                        return;
+                    }
+                    GuessMusicAudioScanner.ScanResult scan = GuessMusicAudioScanner.findClipStart(track, clipMs);
+                    Highlight cachedHighlight = lookupCachedHighlight(track, reference);
+                    onRoundReady(new PreparedRound(track, reference, scan, cachedHighlight));
+                }
+                catch(Throwable t)
+                {
+                    // Never let the prepare pipeline die mid-flight: an escaped exception would latch
+                    // `preparing` and hang the game at "Loading...". Treat it as a failed reference and
+                    // keep trying (which always reaches a terminus that clears `preparing`).
+                    LOG.warn("Guess music round preparation failed unexpectedly for guild {}", guildId, t);
+                    failPreparePipeline(reference, attempt);
+                }
             });
         }
 
-        private synchronized void beginRound(AudioTrack track, TrackReference reference, GuessMusicAudioScanner.ScanResult scan)
+        private synchronized void failPreparePipeline(TrackReference reference, int attempt)
         {
-            if(finished || track == null || track.getInfo() == null)
+            if(finished)
+            {
+                preparing = false;
                 return;
+            }
+            failedKeys.add(reference.normalizedKey());
+            loadRound(attempt + 1);
+        }
 
-            ParsedTitle trackAnswer = GuessMusicTitleMatcher.parse(track.getInfo().title, track.getInfo().author);
-            ParsedTitle answer = reference.hasKnownTitle()
-                    ? GuessMusicTitleMatcher.parse(reference.title, reference.author).withAliasesFrom(trackAnswer)
-                    : trackAnswer;
+        // Only discovery rounds are cover-checked; a song in the host's own queue/playlist is their choice.
+        private boolean isCoverRound(AudioTrack track, TrackReference reference)
+        {
+            ParsedTitle answer = answerFor(track, reference);
+            return coverDetector.isCover(answer.getArtist(), answer.getTitle());
+        }
+
+        private synchronized void skipCoverRound(AudioTrack track, TrackReference reference, int attempt)
+        {
+            if(finished)
+                return;
+            usedKeys.add(reference.normalizedKey());
+            // Block this specific recording and the artist-qualified song (NOT the bare title, so a
+            // different artist's song of the same name is still allowed) from being reloaded.
+            usedKeys.addAll(TrackIdentity.keys(track));
+            usedKeys.addAll(songOnlyKeys(answerFor(track, reference)));
+            LOG.debug("Skipping guess music discovery round '{}' — flagged as a cover", track.getInfo().title);
+            // A cover is loadable, so it must not consume the "couldn't load a playable song" budget;
+            // bound cover skips separately so a cover-heavy pool can't spin on MusicBrainz lookups.
+            if(++coverSkipsThisRound > MAX_COVER_SKIPS_PER_ROUND)
+                loadRound(attempt + 1);
+            else
+                loadRound(attempt);
+        }
+
+        private Highlight lookupCachedHighlight(AudioTrack track, TrackReference reference)
+        {
+            if(highlightStore == null || track == null || track.getInfo() == null)
+                return null;
+            try
+            {
+                return highlightStore.find(highlightKeys(track, answerFor(track, reference))).orElse(null);
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.debug("Failed to read guess music highlight cache", ex);
+                return null;
+            }
+        }
+
+        // Commits the prefetched round as the current round and starts playing it.
+        private synchronized void playPreparedRound()
+        {
+            if(finished)
+                return;
+            PreparedRound prepared = preparedRound;
+            preparedRound = null;
+            awaitingRound = false;
+            if(prepared == null || prepared.track == null || prepared.track.getInfo() == null)
+            {
+                requestRoundToPlay();
+                return;
+            }
+
+            AudioTrack track = prepared.track;
+            TrackReference reference = prepared.reference;
+            ParsedTitle answer = answerFor(track, reference);
             long clipMs = options.clipMillis();
-            long firstAudibleMs = scan == null ? 0L : scan.getPositionMillis();
+            long firstAudibleMs = prepared.scan == null ? 0L : prepared.scan.getPositionMillis();
             long startMs = options.startPosition(track, clipMs, random, firstAudibleMs);
             currentRound = new Round(roundNumber, track, answer, reference.discovery, reference.normalizedKey(),
                     startMs, clipMs, clipMs);
+            currentRound.highlight = prepared.cachedHighlight;
+            // Identity keys were already reserved in onRoundReady; re-adding here is a harmless no-op.
             usedKeys.add(reference.normalizedKey());
             usedKeys.addAll(songIdentityKeys(answer));
             usedKeys.addAll(trackIdentityKeys(track));
@@ -1896,9 +2189,10 @@ public class GuessMusicService
             if(!startRoundPlayback(true, clipMs, options.roundTimeMillis()))
             {
                 currentRound = null;
-                loadRound(0);
+                requestRoundToPlay();
                 return;
             }
+            maybePrefetchNextRound();
         }
 
         private boolean startRoundPlayback(boolean sendRoundMessage, long snippetDelayMs, long roundDelayMs)
@@ -1967,7 +2261,7 @@ public class GuessMusicService
             usedKeys.addAll(trackIdentityKeys(round.track));
             publishRoundSkipMessage(round);
             currentRound = null;
-            loadRound(0);
+            requestRoundToPlay();
         }
 
         private void publishRoundSkipMessage(Round round)
@@ -2302,6 +2596,7 @@ public class GuessMusicService
                         windowId);
                 scheduleRoundTimeout(remainingRoundMillis > 0L ? remainingRoundMillis : options.roundTimeMillis());
                 resumePendingRoundTimers();
+                maybePrefetchNextRound();
                 return;
             }
 
@@ -2309,7 +2604,10 @@ public class GuessMusicService
                     remainingRoundMillis > 0L ? remainingRoundMillis : options.roundTimeMillis()))
                 reveal("I could not resume playback for this round.");
             else
+            {
                 resumePendingRoundTimers();
+                maybePrefetchNextRound();
+            }
         }
 
         private void resumePendingRoundTimers()
@@ -2386,21 +2684,11 @@ public class GuessMusicService
 
         private void prepareHighlight(Round round, long firstAudibleMs)
         {
-            Set<String> keys = highlightKeys(round);
-            if(highlightStore != null)
-            {
-                try
-                {
-                    highlightStore.find(keys).ifPresent(highlight -> round.highlight = highlight);
-                    if(round.highlight != null)
-                        return;
-                }
-                catch(RuntimeException ex)
-                {
-                    LOG.debug("Failed to read guess music highlight cache", ex);
-                }
-            }
-
+            // The cache was already consulted off-lock before the round began (lookupCachedHighlight),
+            // so a cache hit needs no executor work; only the expensive analysis is scheduled here.
+            if(round.highlight != null)
+                return;
+            Set<String> keys = highlightKeys(round.track, round.answer);
             long clueEndMs = round.startMs + round.currentClipMs;
             round.highlightFuture = highlightExecutor.submit(() ->
             {
@@ -2471,7 +2759,7 @@ public class GuessMusicService
             currentRound.highlight = manual;
             if(currentRound.highlightFuture != null)
                 currentRound.highlightFuture.cancel(true);
-            saveHighlight(highlightKeys(currentRound), manual);
+            saveHighlight(highlightKeys(currentRound.track, currentRound.answer), manual);
             event.replySuccess("Saved this song's reveal highlight at `" + TimeUtil.formatTime(position) + "`.");
         }
 
@@ -2492,10 +2780,18 @@ public class GuessMusicService
             return Math.max(0L, currentRound.startMs + currentRound.currentClipMs);
         }
 
-        private Set<String> highlightKeys(Round round)
+        private ParsedTitle answerFor(AudioTrack track, TrackReference reference)
         {
-            Set<String> keys = new HashSet<>(TrackIdentity.keys(round.track));
-            String songKey = TrackIdentity.songKey(round.answer.getTitle(), round.answer.getArtist());
+            ParsedTitle trackAnswer = GuessMusicTitleMatcher.parse(track.getInfo().title, track.getInfo().author);
+            return reference.hasKnownTitle()
+                    ? GuessMusicTitleMatcher.parse(reference.title, reference.author).withAliasesFrom(trackAnswer)
+                    : trackAnswer;
+        }
+
+        private Set<String> highlightKeys(AudioTrack track, ParsedTitle answer)
+        {
+            Set<String> keys = new HashSet<>(TrackIdentity.keys(track));
+            String songKey = TrackIdentity.songKey(answer.getTitle(), answer.getArtist());
             if(songKey != null)
                 keys.add(songKey);
             return keys;
@@ -2641,6 +2937,9 @@ public class GuessMusicService
                 return;
             boolean closeActiveRound = currentRound != null && !currentRound.ended;
             finished = true;
+            awaitingRound = false;
+            preparing = false;
+            preparedRound = null;
             cancelRoundTimers();
             cancelAnswerTimer();
             if(lobby)
@@ -2680,6 +2979,9 @@ public class GuessMusicService
         private synchronized void finishWithoutRestore()
         {
             finished = true;
+            awaitingRound = false;
+            preparing = false;
+            preparedRound = null;
             cancelAnswerTimer();
             sessions.remove(guildId, this);
         }
@@ -2852,7 +3154,7 @@ public class GuessMusicService
             if(selected == null)
                 session.loadReference(reference, attempt, queryIndex + 1);
             else
-                session.startRound(selected, reference);
+                session.startRound(selected, reference, attempt);
         }
 
         @Override
@@ -2872,7 +3174,7 @@ public class GuessMusicService
                 session.loadReference(reference, attempt, queryIndex + 1);
                 return;
             }
-            session.startRound(selected, reference);
+            session.startRound(selected, reference, attempt);
         }
 
         @Override
@@ -2906,17 +3208,24 @@ public class GuessMusicService
             LOG.debug("Skipping duplicate guess music candidate '{}'", track.getInfo().title);
             return false;
         }
+        if(reference.discovery && containsAny(session.knownSongKeys, trackSongKeys(track)))
+        {
+            LOG.debug("Skipping discovery candidate '{}' that duplicates an un-played known song", track.getInfo().title);
+            return false;
+        }
         String candidateText = GuessMusicTitleMatcher.normalize(track.getInfo().title + " " + track.getInfo().author);
         if(isBlockedAudioCandidate(track.getInfo().title, track.getInfo().author))
             return false;
-        if(session.options.hasArtistFilter() && isRemixCandidate(candidateText))
+        if(isRemixCandidate(candidateText))
             return false;
-        if(!reference.discovery && reference.hasKnownTitle())
+        if(reference.hasKnownTitle())
         {
+            // A titled reference (a known song, or a Spotify-sourced discovery song) must actually be
+            // that song — this is what stops a discovery search returning a cover of a different song.
             ParsedTitle expected = GuessMusicTitleMatcher.parse(reference.title, reference.author);
             if(!GuessMusicTitleMatcher.matches(parsed.getTitle(), expected, MatchMode.FORGIVING))
                 return false;
-            if(session.options.hasArtistFilter())
+            if(reference.discovery || session.options.hasArtistFilter())
             {
                 if(!artistMetadataMatches(reference.author, parsed.getArtist()))
                     return false;
@@ -2924,7 +3233,7 @@ public class GuessMusicService
             else if(!artistMatches(reference.author, parsed.getArtist(), candidateText))
                 return false;
         }
-        if(reference.discovery && reference.author != null && !reference.author.isBlank())
+        else if(reference.discovery && reference.author != null && !reference.author.isBlank())
         {
             if(!artistMetadataMatches(reference.author, parsed.getArtist()))
                 return false;
@@ -2968,7 +3277,7 @@ public class GuessMusicService
             score += 25;
         if(text.contains("official audio"))
             score += 50;
-        if(text.contains("topic"))
+        if((" " + text + " ").contains(" topic "))
             score += 35;
         if(text.contains("visualizer"))
             score += 15;
@@ -2980,7 +3289,7 @@ public class GuessMusicService
             score -= 100;
         if(text.contains("remix") || text.contains("nightcore") || text.contains("sped up") || text.contains("slowed"))
             score -= 60;
-        if(text.contains("live"))
+        if((" " + text + " ").contains(" live "))
             score -= 20;
         if(reference.author != null && !reference.author.isBlank()
                 && text.contains(GuessMusicTitleMatcher.normalize(reference.author)))
@@ -3001,19 +3310,30 @@ public class GuessMusicService
         String normalizedText = GuessMusicTitleMatcher.normalize((title == null ? "" : title)
                 + " " + (author == null ? "" : author));
         return hasBlockedAudioTerms(normalizedText)
+                || isCoverCandidate(title)
                 || isLivePerformanceCandidate(title, normalizedText)
                 || isAcousticVersionCandidate(title, normalizedText, author);
     }
 
+    // Word-boundary matching so "cover" no longer false-positives on "discover"/"undercover"/
+    // "recovery"/"hardcover" and "review" no longer hits "preview", while still catching the plural
+    // and past forms ("instrumentals", "trailers", "covered", ...) the old substring match blocked.
+    private static final java.util.regex.Pattern BLOCKED_AUDIO_TERMS = java.util.regex.Pattern.compile(
+            "\\b(?:cover(?:s|ed)?|karaokes?|instrumentals?|reactions?|reviews?|trailers?|teasers?)\\b"
+                    + "|\\btribute to\\b|\\boriginally (?:by|performed)\\b");
+
     private static boolean hasBlockedAudioTerms(String normalizedText)
     {
-        return normalizedText.contains("cover")
-                || normalizedText.contains("karaoke")
-                || normalizedText.contains("instrumental")
-                || normalizedText.contains("reaction")
-                || normalizedText.contains("review")
-                || normalizedText.contains("trailer")
-                || normalizedText.contains("teaser");
+        return normalizedText != null && BLOCKED_AUDIO_TERMS.matcher(normalizedText).find();
+    }
+
+    private static boolean isCoverCandidate(String rawTitle)
+    {
+        if(rawTitle == null || rawTitle.isBlank())
+            return false;
+        // Bracketed cover credits like "(cover)", "[piano cover]", "(cover by X)" — the \\b keeps
+        // "discover"/"undercover" inside brackets from matching.
+        return rawTitle.matches("(?i).*[\\[({][^\\])}]*\\bcover(?:ed)?(?:\\s+(?:by|of|version))?\\b[^\\[({]*[\\])}].*");
     }
 
     private static boolean isLivePerformanceCandidate(String rawTitle, String normalizedText)
@@ -3064,13 +3384,14 @@ public class GuessMusicService
                 || "stripped".equals(normalizedTitle);
     }
 
+    // Word-boundary matching so an unrelated title that merely contains a marker substring
+    // (e.g. "remixology") is not mistaken for a derivative version.
+    private static final java.util.regex.Pattern REMIX_TERMS = java.util.regex.Pattern.compile(
+            "\\b(?:remix(?:ed|es)?|nightcore|daycore|sped up|slowed(?: down)?)\\b");
+
     static boolean isRemixCandidate(String normalizedText)
     {
-        return normalizedText.contains("remix")
-                || normalizedText.contains("remixed")
-                || normalizedText.contains("nightcore")
-                || normalizedText.contains("sped up")
-                || normalizedText.contains("slowed");
+        return normalizedText != null && REMIX_TERMS.matcher(normalizedText).find();
     }
 
     private static boolean artistMatches(String expectedArtist, String candidateArtist, String candidateText)
@@ -3122,6 +3443,25 @@ public class GuessMusicService
         private boolean hasKnownTitle()
         {
             return title != null && !title.isBlank();
+        }
+    }
+
+    // A fully loaded, cover-checked, scanned round that has been prepared ahead of time and is ready
+    // to be committed and played (its round number is assigned only when it actually starts).
+    private static final class PreparedRound
+    {
+        private final AudioTrack track;
+        private final TrackReference reference;
+        private final GuessMusicAudioScanner.ScanResult scan;
+        private final Highlight cachedHighlight;
+
+        private PreparedRound(AudioTrack track, TrackReference reference,
+                              GuessMusicAudioScanner.ScanResult scan, Highlight cachedHighlight)
+        {
+            this.track = track;
+            this.reference = reference;
+            this.scan = scan;
+            this.cachedHighlight = cachedHighlight;
         }
     }
 
