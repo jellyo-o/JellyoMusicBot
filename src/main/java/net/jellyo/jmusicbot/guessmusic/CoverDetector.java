@@ -1,0 +1,239 @@
+/*
+ * Copyright 2026 Jellyo.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.jagrosh.jmusicbot.guessmusic;
+
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Best-effort detector for whether a recording is a cover of a song originally by someone else,
+ * using the free MusicBrainz Web Service. MusicBrainz models recordings separately from the
+ * underlying works and tags cover performances with a "cover" relationship attribute, so it can tell
+ * that e.g. "22" performed by Against The Current is a cover of Taylor Swift's song — something the
+ * Spotify catalogue and the audio metadata alone cannot.
+ *
+ * <p>Deliberately conservative: it reports {@code true} only when MusicBrainz <em>positively</em>
+ * identifies a cover, so an original is never wrongly dropped; unknown/uncatalogued recordings and
+ * any failure (network, rate limit, parse) return {@code false}. Results are cached per song and
+ * requests are throttled to MusicBrainz's ~1 request/second policy.
+ */
+public class CoverDetector
+{
+    private static final Logger LOG = LoggerFactory.getLogger(CoverDetector.class);
+    private static final String WS = "https://musicbrainz.org/ws/2";
+    private static final String USER_AGENT = "JellyoMusicBot/2026.6 ( https://github.com/jellyo/JellyoMusicBot )";
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(12);
+    private static final long MIN_REQUEST_INTERVAL_MS = 1_100L; // honour MusicBrainz' ~1 req/s policy
+    private static final int MAX_CACHE_ENTRIES = 2_000;
+
+    private final boolean enabled;
+    private final HttpClient http;
+    private final Map<String, Boolean> cache = Collections.synchronizedMap(
+            new LinkedHashMap<String, Boolean>(16, 0.75f, true)
+            {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest)
+                {
+                    return size() > MAX_CACHE_ENTRIES;
+                }
+            });
+    private long lastRequestAt;
+
+    public CoverDetector()
+    {
+        this(true);
+    }
+
+    public CoverDetector(boolean enabled)
+    {
+        this.enabled = enabled;
+        this.http = enabled ? HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build() : null;
+    }
+
+    public boolean isEnabled()
+    {
+        return enabled;
+    }
+
+    /** Returns true only if MusicBrainz positively identifies this recording as a cover. */
+    public boolean isCover(String artist, String title)
+    {
+        if(!enabled || artist == null || artist.isBlank() || title == null || title.isBlank())
+            return false;
+        String key = normalize(artist) + " " + normalize(title);
+        Boolean cached = cache.get(key);
+        if(cached != null)
+            return cached;
+        Boolean cover = lookup(artist.trim(), title.trim());
+        if(cover == null) // transient/undeterminable: don't drop the song and don't poison the cache
+            return false;
+        cache.put(key, cover);
+        return cover;
+    }
+
+    /**
+     * @return {@code TRUE}/{@code FALSE} for a definitive answer, or {@code null} when it could not be
+     *         determined (a transient failure) so the caller neither drops the song nor caches it.
+     */
+    private Boolean lookup(String artist, String title)
+    {
+        try
+        {
+            String query = "artist:\"" + escape(artist) + "\" AND recording:\"" + escape(title) + "\"";
+            String searchBody = get(WS + "/recording/?fmt=json&limit=8&query="
+                    + URLEncoder.encode(query, StandardCharsets.UTF_8));
+            if(searchBody == null)
+                return null; // transient
+            String recordingId = parseRecordingId(searchBody, artist, title);
+            if(recordingId == null)
+                return Boolean.FALSE; // definitive: no matching recording in MusicBrainz -> treat as original
+            String detailBody = get(WS + "/recording/" + recordingId + "?fmt=json&inc=work-rels");
+            if(detailBody == null)
+                return null; // transient
+            return parseIsCover(detailBody);
+        }
+        catch(InterruptedException ex)
+        {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+        catch(Exception ex)
+        {
+            LOG.debug("MusicBrainz cover lookup failed for '{}' - '{}'", artist, title, ex);
+            return null;
+        }
+    }
+
+    private String get(String url) throws Exception
+    {
+        throttle();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                .timeout(HTTP_TIMEOUT)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+        if(response.statusCode() == 200)
+            return response.body();
+        LOG.debug("MusicBrainz GET {} returned status {}", url, response.statusCode());
+        return null;
+    }
+
+    private synchronized void throttle() throws InterruptedException
+    {
+        long now = System.currentTimeMillis();
+        long wait = lastRequestAt + MIN_REQUEST_INTERVAL_MS - now;
+        if(wait > 0)
+            Thread.sleep(wait);
+        lastRequestAt = System.currentTimeMillis();
+    }
+
+    // ---- pure parsing (unit-tested) ----
+
+    static String parseRecordingId(String json, String wantedArtist, String wantedTitle)
+    {
+        if(json == null)
+            return null;
+        JSONArray recordings = new JSONObject(json).optJSONArray("recordings");
+        if(recordings == null || recordings.isEmpty())
+            return null;
+
+        String wantedA = normalize(wantedArtist);
+        String wantedT = normalize(wantedTitle);
+        for(int i = 0; i < recordings.length(); i++)
+        {
+            JSONObject recording = recordings.optJSONObject(i);
+            if(recording == null)
+                continue;
+            String id = recording.optString("id", "");
+            if(id.isEmpty())
+                continue;
+            // Require an exact artist AND title match so we never inspect (and drop) the wrong recording —
+            // the MusicBrainz search is fuzzy, so "Queen" would otherwise match "Queens of the Stone Age".
+            if(normalize(recording.optString("title", "")).equals(wantedT)
+                    && artistCreditMatches(recording.optJSONArray("artist-credit"), wantedA))
+                return id;
+        }
+        return null;
+    }
+
+    static boolean parseIsCover(String json)
+    {
+        if(json == null)
+            return false;
+        JSONArray relations = new JSONObject(json).optJSONArray("relations");
+        if(relations == null)
+            return false;
+        for(int i = 0; i < relations.length(); i++)
+        {
+            JSONObject relation = relations.optJSONObject(i);
+            if(relation == null || !"performance".equals(relation.optString("type", "")))
+                continue;
+            JSONArray attributes = relation.optJSONArray("attributes");
+            if(attributes == null)
+                continue;
+            for(int a = 0; a < attributes.length(); a++)
+                if("cover".equalsIgnoreCase(attributes.optString(a, "")))
+                    return true;
+        }
+        return false;
+    }
+
+    private static boolean artistCreditMatches(JSONArray artistCredit, String wanted)
+    {
+        if(artistCredit == null || wanted.isEmpty())
+            return false;
+        for(int i = 0; i < artistCredit.length(); i++)
+        {
+            JSONObject credit = artistCredit.optJSONObject(i);
+            if(credit == null)
+                continue;
+            String name = credit.optString("name", "");
+            JSONObject artist = credit.optJSONObject("artist");
+            if(artist != null && name.isEmpty())
+                name = artist.optString("name", "");
+            // Exact match only: a substring match would conflate e.g. "Queen" with "Queens of the Stone Age".
+            if(normalize(name).equals(wanted))
+                return true;
+        }
+        return false;
+    }
+
+    private static String escape(String value)
+    {
+        // Neutralise Lucene special characters that would break the MusicBrainz query.
+        return value.replaceAll("[\\\\+\\-!(){}\\[\\]^\"~*?:/]", " ").trim();
+    }
+
+    private static String normalize(String value)
+    {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", "");
+    }
+}

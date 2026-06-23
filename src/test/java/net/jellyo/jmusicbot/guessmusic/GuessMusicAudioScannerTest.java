@@ -43,4 +43,25 @@ public class GuessMusicAudioScannerTest
 
         assertTrue(GuessMusicAudioScanner.isAudiblePcm16Le(audio, audio.length));
     }
+
+    @Test
+    public void clipStartWindowRequiresSustainedAudibleEnergy()
+    {
+        // A clearly audible, mostly-continuous window qualifies for a normal clip.
+        assertTrue(GuessMusicAudioScanner.qualifiesAsClipStart(0.05, 1.0, 5_000L));
+        // Too quiet (average below the sustained bar) — the old bug where a clip starts on near-silence.
+        assertFalse(GuessMusicAudioScanner.qualifiesAsClipStart(0.005, 1.0, 5_000L));
+        // Too gappy (mostly silent frames) even if a few are loud.
+        assertFalse(GuessMusicAudioScanner.qualifiesAsClipStart(0.05, 0.4, 5_000L));
+    }
+
+    @Test
+    public void shortClipsDemandLouderWindowThanLongClips()
+    {
+        // 0.017 average clears the normal bar (0.016) but not the boosted impossible-mode bar (0.02).
+        assertTrue(GuessMusicAudioScanner.qualifiesAsClipStart(0.017, 0.8, 5_000L));
+        assertFalse(GuessMusicAudioScanner.qualifiesAsClipStart(0.017, 0.8, 1_000L));
+        // A genuinely loud window still qualifies for a one-second impossible clip.
+        assertTrue(GuessMusicAudioScanner.qualifiesAsClipStart(0.05, 0.8, 1_000L));
+    }
 }

@@ -33,20 +33,37 @@ final class GuessMusicAudioScanner
     private static final double AUDIBLE_RMS_THRESHOLD = 0.012;
     private static final int REQUIRED_AUDIBLE_FRAMES = 3;
     private static final long PRE_ROLL_MS = 80L;
+    // Sustained-window scan: pick the first clip-length window that is mostly audible so a short
+    // (hardcore/impossible) clip never lands on a brief transient or a near-silent intro.
+    private static final double SUSTAINED_RMS_BAR = 0.016;
+    private static final double SUSTAINED_AUDIBLE_RATIO = 0.6;
+    private static final long MAX_VALIDATE_MS = 5_000L;
+    private static final long MIN_VALIDATE_MS = 600L;
+    private static final long SHORT_CLIP_MS = 1_500L;
+    private static final double SHORT_CLIP_RMS_MULTIPLIER = 1.25;
+    private static final long FRAME_TOLERANCE_MS = 40L;
 
     private GuessMusicAudioScanner()
     {
     }
 
-    static ScanResult findFirstAudible(AudioTrack source)
+    /**
+     * Finds the first position whose entire clip-length window is sustained-audible, so a short clip
+     * (hardcore/impossible mode) does not start on a brief transient or a near-silent intro. Falls back
+     * to the loudest window seen, then to the first audible frame (the old behaviour), then to 0 — so it
+     * is never worse than a plain first-audible scan.
+     */
+    static ScanResult findClipStart(AudioTrack source, long clipMs)
     {
-        return findFirstAudible(source, DEFAULT_SCAN_LIMIT_MS);
+        return findClipStart(source, clipMs, DEFAULT_SCAN_LIMIT_MS);
     }
 
-    static ScanResult findFirstAudible(AudioTrack source, long scanLimitMillis)
+    static ScanResult findClipStart(AudioTrack source, long clipMs, long scanLimitMillis)
     {
         if(source == null)
             return ScanResult.fallback();
+
+        long validateMs = Math.max(MIN_VALIDATE_MS, Math.min(MAX_VALIDATE_MS, clipMs));
 
         DefaultAudioPlayerManager manager = new DefaultAudioPlayerManager();
         AudioPlayer player = null;
@@ -64,51 +81,91 @@ final class GuessMusicAudioScanner
 
             long scanLimit = Math.max(1_000L, Math.min(scanLimitMillis, safeDurationLimit(source)));
             long deadline = System.currentTimeMillis() + WALL_TIMEOUT_MS;
-            int audibleFrames = 0;
-            long candidateTimecode = -1L;
-            long latestTimecode = 0L;
+            java.util.ArrayDeque<long[]> window = new java.util.ArrayDeque<>();
+            double windowRms = 0d;
+            int windowAudible = 0;
+            long bestWindowStart = -1L;
+            double bestWindowRms = -1d;
+            int consecutive = 0;
+            long consecutiveStart = -1L;
+            long firstAudible = -1L;
 
             while(System.currentTimeMillis() < deadline && player.getPlayingTrack() != null)
             {
                 AudioFrame frame = player.provide(500, TimeUnit.MILLISECONDS);
                 if(frame == null)
                     continue;
-                latestTimecode = Math.max(latestTimecode, frame.getTimecode());
-                if(frame.getTimecode() > scanLimit)
+                long timecode = frame.getTimecode();
+                if(timecode > scanLimit)
                     break;
 
-                if(isAudiblePcm16Le(frame.getData(), frame.getDataLength()))
+                double rms = rmsPcm16Le(frame.getData(), frame.getDataLength());
+
+                // Track the plain first-audible position (3 consecutive frames) as a last-resort fallback.
+                if(rms >= AUDIBLE_RMS_THRESHOLD)
                 {
-                    if(audibleFrames == 0)
-                        candidateTimecode = frame.getTimecode();
-                    audibleFrames++;
-                    if(audibleFrames >= REQUIRED_AUDIBLE_FRAMES)
-                        return ScanResult.detected(Math.max(0L, candidateTimecode - PRE_ROLL_MS));
+                    if(consecutive == 0)
+                        consecutiveStart = timecode;
+                    consecutive++;
+                    if(consecutive >= REQUIRED_AUDIBLE_FRAMES && firstAudible < 0L)
+                        firstAudible = Math.max(0L, consecutiveStart - PRE_ROLL_MS);
                 }
                 else
                 {
-                    audibleFrames = 0;
-                    candidateTimecode = -1L;
+                    consecutive = 0;
+                    consecutiveStart = -1L;
+                }
+
+                window.addLast(new long[]{timecode, Double.doubleToRawLongBits(rms)});
+                windowRms += rms;
+                if(rms >= SUSTAINED_RMS_BAR)
+                    windowAudible++;
+                while(!window.isEmpty() && timecode - window.peekFirst()[0] >= validateMs)
+                {
+                    long[] evicted = window.removeFirst();
+                    double evictedRms = Double.longBitsToDouble(evicted[1]);
+                    windowRms -= evictedRms;
+                    if(evictedRms >= SUSTAINED_RMS_BAR)
+                        windowAudible--;
+                }
+
+                long windowStart = window.peekFirst()[0];
+                if(timecode - windowStart >= validateMs - FRAME_TOLERANCE_MS)
+                {
+                    int frames = window.size();
+                    double averageRms = windowRms / frames;
+                    double audibleRatio = (double)windowAudible / frames;
+                    if(qualifiesAsClipStart(averageRms, audibleRatio, clipMs))
+                        return ScanResult.detected(windowStart);
+                    if(averageRms > bestWindowRms)
+                    {
+                        bestWindowRms = averageRms;
+                        bestWindowStart = windowStart;
+                    }
                 }
             }
 
-            LOG.debug("No audible frame found while scanning track {}; scanned={}ms", source.getIdentifier(), latestTimecode);
+            if(bestWindowStart >= 0L)
+                return ScanResult.detected(bestWindowStart);
+            if(firstAudible >= 0L)
+                return ScanResult.detected(firstAudible);
+            LOG.debug("No sustained audible window found while scanning track {}", source.getIdentifier());
             return ScanResult.fallback();
         }
         catch(TimeoutException ex)
         {
-            LOG.debug("Timed out while scanning first audible frame for {}", source.getIdentifier(), ex);
+            LOG.debug("Timed out while scanning clip start for {}", source.getIdentifier(), ex);
             return ScanResult.fallback();
         }
         catch(InterruptedException ex)
         {
             Thread.currentThread().interrupt();
-            LOG.debug("Interrupted while scanning first audible frame for {}", source.getIdentifier(), ex);
+            LOG.debug("Interrupted while scanning clip start for {}", source.getIdentifier(), ex);
             return ScanResult.fallback();
         }
         catch(RuntimeException ex)
         {
-            LOG.debug("Failed to scan first audible frame for {}", source.getIdentifier(), ex);
+            LOG.debug("Failed to scan clip start for {}", source.getIdentifier(), ex);
             return ScanResult.fallback();
         }
         finally
@@ -117,6 +174,14 @@ final class GuessMusicAudioScanner
                 player.destroy();
             manager.shutdown();
         }
+    }
+
+    // A clip-length window is a good start point when it is mostly audible; very short clips
+    // (impossible mode) demand a louder window so the one second isn't a quiet pocket of the song.
+    static boolean qualifiesAsClipStart(double averageRms, double audibleRatio, long clipMs)
+    {
+        double requiredRms = clipMs <= SHORT_CLIP_MS ? SUSTAINED_RMS_BAR * SHORT_CLIP_RMS_MULTIPLIER : SUSTAINED_RMS_BAR;
+        return audibleRatio >= SUSTAINED_AUDIBLE_RATIO && averageRms >= requiredRms;
     }
 
     static boolean isAudiblePcm16Le(byte[] data, int length)
