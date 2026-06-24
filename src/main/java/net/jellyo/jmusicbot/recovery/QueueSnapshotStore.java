@@ -41,6 +41,16 @@ public class QueueSnapshotStore
 {
     private static final Logger LOG = LoggerFactory.getLogger(QueueSnapshotStore.class);
 
+    /** The rolling auto-saved snapshot of the live queue (crash/restart recovery). */
+    private static final String SNAPSHOT_TABLE = "queue_snapshots";
+    /**
+     * A frozen copy of a previously-saved queue the user was offered to bring back
+     * while playing something new. Kept separate from {@link #SNAPSHOT_TABLE} so the
+     * periodic autosave overwriting the live snapshot cannot clobber it before the
+     * user acts on the offer.
+     */
+    private static final String PENDING_TABLE = "pending_restores";
+
     private final Path dbPath;
     private Connection connection;
 
@@ -54,23 +64,105 @@ public class QueueSnapshotStore
         connection = Database.open(dbPath);
         try(Statement st = connection.createStatement())
         {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS queue_snapshots ("
-                    + "guild_id INTEGER PRIMARY KEY,"
-                    + "payload TEXT NOT NULL,"
-                    + "track_count INTEGER NOT NULL,"
-                    + "sample_title TEXT,"
-                    + "saved_at INTEGER NOT NULL"
-                    + ")");
+            for(String table : new String[]{SNAPSHOT_TABLE, PENDING_TABLE})
+                st.executeUpdate("CREATE TABLE IF NOT EXISTS " + table + " ("
+                        + "guild_id INTEGER PRIMARY KEY,"
+                        + "payload TEXT NOT NULL,"
+                        + "track_count INTEGER NOT NULL,"
+                        + "sample_title TEXT,"
+                        + "saved_at INTEGER NOT NULL"
+                        + ")");
         }
         LOG.info("Queue snapshot store ready in unified database at {}", dbPath.toAbsolutePath());
     }
 
     public synchronized void save(long guildId, List<Entry> entries)
     {
+        saveInternal(SNAPSHOT_TABLE, guildId, entries);
+    }
+
+    /** Lightweight peek of count + sample title without decoding the whole payload. */
+    public synchronized Optional<Info> peek(long guildId)
+    {
+        return peekInternal(SNAPSHOT_TABLE, guildId);
+    }
+
+    public synchronized List<Entry> load(long guildId)
+    {
+        return loadInternal(SNAPSHOT_TABLE, guildId);
+    }
+
+    public synchronized void delete(long guildId)
+    {
+        deleteInternal(SNAPSHOT_TABLE, guildId);
+    }
+
+    /** Stores a frozen queue the user has been offered to restore (one slot per guild; newest wins). */
+    public synchronized void savePending(long guildId, List<Entry> entries)
+    {
+        saveInternal(PENDING_TABLE, guildId, entries);
+    }
+
+    public synchronized Optional<Info> peekPending(long guildId)
+    {
+        return peekInternal(PENDING_TABLE, guildId);
+    }
+
+    public synchronized List<Entry> loadPending(long guildId)
+    {
+        return loadInternal(PENDING_TABLE, guildId);
+    }
+
+    public synchronized void deletePending(long guildId)
+    {
+        deleteInternal(PENDING_TABLE, guildId);
+    }
+
+    /**
+     * Removes every pending restore saved before {@code cutoffEpochSeconds}. Used to
+     * expire offers the user never acted on.
+     *
+     * @return the number of expired rows removed.
+     */
+    public synchronized int deleteExpiredPending(long cutoffEpochSeconds)
+    {
+        ensureOpen();
+        try(PreparedStatement ps = connection.prepareStatement(
+                "DELETE FROM " + PENDING_TABLE + " WHERE saved_at < ?"))
+        {
+            ps.setLong(1, cutoffEpochSeconds);
+            return ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new SnapshotException("Failed to expire pending restores", ex);
+        }
+    }
+
+    /**
+     * Atomically moves the live snapshot into the pending slot (copy then delete).
+     * Because this method holds the store lock for the whole sequence, a concurrent
+     * {@link #save} from the autosave sweep cannot interleave between the copy and
+     * the delete and so cannot be clobbered.
+     *
+     * @return the moved entries, or an empty list if there was no live snapshot.
+     */
+    public synchronized List<Entry> moveSnapshotToPending(long guildId)
+    {
+        List<Entry> entries = loadInternal(SNAPSHOT_TABLE, guildId);
+        if(entries.isEmpty())
+            return entries;
+        saveInternal(PENDING_TABLE, guildId, entries);
+        deleteInternal(SNAPSHOT_TABLE, guildId);
+        return entries;
+    }
+
+    private void saveInternal(String table, long guildId, List<Entry> entries)
+    {
         ensureOpen();
         if(entries == null || entries.isEmpty())
         {
-            delete(guildId);
+            deleteInternal(table, guildId);
             return;
         }
         JSONArray array = new JSONArray();
@@ -78,7 +170,7 @@ public class QueueSnapshotStore
             array.put(e.toJson());
         String sampleTitle = entries.get(0).title;
         try(PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO queue_snapshots(guild_id, payload, track_count, sample_title, saved_at) VALUES(?,?,?,?,?) "
+                "INSERT INTO " + table + "(guild_id, payload, track_count, sample_title, saved_at) VALUES(?,?,?,?,?) "
                         + "ON CONFLICT(guild_id) DO UPDATE SET payload=excluded.payload, track_count=excluded.track_count, "
                         + "sample_title=excluded.sample_title, saved_at=excluded.saved_at"))
         {
@@ -95,12 +187,11 @@ public class QueueSnapshotStore
         }
     }
 
-    /** Lightweight peek of count + sample title without decoding the whole payload. */
-    public synchronized Optional<Info> peek(long guildId)
+    private Optional<Info> peekInternal(String table, long guildId)
     {
         ensureOpen();
         try(PreparedStatement ps = connection.prepareStatement(
-                "SELECT track_count, sample_title, saved_at FROM queue_snapshots WHERE guild_id=?"))
+                "SELECT track_count, sample_title, saved_at FROM " + table + " WHERE guild_id=?"))
         {
             ps.setLong(1, guildId);
             try(ResultSet rs = ps.executeQuery())
@@ -116,11 +207,11 @@ public class QueueSnapshotStore
         return Optional.empty();
     }
 
-    public synchronized List<Entry> load(long guildId)
+    private List<Entry> loadInternal(String table, long guildId)
     {
         ensureOpen();
         String payload = null;
-        try(PreparedStatement ps = connection.prepareStatement("SELECT payload FROM queue_snapshots WHERE guild_id=?"))
+        try(PreparedStatement ps = connection.prepareStatement("SELECT payload FROM " + table + " WHERE guild_id=?"))
         {
             ps.setLong(1, guildId);
             try(ResultSet rs = ps.executeQuery())
@@ -143,15 +234,15 @@ public class QueueSnapshotStore
         {
             // A corrupt/unparseable payload must not wedge /restore forever: drop it and self-heal.
             LOG.warn("Discarding unreadable queue snapshot for guild {}", guildId, ex);
-            try { delete(guildId); } catch(RuntimeException ignored) {}
+            try { deleteInternal(table, guildId); } catch(RuntimeException ignored) {}
             return new ArrayList<>();
         }
     }
 
-    public synchronized void delete(long guildId)
+    private void deleteInternal(String table, long guildId)
     {
         ensureOpen();
-        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM queue_snapshots WHERE guild_id=?"))
+        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM " + table + " WHERE guild_id=?"))
         {
             ps.setLong(1, guildId);
             ps.executeUpdate();

@@ -70,12 +70,8 @@ public final class ButtonPaginator
 
     public static boolean isAuthorized(Bot bot, ButtonInteractionEvent event, Request request, String label)
     {
-        if(event.getGuild() == null || event.getGuild().getIdLong() != request.getGuildId())
-        {
-            event.reply(bot.getConfig().getError() + " This " + label + " control cannot be used here.")
-                    .setEphemeral(true).queue();
+        if(!isInGuild(bot, event, request, label))
             return false;
-        }
 
         if(event.getUser().getIdLong() != request.getUserId())
         {
@@ -84,6 +80,21 @@ public final class ButtonPaginator
             return false;
         }
 
+        return true;
+    }
+
+    /**
+     * Guild-scoped authorization: any member of the guild the control was created in
+     * may use it (unlike {@link #isAuthorized}, which is restricted to the opener).
+     */
+    public static boolean isInGuild(Bot bot, ButtonInteractionEvent event, Request request, String label)
+    {
+        if(event.getGuild() == null || event.getGuild().getIdLong() != request.getGuildId())
+        {
+            event.reply(bot.getConfig().getError() + " This " + label + " control cannot be used here.")
+                    .setEphemeral(true).queue();
+            return false;
+        }
         return true;
     }
 

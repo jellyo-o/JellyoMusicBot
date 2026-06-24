@@ -76,17 +76,6 @@ public class PlayCmd extends MusicCommand
     @Override
     public void doCommand(CommandEvent event)
     {
-        // Prompt to restore a saved queue if one is pending (no-op during active playback,
-        // so resuming a paused track via bare `play` still works).
-        if(bot.getCrashRecoveryService() != null)
-        {
-            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
-            if(restorePrompt != null)
-            {
-                event.replyWarning(restorePrompt);
-                return;
-            }
-        }
         if(event.getArgs().isEmpty() && event.getMessage().getAttachments().isEmpty())
         {
             AudioHandler handler = (AudioHandler)event.getGuild().getAudioManager().getSendingHandler();
@@ -110,9 +99,11 @@ public class PlayCmd extends MusicCommand
             event.reply(builder.toString());
             return;
         }
-        String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">") 
-                ? event.getArgs().substring(1,event.getArgs().length()-1) 
+        String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">")
+                ? event.getArgs().substring(1,event.getArgs().length()-1)
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        // Play the request, and if a saved queue is waiting, offer to restore it alongside.
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         LOG.info("Loading prefix play request in guild {} ({}); query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,args,false)));
@@ -402,6 +393,7 @@ public class PlayCmd extends MusicCommand
                 event.reply(event.getClient().getWarning()+" Playlist `"+playlist.getName()+"` is empty.");
                 return;
             }
+            RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
             event.getChannel().sendMessage(loadingEmoji+" Loading playlist **"+playlist.getName()+"**... ("+items.size()+" items)").queue(m ->
             {
                 LOG.info("Loading user playlist '{}' in guild {} ({}) with {} configured entries",
