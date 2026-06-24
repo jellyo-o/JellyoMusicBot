@@ -81,7 +81,8 @@ public class QueueCmd extends MusicCommand implements UnifiedCommand
         ButtonPaginator.Request request = ButtonPaginator.parse(event.getComponentId());
         if(!ButtonPaginator.isNamespace(request, PAGE_NAMESPACE))
             return false;
-        if(!ButtonPaginator.isAuthorized(bot, event, request, "queue"))
+        // Anyone in the guild may page through the queue, not just whoever opened it.
+        if(!ButtonPaginator.isInGuild(bot, event, request, "queue"))
             return true;
 
         event.editMessage(buildQueueEditMessage(bot, event.getGuild(), event.getJDA(), request.getUserId(), request.getPage())).queue();

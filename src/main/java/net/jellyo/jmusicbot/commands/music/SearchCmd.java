@@ -74,15 +74,7 @@ public class SearchCmd extends MusicCommand
             event.replyError("Please include a query.");
             return;
         }
-        if(bot.getCrashRecoveryService() != null)
-        {
-            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
-            if(restorePrompt != null)
-            {
-                event.replyWarning(restorePrompt);
-                return;
-            }
-        }
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         LOG.info("Loading prefix search in guild {} ({}); prefix='{}'; query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), searchPrefix, event.getArgs());
         event.reply(searchingEmoji+" Searching... `["+event.getArgs()+"]`", 

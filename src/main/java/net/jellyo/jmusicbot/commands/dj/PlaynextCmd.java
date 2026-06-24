@@ -21,6 +21,7 @@ import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.audio.QueuedTrack;
 import com.jagrosh.jmusicbot.audio.RequestMetadata;
 import com.jagrosh.jmusicbot.commands.DJCommand;
+import com.jagrosh.jmusicbot.commands.music.RestoreCmd;
 import com.jagrosh.jmusicbot.utils.FormatUtil;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.sedmelluq.discord.lavaplayer.player.AudioLoadResultHandler;
@@ -62,18 +63,10 @@ public class PlaynextCmd extends DJCommand
             event.replyWarning("Please include a song title or URL!");
             return;
         }
-        if(bot.getCrashRecoveryService() != null)
-        {
-            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
-            if(restorePrompt != null)
-            {
-                event.replyWarning(restorePrompt);
-                return;
-            }
-        }
         String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">")
-                ? event.getArgs().substring(1,event.getArgs().length()-1) 
+                ? event.getArgs().substring(1,event.getArgs().length()-1)
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         LOG.info("Loading prefix playnext request in guild {} ({}); query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,false)));

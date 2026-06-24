@@ -1284,24 +1284,13 @@ public class SlashCommandListener extends ListenerAdapter
     // Music Commands
     // ========================
 
-    /** If a saved queue is pending and nothing is playing, asks the user to restore or start fresh. */
-    private boolean blockIfRestorePending(SlashCommandInteractionEvent event)
-    {
-        if(bot.getCrashRecoveryService() == null)
-            return false;
-        String prompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
-        if(prompt == null)
-            return false;
-        event.reply(prompt).setEphemeral(true).queue();
-        return true;
-    }
-
     private void handlePlay(SlashCommandInteractionEvent event, boolean playTop)
     {
         if (blockIfGuessMusicActive(event)) return;
-        if (blockIfRestorePending(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
+        // Play the request, and if a saved queue is waiting, offer to restore it alongside.
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         String query = event.getOption("query").getAsString();
         bot.getPlayerManager().setUpHandler(event.getGuild());
         LOG.info("Loading slash /{} request in guild {} ({}); query='{}'",
@@ -1313,7 +1302,6 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void handlePlayPlaylist(SlashCommandInteractionEvent event)
     {
-        if (blockIfRestorePending(event)) return;
         try
         {
             String name = event.getOption("name").getAsString();
@@ -1556,6 +1544,7 @@ public class SlashCommandListener extends ListenerAdapter
         if (blockIfGuessMusicActive(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
 
         PlaylistSummary playlist = bot.getUserPlaylistService().resolveVisible(event.getUser().getIdLong(), name)
                 .orElseThrow(() -> new PlaylistException("Playlist `" + name + "` does not exist."));
@@ -1910,9 +1899,9 @@ public class SlashCommandListener extends ListenerAdapter
     private void handleSearch(SlashCommandInteractionEvent event, String searchPrefix, String provider)
     {
         if (blockIfGuessMusicActive(event)) return;
-        if (blockIfRestorePending(event)) return;
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
 
         String query = event.getOption("query").getAsString();
         bot.getPlayerManager().setUpHandler(event.getGuild());
@@ -2080,7 +2069,6 @@ public class SlashCommandListener extends ListenerAdapter
     private void handlePlayNext(SlashCommandInteractionEvent event)
     {
         if (blockIfGuessMusicActive(event)) return;
-        if (blockIfRestorePending(event)) return;
         if (!checkDJPermission(event))
         {
             event.reply(bot.getConfig().getError() + " You need DJ permissions to use this command.").setEphemeral(true).queue();
@@ -2088,6 +2076,7 @@ public class SlashCommandListener extends ListenerAdapter
         }
         if (!checkVoiceState(event, false)) return;
         if (!connectToVoiceChannel(event)) return;
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         String query = event.getOption("query").getAsString();
         bot.getPlayerManager().setUpHandler(event.getGuild());
         event.deferReply().queue(hook -> {

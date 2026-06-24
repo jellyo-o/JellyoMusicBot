@@ -53,18 +53,10 @@ public class PlaytopCmd extends MusicCommand
             event.replyWarning("Please include a song title or URL!");
             return;
         }
-        if(bot.getCrashRecoveryService() != null)
-        {
-            String restorePrompt = bot.getCrashRecoveryService().promptIfRestorePending(event.getGuild());
-            if(restorePrompt != null)
-            {
-                event.replyWarning(restorePrompt);
-                return;
-            }
-        }
         String args = event.getArgs().startsWith("<") && event.getArgs().endsWith(">")
                 ? event.getArgs().substring(1,event.getArgs().length()-1)
                 : event.getArgs().isEmpty() ? event.getMessage().getAttachments().get(0).getUrl() : event.getArgs();
+        RestoreCmd.sendOfferIfPending(bot, event.getGuild(), event.getChannel());
         LOG.info("Loading prefix playtop request in guild {} ({}); query='{}'",
                 event.getGuild().getName(), event.getGuild().getId(), args);
         event.reply(loadingEmoji+" Loading... `["+args+"]`", m -> bot.getPlayerManager().loadItemOrdered(event.getGuild(), args, new ResultHandler(m,event,args,false)));
