@@ -151,6 +151,8 @@ public class SlashCommandListener extends ListenerAdapter
     private final PrefixCmd prefixCmd;
     private final SkipratioCmd skipratioCmd;
     private final QueueTypeCmd queueTypeCmd;
+    private final com.jagrosh.jmusicbot.commands.admin.PreloadLyricsCmd preloadLyricsCmd;
+    private final com.jagrosh.jmusicbot.commands.admin.AutoLyricsCmd autoLyricsCmd;
     private final StatsCmd statsCmd;
     private final BalanceCmd balanceCmd;
     private final DailyCmd dailyCmd;
@@ -183,6 +185,8 @@ public class SlashCommandListener extends ListenerAdapter
         this.prefixCmd = new PrefixCmd(bot);
         this.skipratioCmd = new SkipratioCmd(bot);
         this.queueTypeCmd = new QueueTypeCmd(bot);
+        this.preloadLyricsCmd = new com.jagrosh.jmusicbot.commands.admin.PreloadLyricsCmd(bot);
+        this.autoLyricsCmd = new com.jagrosh.jmusicbot.commands.admin.AutoLyricsCmd(bot);
         this.statsCmd = new StatsCmd(bot);
         this.balanceCmd = new BalanceCmd(bot);
         this.dailyCmd = new DailyCmd(bot);
@@ -455,6 +459,16 @@ public class SlashCommandListener extends ListenerAdapter
                         .addChoice("fair", "fair")
                         .addChoice("linear", "linear"))
                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
+        commands.add(slashCommand("preloadlyrics", "Toggle preloading lyrics for upcoming songs")
+                .addOptions(new OptionData(OptionType.STRING, "state", "on or off", false)
+                        .addChoice("on", "on")
+                        .addChoice("off", "off"))
+                .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
+        commands.add(slashCommand("autolyrics", "Toggle auto-posting lyrics when a song starts")
+                .addOptions(new OptionData(OptionType.STRING, "state", "on or off", false)
+                        .addChoice("on", "on")
+                        .addChoice("off", "off"))
+                .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_SERVER)));
 
         // Economy, XP, achievements and games (global per-user)
         commands.add(slashCommand("stats", "Show your global XP, coins and achievements")
@@ -647,6 +661,8 @@ public class SlashCommandListener extends ListenerAdapter
             case "skipratio": handleSkipRatio(event); break;
             case "setskip": handleSharedAdminCommand(event, skipratioCmd, String.valueOf(event.getOption("percent").getAsLong())); break;
             case "queuetype": handleSharedAdminCommand(event, queueTypeCmd, getOptionalStringArg(event, "type")); break;
+            case "preloadlyrics": handleSharedAdminCommand(event, preloadLyricsCmd, getOptionalStringArg(event, "state")); break;
+            case "autolyrics": handleSharedAdminCommand(event, autoLyricsCmd, getOptionalStringArg(event, "state")); break;
             case "stats": handleEconomyCommand(event, statsCmd, userArg(event)); break;
             case "balance": handleEconomyCommand(event, balanceCmd, userArg(event)); break;
             case "daily": handleEconomyCommand(event, dailyCmd, ""); break;
@@ -1218,7 +1234,9 @@ public class SlashCommandListener extends ListenerAdapter
                 {"setvc <channel|none>", "setvc [channel]", "Restrict music voice channel"},
                 {"setskip <0-100>", "setskip percent:<0-100>", "Set skip percentage"},
                 {"", "skipratio [ratio]", "Show or set skip ratio"},
-                {"queuetype [fair|linear]", "queuetype [type]", "Show or set queue type"}
+                {"queuetype [fair|linear]", "queuetype [type]", "Show or set queue type"},
+                {"preloadlyrics [on|off]", "preloadlyrics [state]", "Preload lyrics for upcoming songs"},
+                {"autolyrics [on|off]", "autolyrics [state]", "Auto-post lyrics when a song starts"}
         }, prefix);
 
         event.replyEmbeds(eb.build()).setEphemeral(true).queue();
@@ -1269,7 +1287,9 @@ public class SlashCommandListener extends ListenerAdapter
                         "\n**Prefix:** " + (s.getPrefix() == null ? "Default" : "`" + s.getPrefix() + "`") +
                         "\n**Repeat Mode:** " + s.getRepeatMode().getUserFriendlyName() +
                         "\n**Autoplay Mode:** " + formatAutoplayMode(s.getAutoplayMode()) +
-                        "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName())
+                        "\n**Queue Type:** " + s.getQueueType().getUserFriendlyName() +
+                        "\n**Preload Lyrics:** " + (s.isAutoPreloadLyrics() ? "On" : "Off") +
+                        "\n**Auto Lyrics:** " + (s.isAutoShowLyrics() ? "On" : "Off"))
                 .setFooter(event.getJDA().getGuilds().size() + " servers");
         event.replyEmbeds(eb.build()).queue();
     }
