@@ -128,4 +128,26 @@ public class CommandParsersTest
     {
         CommandParsers.parseMove("2 later");
     }
+
+    @Test
+    public void parseToggleEmptyFlipsCurrent()
+    {
+        org.junit.Assert.assertTrue(CommandParsers.parseToggle("", false));
+        org.junit.Assert.assertFalse(CommandParsers.parseToggle("  ", true));
+    }
+
+    @Test
+    public void parseToggleOnOff()
+    {
+        org.junit.Assert.assertTrue(CommandParsers.parseToggle("on", false));
+        org.junit.Assert.assertTrue(CommandParsers.parseToggle("enable", false));
+        org.junit.Assert.assertFalse(CommandParsers.parseToggle("off", true));
+        org.junit.Assert.assertFalse(CommandParsers.parseToggle("disable", true));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void parseToggleInvalidThrows()
+    {
+        CommandParsers.parseToggle("maybe", false);
+    }
 }

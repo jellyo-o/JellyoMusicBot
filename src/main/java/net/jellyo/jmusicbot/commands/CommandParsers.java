@@ -91,6 +91,20 @@ public final class CommandParsers
         return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
     }
 
+    public static boolean parseToggle(String args, boolean current)
+    {
+        String normalized = normalize(args);
+        if(normalized.isEmpty())
+            return !current;
+        if(normalized.equals("on") || normalized.equals("true") || normalized.equals("enable")
+                || normalized.equals("enabled") || normalized.equals("yes"))
+            return true;
+        if(normalized.equals("off") || normalized.equals("false") || normalized.equals("disable")
+                || normalized.equals("disabled") || normalized.equals("no"))
+            return false;
+        throw new IllegalArgumentException("Valid options are `on` or `off`");
+    }
+
     private static String normalize(String args)
     {
         return args == null ? "" : args.trim().toLowerCase();
