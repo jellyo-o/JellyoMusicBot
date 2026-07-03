@@ -46,10 +46,61 @@ public class LyricsCache
                     + "created_at INTEGER,"
                     + "updated_at INTEGER"
                     + ")");
+            // Negative cache: queries that returned no lyrics from any provider, so we
+            // don't re-hit the (rate-limited) providers for the same song repeatedly.
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS lyrics_misses ("
+                    + "query TEXT PRIMARY KEY,"
+                    + "created_at INTEGER NOT NULL"
+                    + ")");
         }
         migrateColumns();
         ensureIndexes();
         backfillLookupColumns();
+    }
+
+    /** Records that {@code query} yielded no lyrics from any provider (negative cache). */
+    public synchronized void recordMiss(String query) throws SQLException
+    {
+        if(query == null || query.isBlank())
+            return;
+        try(PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO lyrics_misses(query, created_at) VALUES(?, ?) "
+                + "ON CONFLICT(query) DO UPDATE SET created_at=excluded.created_at"))
+        {
+            ps.setString(1, query);
+            ps.setLong(2, Instant.now().toEpochMilli());
+            ps.executeUpdate();
+        }
+    }
+
+    /** True if {@code query} was recorded as a miss within the last {@code ttlMillis}. */
+    public synchronized boolean isRecentMiss(String query, long ttlMillis) throws SQLException
+    {
+        if(query == null || query.isBlank())
+            return false;
+        try(PreparedStatement ps = connection.prepareStatement("SELECT created_at FROM lyrics_misses WHERE query=?"))
+        {
+            ps.setString(1, query);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                if(!rs.next())
+                    return false;
+                long age = Instant.now().toEpochMilli() - rs.getLong(1);
+                return age >= 0 && age < ttlMillis;
+            }
+        }
+    }
+
+    /** Removes any negative-cache entry for {@code query} (e.g. once lyrics are found). */
+    public synchronized void clearMiss(String query) throws SQLException
+    {
+        if(query == null || query.isBlank())
+            return;
+        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM lyrics_misses WHERE query=?"))
+        {
+            ps.setString(1, query);
+            ps.executeUpdate();
+        }
     }
 
     public synchronized Optional<CachedLyrics> findByArtistTitle(String artist, String title) throws SQLException
