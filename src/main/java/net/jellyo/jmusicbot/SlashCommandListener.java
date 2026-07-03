@@ -38,10 +38,21 @@ import com.jagrosh.jmusicbot.commands.dj.StopCmd;
 import com.jagrosh.jmusicbot.commands.dj.VolumeCmd;
 import com.jagrosh.jmusicbot.commands.economy.AchievementsCmd;
 import com.jagrosh.jmusicbot.commands.economy.BalanceCmd;
+import com.jagrosh.jmusicbot.commands.economy.BlackjackCmd;
+import com.jagrosh.jmusicbot.commands.economy.CrashCmd;
 import com.jagrosh.jmusicbot.commands.economy.DailyCmd;
+import com.jagrosh.jmusicbot.commands.economy.DoubleCmd;
 import com.jagrosh.jmusicbot.commands.economy.GambleCmd;
+import com.jagrosh.jmusicbot.commands.economy.HiLoCmd;
+import com.jagrosh.jmusicbot.commands.economy.KenoCmd;
 import com.jagrosh.jmusicbot.commands.economy.LeaderboardCmd;
+import com.jagrosh.jmusicbot.commands.economy.MinesCmd;
+import com.jagrosh.jmusicbot.commands.economy.PredictCmd;
+import com.jagrosh.jmusicbot.commands.economy.RouletteCmd;
+import com.jagrosh.jmusicbot.commands.economy.RpsCmd;
+import com.jagrosh.jmusicbot.commands.economy.ScratchCmd;
 import com.jagrosh.jmusicbot.commands.economy.StatsCmd;
+import com.jagrosh.jmusicbot.commands.economy.WheelCmd;
 import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
@@ -157,6 +168,17 @@ public class SlashCommandListener extends ListenerAdapter
     private final BalanceCmd balanceCmd;
     private final DailyCmd dailyCmd;
     private final GambleCmd gambleCmd;
+    private final PredictCmd predictCmd;
+    private final RouletteCmd rouletteCmd;
+    private final WheelCmd wheelCmd;
+    private final KenoCmd kenoCmd;
+    private final ScratchCmd scratchCmd;
+    private final DoubleCmd doubleCmd;
+    private final RpsCmd rpsCmd;
+    private final HiLoCmd hiloCmd;
+    private final CrashCmd crashCmd;
+    private final MinesCmd minesCmd;
+    private final BlackjackCmd blackjackCmd;
     private final LeaderboardCmd leaderboardCmd;
     private final AchievementsCmd achievementsCmd;
     private final AvoidCmd avoidCmd;
@@ -191,6 +213,17 @@ public class SlashCommandListener extends ListenerAdapter
         this.balanceCmd = new BalanceCmd(bot);
         this.dailyCmd = new DailyCmd(bot);
         this.gambleCmd = new GambleCmd(bot);
+        this.predictCmd = new PredictCmd(bot);
+        this.rouletteCmd = new RouletteCmd(bot);
+        this.wheelCmd = new WheelCmd(bot);
+        this.kenoCmd = new KenoCmd(bot);
+        this.scratchCmd = new ScratchCmd(bot);
+        this.doubleCmd = new DoubleCmd(bot);
+        this.rpsCmd = new RpsCmd(bot);
+        this.hiloCmd = new HiLoCmd(bot);
+        this.crashCmd = new CrashCmd(bot);
+        this.minesCmd = new MinesCmd(bot);
+        this.blackjackCmd = new BlackjackCmd(bot);
         this.leaderboardCmd = new LeaderboardCmd(bot);
         this.achievementsCmd = new AchievementsCmd(bot);
         this.avoidCmd = new AvoidCmd(bot);
@@ -482,6 +515,44 @@ public class SlashCommandListener extends ListenerAdapter
                                 .addChoice("coinflip", "coinflip")
                                 .addChoice("dice", "dice")
                                 .addChoice("slots", "slots")));
+        commands.add(slashCommand("predict", "Predict a dice roll for coins")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.STRING, "prediction", "Your call", true)
+                                .addChoice("1", "1").addChoice("2", "2").addChoice("3", "3")
+                                .addChoice("4", "4").addChoice("5", "5").addChoice("6", "6")
+                                .addChoice("even", "even").addChoice("odd", "odd")
+                                .addChoice("high (4-6)", "high").addChoice("low (1-3)", "low")));
+        commands.add(slashCommand("roulette", "Spin the roulette wheel")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.STRING, "bet", "What to bet on", true)
+                                .addChoice("red", "red").addChoice("black", "black")
+                                .addChoice("even", "even").addChoice("odd", "odd")
+                                .addChoice("low (1-18)", "low").addChoice("high (19-36)", "high")
+                                .addChoice("1st dozen", "dozen1").addChoice("2nd dozen", "dozen2")
+                                .addChoice("3rd dozen", "dozen3").addChoice("single number", "number"),
+                        new OptionData(OptionType.INTEGER, "number", "The number for a straight-up bet", false)
+                                .setRequiredRange(0, 36)));
+        commands.add(slashCommand("wheel", "Spin the wheel of fortune")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("keno", "Pick numbers and match the draw")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.STRING, "numbers", "Four numbers 1-40, e.g. \"3 8 21 40\" (omit to quick-pick)", false)));
+        commands.add(slashCommand("scratch", "Scratch a card for prizes")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("double", "Flip to double your coins, again and again")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("rps", "Rock paper scissors for coins")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("hilo", "Guess higher or lower to build a streak")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("crash", "Cash out before the rocket crashes")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.NUMBER, "target", "Auto-cash-out multiplier, e.g. 2.5", false)));
+        commands.add(slashCommand("mines", "Reveal safe tiles and dodge the mines")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.INTEGER, "bombs", "Number of mines (1-10)", false).setRequiredRange(1, 10)));
+        commands.add(slashCommand("blackjack", "Play blackjack against the dealer")
+                .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
         commands.add(slashCommand("leaderboard", "Show the global leaderboard")
                 .addOptions(new OptionData(OptionType.STRING, "metric", "Ranking metric", false)
                         .addChoice("coins", "coins")
@@ -668,6 +739,30 @@ public class SlashCommandListener extends ListenerAdapter
             case "daily": handleEconomyCommand(event, dailyCmd, ""); break;
             case "gamble": handleEconomyCommand(event, gambleCmd,
                     event.getOption("amount").getAsLong() + " " + getOptionalStringArg(event, "game")); break;
+            case "predict": handleEconomyCommand(event, predictCmd,
+                    event.getOption("amount").getAsLong() + " " + getOptionalStringArg(event, "prediction")); break;
+            case "roulette": handleEconomyCommand(event, rouletteCmd,
+                    event.getOption("amount").getAsLong() + " " + getOptionalStringArg(event, "bet")
+                            + optionalLongSuffix(event, "number")); break;
+            case "wheel": handleEconomyCommand(event, wheelCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "keno": handleEconomyCommand(event, kenoCmd,
+                    event.getOption("amount").getAsLong() + " " + getOptionalStringArg(event, "numbers")); break;
+            case "scratch": handleEconomyCommand(event, scratchCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "double": handleEconomyCommand(event, doubleCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "rps": handleEconomyCommand(event, rpsCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "hilo": handleEconomyCommand(event, hiloCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "crash": handleEconomyCommand(event, crashCmd,
+                    event.getOption("amount").getAsLong()
+                            + (event.getOption("target") != null ? " " + event.getOption("target").getAsDouble() : "")); break;
+            case "mines": handleEconomyCommand(event, minesCmd,
+                    event.getOption("amount").getAsLong() + optionalLongSuffix(event, "bombs")); break;
+            case "blackjack": handleEconomyCommand(event, blackjackCmd,
+                    String.valueOf(event.getOption("amount").getAsLong())); break;
             case "leaderboard": handleEconomyCommand(event, leaderboardCmd, getOptionalStringArg(event, "metric")); break;
             case "achievements": handleEconomyCommand(event, achievementsCmd, userArg(event)); break;
             case "avoid": handleSharedDJCommand(event, avoidCmd, getOptionalStringArg(event, "song")); break;
@@ -798,6 +893,12 @@ public class SlashCommandListener extends ListenerAdapter
     private String getOptionalLongArg(SlashCommandInteractionEvent event, String name)
     {
         return event.getOption(name) == null ? "" : String.valueOf(event.getOption(name).getAsLong());
+    }
+
+    /** Returns {@code " <value>"} for a present integer option, or {@code ""} when absent. */
+    private String optionalLongSuffix(SlashCommandInteractionEvent event, String name)
+    {
+        return event.getOption(name) == null ? "" : " " + event.getOption(name).getAsLong();
     }
 
     @Override

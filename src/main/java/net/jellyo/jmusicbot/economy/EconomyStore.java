@@ -69,6 +69,9 @@ public class EconomyStore
                     + "gamble_losses INTEGER NOT NULL DEFAULT 0,"
                     + "gamble_wagered INTEGER NOT NULL DEFAULT 0,"
                     + "gamble_net INTEGER NOT NULL DEFAULT 0,"
+                    + "biggest_win INTEGER NOT NULL DEFAULT 0,"
+                    + "rebate_accrued_today INTEGER NOT NULL DEFAULT 0,"
+                    + "rebate_day INTEGER NOT NULL DEFAULT 0,"
                     + "daily_streak INTEGER NOT NULL DEFAULT 0,"
                     + "last_daily_at INTEGER NOT NULL DEFAULT 0,"
                     + "last_seen_at INTEGER NOT NULL DEFAULT 0,"
@@ -88,6 +91,11 @@ public class EconomyStore
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_profiles_listened ON user_profiles(ms_listened DESC)");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id, earned_at)");
         }
+        // Idempotent column migration for databases created before these columns existed.
+        // (CREATE TABLE above already includes them for fresh databases.)
+        ensureColumn("user_profiles", "biggest_win", "INTEGER NOT NULL DEFAULT 0");
+        ensureColumn("user_profiles", "rebate_accrued_today", "INTEGER NOT NULL DEFAULT 0");
+        ensureColumn("user_profiles", "rebate_day", "INTEGER NOT NULL DEFAULT 0");
         LOG.info("Economy database ready in unified database at {}", dbPath.toAbsolutePath());
     }
 
@@ -250,6 +258,83 @@ public class EconomyStore
         {
             throw new EconomyException("Failed to record gamble", ex);
         }
+    }
+
+    /** Raises the user's record single-round win to {@code win} if it is a new high. */
+    public synchronized void updateBiggestWin(long userId, long win)
+    {
+        if(win <= 0)
+            return;
+        ensureRow(userId);
+        try(PreparedStatement ps = connection.prepareStatement(
+                "UPDATE user_profiles SET biggest_win=MAX(biggest_win, ?), updated_at=? WHERE user_id=?"))
+        {
+            ps.setLong(1, win);
+            ps.setLong(2, now());
+            ps.setLong(3, userId);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to update biggest win", ex);
+        }
+    }
+
+    /**
+     * Credits a loyalty rebate, enforcing a per-day cap atomically. The accrual
+     * resets when {@code dayKey} advances past the stored day. Returns the coins
+     * actually granted (0 if the day's cap is already exhausted).
+     */
+    public synchronized long addRebateCapped(long userId, long rebate, long dayKey, long dailyCap)
+    {
+        if(rebate <= 0 || dailyCap <= 0)
+            return 0;
+        ensureRow(userId);
+        long accrued;
+        long storedDay;
+        try(PreparedStatement ps = connection.prepareStatement(
+                "SELECT rebate_accrued_today, rebate_day FROM user_profiles WHERE user_id=?"))
+        {
+            ps.setLong(1, userId);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                if(rs.next())
+                {
+                    accrued = rs.getLong(1);
+                    storedDay = rs.getLong(2);
+                }
+                else
+                {
+                    accrued = 0;
+                    storedDay = dayKey;
+                }
+            }
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to read rebate accrual", ex);
+        }
+        if(storedDay != dayKey)
+            accrued = 0; // new day resets the accrual
+        long grant = Math.min(rebate, Math.max(0, dailyCap - accrued));
+        if(grant <= 0)
+            return 0;
+        try(PreparedStatement ps = connection.prepareStatement(
+                "UPDATE user_profiles SET currency=currency+?, rebate_accrued_today=?, rebate_day=?, "
+                        + "updated_at=? WHERE user_id=?"))
+        {
+            ps.setLong(1, grant);
+            ps.setLong(2, accrued + grant);
+            ps.setLong(3, dayKey);
+            ps.setLong(4, now());
+            ps.setLong(5, userId);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to credit rebate", ex);
+        }
+        return grant;
     }
 
     public synchronized void setDaily(long userId, long lastDailyAtEpoch, int streak)
@@ -450,6 +535,41 @@ public class EconomyStore
         }
     }
 
+    /** Adds {@code column} to {@code table} if absent (idempotent schema migration). */
+    private void ensureColumn(String table, String column, String ddl)
+    {
+        ensureOpen();
+        if(hasColumn(table, column))
+            return;
+        try(Statement st = connection.createStatement())
+        {
+            // table/column/ddl are compile-time constants, never user input.
+            st.executeUpdate("ALTER TABLE " + table + " ADD COLUMN " + column + " " + ddl);
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to add column " + column + " to " + table, ex);
+        }
+    }
+
+    private boolean hasColumn(String table, String column)
+    {
+        try(Statement st = connection.createStatement();
+            ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")"))
+        {
+            while(rs.next())
+            {
+                if(column.equalsIgnoreCase(rs.getString("name")))
+                    return true;
+            }
+            return false;
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to inspect columns of " + table, ex);
+        }
+    }
+
     private void ensureRow(long userId)
     {
         ensureOpen();
@@ -482,6 +602,7 @@ public class EconomyStore
                 .gambleLosses(rs.getLong("gamble_losses"))
                 .gambleWagered(rs.getLong("gamble_wagered"))
                 .gambleNet(rs.getLong("gamble_net"))
+                .biggestWin(rs.getLong("biggest_win"))
                 .dailyStreak(rs.getInt("daily_streak"))
                 .lastDailyAt(rs.getLong("last_daily_at"))
                 .lastSeenAt(rs.getLong("last_seen_at"))

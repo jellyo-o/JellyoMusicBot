@@ -79,6 +79,21 @@ public class SlashCommandListenerTest
     }
 
     @Test
+    public void casinoGamesHaveSlashCommands()
+    {
+        Set<String> names = new HashSet<>();
+        for (SlashCommandData command : SlashCommandListener.buildSlashCommands())
+            names.add(command.getName());
+
+        String[] games = {
+                "gamble", "predict", "roulette", "wheel", "keno", "scratch",
+                "double", "rps", "hilo", "crash", "mines", "blackjack"
+        };
+        for (String game : games)
+            assertTrue("Missing casino slash command: " + game, names.contains(game));
+    }
+
+    @Test
     public void slashCommandsAreGuildOnly()
     {
         for (SlashCommandData command : SlashCommandListener.buildSlashCommands())
