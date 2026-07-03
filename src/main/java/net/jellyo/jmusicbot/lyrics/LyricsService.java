@@ -44,8 +44,21 @@ public class LyricsService
             catch(SQLException ignored)
             {
             }
+            // Negative cache: skip the (rate-limited) providers if this query recently
+            // returned nothing from any of them.
+            try
+            {
+                if(cache.isRecentMiss(sanitized, missTtlMillis()))
+                    return Optional.empty();
+            }
+            catch(SQLException ignored)
+            {
+            }
         }
 
+        // Try LRCLIB (fast, unlimited), then Genius (rate-limited fallback). Track whether a
+        // provider errored so a transient network failure is NOT recorded as a negative hit.
+        boolean providerErrored = false;
         Optional<LyricsCache.CachedLyrics> primary = Optional.empty();
         try
         {
@@ -53,46 +66,48 @@ public class LyricsService
         }
         catch(IOException ignored)
         {
+            providerErrored = true;
         }
         if(primary.isPresent())
+        {
+            clearMissQuietly(sanitized);
             return primary;
+        }
+
+        Optional<LyricsCache.CachedLyrics> fallback = Optional.empty();
         try
         {
-            return fetchFromProvider(fallbackProvider, sanitized, allowDifferentArtistFallback);
+            fallback = fetchFromProvider(fallbackProvider, sanitized, allowDifferentArtistFallback);
         }
         catch(IOException ignored)
         {
-            return Optional.empty();
+            providerErrored = true;
         }
+        if(fallback.isPresent())
+        {
+            clearMissQuietly(sanitized);
+            return fallback;
+        }
+
+        // Only remember a clean "no lyrics anywhere" result — never a network error.
+        if(!providerErrored)
+            recordMissQuietly(sanitized);
+        return Optional.empty();
     }
 
-    /**
-     * Warm the cache using the primary (LRCLIB) provider only — never the
-     * rate-limited Genius fallback. Used by preload and auto-show so speculative
-     * lookups can't block on Genius's 10s limiter or spend its shared budget.
-     */
-    public Optional<LyricsCache.CachedLyrics> preloadPrimary(String rawQuery) throws IOException
+    private static long missTtlMillis()
     {
-        String sanitized = InputValidator.sanitizeQuery(rawQuery);
-        if(sanitized == null)
-            return Optional.empty();
-        try
-        {
-            Optional<LyricsCache.CachedLyrics> cached = cache.findBestMatch(sanitized);
-            if(cached.isPresent())
-                return cached;
-        }
-        catch(SQLException ignored)
-        {
-        }
-        try
-        {
-            return fetchFromProvider(primaryProvider, sanitized, false);
-        }
-        catch(IOException ignored)
-        {
-            return Optional.empty();
-        }
+        return Long.getLong("lyrics.missTtlMillis", 7L * 24 * 60 * 60 * 1000L);
+    }
+
+    private void recordMissQuietly(String query)
+    {
+        try { cache.recordMiss(query); } catch(SQLException ignored) {}
+    }
+
+    private void clearMissQuietly(String query)
+    {
+        try { cache.clearMiss(query); } catch(SQLException ignored) {}
     }
 
     public Optional<LyricsCache.CachedLyrics> fetchByGeniusUrl(String url) throws IOException
