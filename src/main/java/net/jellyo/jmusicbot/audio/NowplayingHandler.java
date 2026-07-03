@@ -94,6 +94,7 @@ public class NowplayingHandler
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
     private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
+    private final Map<Long, String> lastAutoShownTrack = new java.util.concurrent.ConcurrentHashMap<>(); // guild -> track identifier
 
     public NowplayingHandler(Bot bot)
     {
@@ -268,9 +269,19 @@ public class NowplayingHandler
         final String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(track);
         if(query.isEmpty())
             return;
-        final long channelId = channel.getIdLong();
         final long gid = guild.getIdLong();
-        bot.getBlockingThreadpool().submit(() ->
+        // Don't re-post the same song's lyrics on consecutive starts (e.g. repeat mode
+        // re-adds a clone, or the panel restart button) — only when the track actually changes.
+        String identifier = track.getInfo() == null ? query : track.getInfo().identifier;
+        if(identifier == null || identifier.isEmpty())
+            identifier = query;
+        if(identifier.equals(lastAutoShownTrack.get(gid)))
+            return;
+        lastAutoShownTrack.put(gid, identifier);
+        final long channelId = channel.getIdLong();
+        // Run on the dedicated lyrics executor (not the shared blocking pool) so lyrics
+        // fetches never contend with Spotify/economy/dashboard I/O.
+        bot.getLyricsExecutor().submit(() ->
         {
             try
             {

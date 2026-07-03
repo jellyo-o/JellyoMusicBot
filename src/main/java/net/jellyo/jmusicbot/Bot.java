@@ -297,6 +297,14 @@ public class Bot
     {
         return lyricsPreloader;
     }
+
+    /** Dedicated single-thread executor for lyrics network work (preload + auto-show),
+     *  kept off the shared {@link #getBlockingThreadpool()} so lyrics fetches never
+     *  contend with Spotify/economy/dashboard I/O. */
+    public ExecutorService getLyricsExecutor()
+    {
+        return lyricsPreloadPool;
+    }
     
     public PlayerManager getPlayerManager()
     {

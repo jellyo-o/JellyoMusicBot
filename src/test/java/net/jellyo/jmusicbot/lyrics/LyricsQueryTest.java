@@ -22,6 +22,13 @@ public class LyricsQueryTest
     @Test public void authorAlreadyInTitleIsNotDuplicated() {
         assertEquals("NF - Time", LyricsQuery.forTitleAndAuthor("NF - Time", "NF"));
     }
+    @Test public void shortArtistNotMatchedAsSubstring() {
+        // "adrenaline" contains "dr" as a substring, but "Dr" is not a whole word here
+        assertEquals("Dr - Adrenaline", LyricsQuery.forTitleAndAuthor("Adrenaline", "Dr"));
+    }
+    @Test public void artistAsWholeWordInTitleIsNotDuplicated() {
+        assertEquals("NF Time", LyricsQuery.forTitleAndAuthor("NF Time", "NF"));
+    }
     @Test public void blankTitleReturnsEmpty() {
         assertEquals("", LyricsQuery.forTitleAndAuthor("", "NF"));
     }

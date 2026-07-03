@@ -27,9 +27,11 @@ public final class LyricsQuery
         if(artist.isEmpty())
             return t;
         String tl = t.toLowerCase();
-        // If the title already carries the artist or an "Artist - Title" delimiter,
-        // don't prepend again.
-        if(tl.contains(artist.toLowerCase()) || tl.contains(" - "))
+        String al = artist.toLowerCase();
+        // Don't prepend again if the title already has an "Artist - Title" delimiter, or
+        // already contains the artist as a whole word. Use a space-padded token check so a
+        // short artist like "Dr" isn't matched inside "Adrenaline".
+        if(tl.contains(" - ") || (" " + tl + " ").contains(" " + al + " "))
             return t;
         return artist + " - " + t;
     }
