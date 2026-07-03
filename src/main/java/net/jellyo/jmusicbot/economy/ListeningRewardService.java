@@ -94,17 +94,24 @@ public class ListeningRewardService
         if(!(guild.getAudioManager().getSendingHandler() instanceof AudioHandler))
             return;
         AudioHandler handler = (AudioHandler) guild.getAudioManager().getSendingHandler();
-        if(handler.isInGuessMusicMode())
+        // A normal guess game suppresses listening XP entirely. A HOSTED game is the exception: the host
+        // wants players rewarded only for listening (never for guessing), so everyone in voice still earns
+        // the normal listening rate while a hosted game runs.
+        boolean hosted = bot.getGuessMusicService().isHostedListeningActive(guild);
+        if(handler.isInGuessMusicMode() && !hosted)
             return;
         AudioPlayer player = handler.getPlayer();
-        if(player == null || player.isPaused())
-            return;
-        AudioTrack track = player.getPlayingTrack();
-        if(track == null)
-            return;
-        RequestMetadata metadata = track.getUserData(RequestMetadata.class);
-        if(metadata != null && metadata.isGuessGame())
-            return;
+        if(!hosted)
+        {
+            if(player == null || player.isPaused())
+                return;
+            AudioTrack track = player.getPlayingTrack();
+            if(track == null)
+                return;
+            RequestMetadata metadata = track.getUserData(RequestMetadata.class);
+            if(metadata != null && metadata.isGuessGame())
+                return;
+        }
 
         guild.getAudioManager().getConnectedChannel().getMembers().forEach(member ->
         {
@@ -112,8 +119,9 @@ public class ListeningRewardService
                 return;
             if(member.getVoiceState() != null && member.getVoiceState().isDeafened())
                 return;
-            // Only members who have queued a song this session earn listening XP.
-            if(!handler.isSessionContributor(member.getIdLong()))
+            // In a hosted game everyone listening earns XP; otherwise only members who queued a song this
+            // session do.
+            if(!hosted && !handler.isSessionContributor(member.getIdLong()))
                 return;
             economy.creditListening(member.getIdLong(), deltaMs, displayName(member),
                     member.getEffectiveAvatarUrl());

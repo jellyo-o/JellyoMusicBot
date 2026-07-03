@@ -231,6 +231,7 @@ public class JMusicBot
                         new LyricsCmd(bot),
                         new CorrectLyricsCmd(bot),
                         new GuessMusicCmd(bot),
+                        new HostGameCmd(bot),
                         new NowplayingCmd(bot),
                         new PlayCmd(bot),
                         new PlaytopCmd(bot),
@@ -338,7 +339,8 @@ public class JMusicBot
                 {"seek <time>", "Seek the current song"},
                 {"lyrics [song]", "Fetch lyrics"},
                 {"correctlyrics <genius-url> | <song>", "Correct cached lyrics for a song"},
-                {"guess [start|status|join|reveal|stop|hints|highlight]", "Play a guess the music game"}
+                {"guess [start|status|join|reveal|stop|hints|highlight]", "Play a guess the music game"},
+                {"hostgame [start|add|status|join|reveal|stop]", "Host a guess the music game where you pick the songs"}
         });
         appendPlainHelp(pages, builder, "Slash-Only", new String[][]{
                 {"/g", "Fast private guess for the active guess the music round"},

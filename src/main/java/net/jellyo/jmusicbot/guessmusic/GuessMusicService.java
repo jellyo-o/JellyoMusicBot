@@ -34,9 +34,12 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 import java.nio.file.Paths;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,6 +54,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
@@ -97,6 +101,10 @@ public class GuessMusicService
     public static final String SETTINGS_PREFIX = "jmb-guess:settings:";
     public static final String GUESS_MODAL = "jmb-guess:modal";
     public static final String GUESS_INPUT = "guess";
+    // Hosted-game: a host-only button + modal for privately feeding songs into the pool.
+    public static final String ADD_SONG_BUTTON = "jmb-guess:host-add";
+    public static final String ADD_SONG_MODAL = "jmb-guess:host-modal";
+    public static final String ADD_SONG_INPUT = "host-songs";
 
     private static final int DEFAULT_ROUNDS = 10;
     private static final int DEFAULT_TARGET_POINTS = 15;
@@ -107,6 +115,9 @@ public class GuessMusicService
     private static final int DEFAULT_HINT_REPLAYS = 3;
     private static final int DEFAULT_REPLAY_INTERVAL_SECONDS = 5;
     private static final int DEFAULT_FINAL_GUESS_SECONDS = 15;
+    // Hosted games end if the host adds no new song within this window once the pool runs dry.
+    private static final int DEFAULT_HOST_IDLE_SECONDS = 120;
+    private static final int MAX_HOST_SONGS_PER_ADD = 25;
     private static final int MAX_REFERENCES = 2000;
     private static final int MAX_LOAD_ATTEMPTS = 12;
     private static final long BETWEEN_ROUNDS_SECONDS = 5L;
@@ -405,6 +416,287 @@ public class GuessMusicService
                 + " A guess the music game is active, so I can't play music right now.";
     }
 
+    /** True while a started, un-paused HOSTED game is running in this guild (listeners earn listening XP). */
+    public boolean isHostedListeningActive(Guild guild)
+    {
+        if(guild == null)
+            return false;
+        Session session = sessions.get(guild.getIdLong());
+        return session != null && session.isHostedListening();
+    }
+
+    /** Reads only the options a hosted game exposes; defaults to an endless game the host controls. */
+    public Options hostOptionsFromSlash(SlashCommandInteractionEvent event)
+    {
+        Options options = Options.defaults();
+        options.hosted = true;
+        options.winMode = event.getOption("win") == null ? WinMode.ENDLESS : WinMode.parse(stringOption(event, "win"));
+        options.mode = GuessMode.parse(stringOption(event, "mode"));
+        options.inputMode = InputMode.parse(stringOption(event, "input"));
+        options.matchMode = MatchMode.parse(stringOption(event, "match"));
+        options.clipPosition = ClipPosition.parse(stringOption(event, "clip_position"));
+        options.clipSeconds = intOption(event, "seconds", options.clipSeconds);
+        options.roundTimeSeconds = intOption(event, "timeout", options.roundTimeSeconds);
+        options.guessesPerUser = intOption(event, "guesses", options.guessesPerUser);
+        options.winnersPerRound = intOption(event, "winners", options.winnersPerRound);
+        options.hintsEnabled = boolOption(event, "hints", options.hintsEnabled);
+        options.hostIdleSeconds = intOption(event, "idle", options.hostIdleSeconds);
+        options.rounds = intOption(event, "rounds", options.rounds);
+        options.targetPoints = intOption(event, "points", options.targetPoints);
+        options.playlistName = stringOption(event, "playlist");
+        return options.sanitize();
+    }
+
+    public Options hostOptionsFromPrefix(String args)
+    {
+        // optionsFromPrefix already honors win-mode tokens (bare `points`/`rounds`/`endless` and the
+        // `points=`/`rounds=` forms); only parse the host-specific extras here and default to an endless
+        // game (the host ends it) when the host gave no win-mode token at all.
+        Options options = optionsFromPrefix(args == null ? "" : args);
+        options.hosted = true;
+        boolean winSpecified = false;
+        if(args != null && !args.isBlank())
+        {
+            for(String token : args.trim().split("\\s+"))
+            {
+                String[] parts = token.split("=", 2);
+                String key = parts[0].toLowerCase(Locale.ROOT);
+                String value = parts.length == 2 ? parts[1] : "";
+                switch(key)
+                {
+                    case "points":
+                    case "rounds":
+                    case "endless":
+                        winSpecified = true;
+                        break;
+                    case "idle":
+                    case "idletimeout":
+                        if(parts.length == 2)
+                            options.hostIdleSeconds = parseInt(value, options.hostIdleSeconds);
+                        break;
+                    case "playlist":
+                        if(parts.length == 2)
+                            options.playlistName = value.replace('_', ' ');
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        if(!winSpecified)
+            options.winMode = WinMode.ENDLESS;
+        return options.sanitize();
+    }
+
+    /** Opens the private add-songs modal directly from a slash interaction (used by {@code /hostgame add}). */
+    public void openHostAddModal(SlashCommandInteractionEvent event)
+    {
+        Guild guild = event.getGuild();
+        Session session = guild == null ? null : sessions.get(guild.getIdLong());
+        if(session == null || session.isFinished())
+        {
+            event.reply(bot.getConfig().getWarning() + " There is no active hosted guess the music game.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+        if(!session.isHosted())
+        {
+            event.reply(bot.getConfig().getWarning() + " This is not a hosted game, so songs can't be added.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+        if(!session.canControl(event.getMember(), event.getUser()))
+        {
+            event.reply(bot.getConfig().getError() + " Only the host can add songs to this game.")
+                    .setEphemeral(true).queue();
+            return;
+        }
+        event.replyModal(hostAddModal()).queue();
+    }
+
+    /** Posts a host-only button that opens the private add-songs modal (used by the prefix command). */
+    public void promptHostAdd(CommandContext event)
+    {
+        Guild guild = event.getGuild();
+        Session session = guild == null ? null : sessions.get(guild.getIdLong());
+        if(session == null || session.isFinished())
+        {
+            event.replyWarning("There is no active hosted guess the music game.");
+            return;
+        }
+        if(!session.isHosted())
+        {
+            event.replyWarning("This is not a hosted game, so songs can't be added.");
+            return;
+        }
+        if(!session.canControl(event.getMember(), event.getAuthor()))
+        {
+            event.replyErrorEphemeral("Only the host can add songs to this game.");
+            return;
+        }
+        event.reply(new MessageCreateBuilder()
+                .setContent(bot.getConfig().getSuccess() + " Tap to add songs privately — only you will see them:")
+                .setComponents(ActionRow.of(Button.secondary(ADD_SONG_BUTTON, "➕ Add song")))
+                .build());
+    }
+
+    /**
+     * Resolves each host-supplied query (off-thread via the player manager) and appends the playable
+     * ones to the active hosted game's private queue, then replies once with a summary. The song text
+     * is never echoed publicly — callers reply ephemerally.
+     */
+    public void addHostSongs(Guild guild, User user, Member member, List<String> queries,
+                             java.util.function.Consumer<String> reply)
+    {
+        Session session = guild == null ? null : sessions.get(guild.getIdLong());
+        if(session == null || session.isFinished())
+        {
+            reply.accept(bot.getConfig().getWarning() + " There is no active hosted guess the music game.");
+            return;
+        }
+        if(!session.isHosted())
+        {
+            reply.accept(bot.getConfig().getWarning() + " This is not a hosted game, so songs can't be added.");
+            return;
+        }
+        if(!session.canControl(member, user))
+        {
+            reply.accept(bot.getConfig().getError() + " Only the host can add songs to this game.");
+            return;
+        }
+        List<String> cleaned = queries.stream()
+                .map(query -> query == null ? "" : query.trim())
+                .filter(query -> !query.isEmpty())
+                .distinct()
+                .limit(MAX_HOST_SONGS_PER_ADD)
+                .collect(Collectors.toList());
+        if(cleaned.isEmpty())
+        {
+            reply.accept(bot.getConfig().getError() + " Add at least one song — a title or URL per line.");
+            return;
+        }
+        new HostSongLoader(session, cleaned, reply).start();
+    }
+
+    private Modal hostAddModal()
+    {
+        TextInput input = TextInput.create(ADD_SONG_INPUT, TextInputStyle.PARAGRAPH)
+                .setPlaceholder("One song per line — a title or a URL")
+                .setRequiredRange(1, 1000)
+                .build();
+        return Modal.create(ADD_SONG_MODAL, "Add Songs (private)")
+                .addComponents(Label.of("Songs (one per line)", input))
+                .build();
+    }
+
+    private TrackReference hostReferenceFor(String query, String title, String author)
+    {
+        if(query == null || query.isBlank())
+            return null;
+        ParsedTitle parsed = GuessMusicTitleMatcher.parse(title, author);
+        List<String> queries = new ArrayList<>();
+        queries.add(query.trim());
+        // Fall back to title/artist searches if the exact identifier can't be reloaded at round time.
+        for(String alternative : preferredAudioQueries(parsed, null))
+            if(!queries.contains(alternative))
+                queries.add(alternative);
+        String refTitle = parsed.getTitle() == null || parsed.getTitle().isBlank() ? null : parsed.getTitle();
+        return new TrackReference(queries, refTitle, parsed.getArtist(), false, "host", true);
+    }
+
+    // Loads a batch of host queries concurrently (off the event thread) and replies once all resolve.
+    // Each query gets its own load handler so the success/failure summary stays correctly associated.
+    private final class HostSongLoader
+    {
+        private final Session session;
+        private final List<String> queries;
+        private final java.util.function.Consumer<String> reply;
+        private final AtomicInteger remaining;
+        private final AtomicInteger succeeded = new AtomicInteger();
+        private final List<String> failed = Collections.synchronizedList(new ArrayList<>());
+
+        private HostSongLoader(Session session, List<String> queries, java.util.function.Consumer<String> reply)
+        {
+            this.session = session;
+            this.queries = queries;
+            this.reply = reply;
+            this.remaining = new AtomicInteger(queries.size());
+        }
+
+        private void start()
+        {
+            for(String query : queries)
+                load(query);
+        }
+
+        private void load(String query)
+        {
+            bot.getPlayerManager().loadItemOrdered("hostguess-" + session.guildId, query, new AudioLoadResultHandler()
+            {
+                @Override
+                public void trackLoaded(AudioTrack track)
+                {
+                    accept(track, query);
+                }
+
+                @Override
+                public void playlistLoaded(AudioPlaylist playlist)
+                {
+                    AudioTrack pick = playlist.getSelectedTrack();
+                    if(pick == null && !playlist.getTracks().isEmpty())
+                        pick = playlist.getTracks().get(0);
+                    accept(pick, query);
+                }
+
+                @Override
+                public void noMatches()
+                {
+                    accept(null, query);
+                }
+
+                @Override
+                public void loadFailed(FriendlyException throwable)
+                {
+                    LOG.debug("Hosted guess music could not load '{}': {}", query, throwable.getMessage());
+                    accept(null, query);
+                }
+            });
+        }
+
+        private void accept(AudioTrack track, String query)
+        {
+            boolean ok = false;
+            if(track != null && track.getInfo() != null && !track.getInfo().isStream && !bot.getConfig().isTooLong(track))
+            {
+                TrackReference reference = hostReferenceFor(track.getInfo().uri, track.getInfo().title,
+                        track.getInfo().author);
+                ok = reference != null && session.enqueueHostSong(reference);
+            }
+            if(ok)
+                succeeded.incrementAndGet();
+            else
+                failed.add(query);
+            finishOne();
+        }
+
+        private void finishOne()
+        {
+            if(remaining.decrementAndGet() > 0)
+                return;
+            int ok = succeeded.get();
+            StringBuilder summary = new StringBuilder();
+            if(ok > 0)
+                summary.append(bot.getConfig().getSuccess()).append(" Added `").append(ok)
+                        .append("` song").append(ok == 1 ? "" : "s").append(" privately to the game.");
+            else
+                summary.append(bot.getConfig().getWarning()).append(" No songs could be added.");
+            if(!failed.isEmpty())
+                summary.append(" Couldn't find: ").append(failed.stream().limit(5)
+                        .map(query -> "`" + query + "`").collect(Collectors.joining(", ")));
+            reply.accept(summary.toString());
+        }
+    }
+
     public boolean handleButtonInteraction(ButtonInteractionEvent event)
     {
         String componentId = event.getComponentId();
@@ -458,6 +750,20 @@ public class GuessMusicService
             case GUESS_BUTTON:
                 session.ensurePlayer(event.getUser());
                 openGuessModal(event);
+                return true;
+            case ADD_SONG_BUTTON:
+                if(!session.isHosted())
+                {
+                    event.reply(bot.getConfig().getWarning() + " This isn't a hosted game.").setEphemeral(true).queue();
+                    return true;
+                }
+                if(!session.canControl(event.getMember(), event.getUser()))
+                {
+                    event.reply(bot.getConfig().getError() + " Only the host can add songs to this game.")
+                            .setEphemeral(true).queue();
+                    return true;
+                }
+                event.replyModal(hostAddModal()).queue();
                 return true;
             case IDK_BUTTON:
                 session.pass(event.getUser(), event.getChannel().getIdLong(),
@@ -518,8 +824,16 @@ public class GuessMusicService
 
     public boolean handleModalInteraction(ModalInteractionEvent event)
     {
-        if(!GUESS_MODAL.equals(event.getModalId()))
-            return false;
+        String modalId = event.getModalId();
+        if(GUESS_MODAL.equals(modalId))
+            return handleGuessModal(event);
+        if(ADD_SONG_MODAL.equals(modalId))
+            return handleHostAddModal(event);
+        return false;
+    }
+
+    private boolean handleGuessModal(ModalInteractionEvent event)
+    {
         if(event.getGuild() == null)
         {
             event.reply(bot.getConfig().getError() + " Guess the music can only be used in a server.")
@@ -538,6 +852,30 @@ public class GuessMusicService
         }
         session.submitGuess(event.getUser(), event.getMember(), event.getChannel().getIdLong(), answer,
                 response -> event.reply(response).setEphemeral(true).queue());
+        return true;
+    }
+
+    private boolean handleHostAddModal(ModalInteractionEvent event)
+    {
+        if(event.getGuild() == null)
+        {
+            event.reply(bot.getConfig().getError() + " Guess the music can only be used in a server.")
+                    .setEphemeral(true).queue();
+            return true;
+        }
+        ModalMapping value = event.getValue(ADD_SONG_INPUT);
+        String raw = value == null ? "" : value.getAsString();
+        List<String> lines = Arrays.stream(raw.split("\\r?\\n"))
+                .map(String::trim)
+                .filter(line -> !line.isEmpty())
+                .collect(Collectors.toList());
+        Guild guild = event.getGuild();
+        User user = event.getUser();
+        Member member = event.getMember();
+        // The host's song text never hits the channel: the modal input is private and the reply is ephemeral.
+        event.deferReply(true).queue(
+                hook -> addHostSongs(guild, user, member, lines, response -> hook.editOriginal(response).queue()),
+                failure -> LOG.debug("Failed to defer hosted add-song modal", failure));
         return true;
     }
 
@@ -699,10 +1037,13 @@ public class GuessMusicService
 
     private MessageCreateData buildLobbyMessage(Guild guild, long hostId, Options options, int playerCount)
     {
+        String description = options.hosted
+                ? "The host privately picks every song. Current music pauses while the game runs and resumes afterward."
+                : "Current music will pause while the game runs and resume afterward.";
         EmbedBuilder embed = new EmbedBuilder()
                 .setColor(guild.getSelfMember().getColor())
-                .setTitle("Guess The Music")
-                .setDescription("Current music will pause while the game runs and resume afterward.")
+                .setTitle(options.hosted ? "Guess The Music — Hosted" : "Guess The Music")
+                .setDescription(description)
                 .addField("Host", "<@" + hostId + ">", true)
                 .addField("Players", "`" + Math.max(1, playerCount) + "` joined", true)
                 .addField("Mode", options.mode.displayName + " | " + options.winMode.displayName, true)
@@ -711,12 +1052,19 @@ public class GuessMusicService
                 .addField("Clip", options.clipSummary(), true)
                 .addField("Hints", options.hintSummary(), true)
                 .addField("Pool", options.poolSummary(), false);
-        return new MessageCreateBuilder()
-                .setEmbeds(embed.build())
-                .setComponents(ActionRow.of(
+        ActionRow controls = options.hosted
+                ? ActionRow.of(
                         Button.success(START_BUTTON, "Start"),
                         Button.primary(JOIN_BUTTON, "Join"),
-                        Button.secondary(CANCEL_BUTTON, "Cancel")))
+                        Button.secondary(ADD_SONG_BUTTON, "➕ Add song"),
+                        Button.secondary(CANCEL_BUTTON, "Cancel"))
+                : ActionRow.of(
+                        Button.success(START_BUTTON, "Start"),
+                        Button.primary(JOIN_BUTTON, "Join"),
+                        Button.secondary(CANCEL_BUTTON, "Cancel"));
+        return new MessageCreateBuilder()
+                .setEmbeds(embed.build())
+                .setComponents(controls)
                 .build();
     }
 
@@ -1150,6 +1498,10 @@ public class GuessMusicService
         private boolean preparing = false;       // a load/prepare pipeline is currently in flight
         private final List<TrackReference> knownReferences = new ArrayList<>();
         private final List<TrackReference> discoveryReferences = new ArrayList<>();
+        // Hosted mode: songs the host privately queued, played in the order they were added (FIFO).
+        private final Deque<TrackReference> hostQueue = new ArrayDeque<>();
+        private ScheduledFuture<?> hostIdleTimeout;
+        private boolean hostWaitActive = false;
         private boolean lobby = true;
         private boolean finished = false;
         private long lobbyMessageId;
@@ -1216,6 +1568,25 @@ public class GuessMusicService
 
             Guild guild = event.getGuild();
             AudioHandler handler = bot.getPlayerManager().setUpHandler(guild);
+
+            if(options.hosted)
+            {
+                // The bot never builds a pool for a hosted game: the host feeds every song privately.
+                // Songs added during the lobby are already in hostQueue; an optional playlist seeds more.
+                seedHostQueueFromPlaylist(guild);
+                handler.beginGuessMusicMode();
+                lobby = false;
+                ensurePlayer(event.getUser());
+                String lead = hostQueue.isEmpty()
+                        ? " Hosted guess the music is starting. Use **➕ Add song** to add songs privately — the round begins once you add one."
+                        : " Hosted guess the music is starting with `" + hostQueue.size() + "` song"
+                                + (hostQueue.size() == 1 ? "" : "s") + " queued. Use **➕ Add song** to add more privately.";
+                event.editMessage(bot.getConfig().getSuccess() + lead)
+                        .setComponents(Collections.emptyList()).queue();
+                nextRound("Game started.");
+                return;
+            }
+
             knownReferences.clear();
             knownReferences.addAll(buildKnownReferences(guild, hostId, handler, options));
             List<String> seedArtists = discoverySeedArtists(knownReferences, options);
@@ -1771,7 +2142,10 @@ public class GuessMusicService
                     cancelHintTimer();
                 score.points += points;
                 score.correct++;
-                bot.getEconomyService().recordGuessCorrect(user.getIdLong(), channel());
+                // Hosted games grant NO coins/XP for guessing (the host could feed easy songs); players
+                // still earn passive listening XP. Only bot-run games reward correct guesses.
+                if(!options.hosted)
+                    bot.getEconomyService().recordGuessCorrect(user.getIdLong(), channel());
                 refreshRoundMessage();
                 reply.accept(responseLead(bot.getConfig().getSuccess(), joined)
                         + " Correct. You earned `" + points + "` point" + (points == 1 ? "" : "s") + " this round.");
@@ -1917,7 +2291,8 @@ public class GuessMusicService
             roundNumber++;
             // The next song is usually already prefetched during the previous round, so only tell the
             // user we are loading when nothing is ready and nothing is in flight (e.g. the first round).
-            if(preparedRound == null && !preparing)
+            // A hosted game with a dry queue shows its own "add a song" prompt instead.
+            if(preparedRound == null && !preparing && !(options.hosted && hostQueue.isEmpty()))
             {
                 MessageChannel channel = channel();
                 if(channel != null)
@@ -1948,7 +2323,116 @@ public class GuessMusicService
                 return;
             if(options.winMode == WinMode.ROUNDS && roundNumber >= options.rounds)
                 return; // the current round is the last one
+            if(options.hosted && hostQueue.isEmpty())
+                return; // nothing to prefetch yet; we'll wait for the host when the round actually ends
             startPreparePipeline();
+        }
+
+        private synchronized boolean isHosted()
+        {
+            return options.hosted;
+        }
+
+        /** True while a started, un-paused hosted game is running — listeners earn normal listening XP then. */
+        private synchronized boolean isHostedListening()
+        {
+            return options.hosted && !lobby && !finished && !pausedForNoListeners;
+        }
+
+        // Hosted mode: when the host's queue runs dry, pause the game and wait for them to add another
+        // song. If one arrives within the idle window the game resumes; otherwise it ends.
+        private synchronized void beginHostWait()
+        {
+            if(finished || !options.hosted || hostWaitActive)
+                return;
+            hostWaitActive = true;
+            cancelHostIdleTimer();
+            long idleMs = options.hostIdleMillis();
+            MessageChannel channel = channel();
+            if(channel != null)
+                channel.sendMessage(bot.getConfig().getWarning()
+                        + " Out of songs. Use **➕ Add song** to keep going — the game ends in `"
+                        + TimeUtil.formatTime(idleMs) + "` if no song is added.").queue();
+            hostIdleTimeout = bot.getThreadpool().schedule(this::onHostIdleTimeout, idleMs, TimeUnit.MILLISECONDS);
+        }
+
+        private void onHostIdleTimeout()
+        {
+            boolean shouldFinish = false;
+            synchronized(this)
+            {
+                if(finished || !hostWaitActive)
+                    return;
+                if(!hostQueue.isEmpty())
+                {
+                    // A song slipped in between the timer firing and acquiring the lock; resume instead.
+                    resumeFromHostWait();
+                    return;
+                }
+                // Commit to ending while still holding the lock so a concurrent enqueueHostSong can't
+                // resume (and then have us tear down) a game we've already decided to end: clearing
+                // hostWaitActive makes its `if(hostWaitActive)` branch fall through to a plain append.
+                hostWaitActive = false;
+                cancelHostIdleTimer();
+                shouldFinish = true;
+            }
+            if(shouldFinish)
+                finish("The hosted game ended because no new song was added in time.");
+        }
+
+        private synchronized void cancelHostIdleTimer()
+        {
+            if(hostIdleTimeout != null)
+            {
+                hostIdleTimeout.cancel(false);
+                hostIdleTimeout = null;
+            }
+        }
+
+        private synchronized void resumeFromHostWait()
+        {
+            if(!hostWaitActive)
+                return;
+            hostWaitActive = false;
+            cancelHostIdleTimer();
+            requestRoundToPlay();
+        }
+
+        // Appends a resolved host pick to the FIFO queue (under the session lock); if the game is sitting
+        // idle waiting for songs, it resumes. Returns false only if the game is already over.
+        private synchronized boolean enqueueHostSong(TrackReference reference)
+        {
+            if(finished || reference == null)
+                return false;
+            hostQueue.addLast(reference);
+            if(hostWaitActive)
+                resumeFromHostWait();
+            return true;
+        }
+
+        private synchronized void seedHostQueueFromPlaylist(Guild guild)
+        {
+            if(options.playlistName == null || options.playlistName.isBlank())
+                return;
+            try
+            {
+                for(PlaylistSummary playlist : bot.getUserPlaylistService().listPlaylists(hostId))
+                {
+                    if(!playlist.getName().equalsIgnoreCase(options.playlistName))
+                        continue;
+                    for(PlaylistTrack item : bot.getUserPlaylistService().listItems(playlist.getId()))
+                    {
+                        TrackReference ref = hostReferenceFor(item.getLoadQuery(), item.getTitle(), item.getAuthor());
+                        if(ref != null)
+                            hostQueue.addLast(ref);
+                    }
+                    break;
+                }
+            }
+            catch(PlaylistException ex)
+            {
+                LOG.debug("Failed to seed hosted guess music from playlist '{}': {}", options.playlistName, ex.getMessage());
+            }
         }
 
         private synchronized void startPreparePipeline()
@@ -1997,6 +2481,15 @@ public class GuessMusicService
             TrackReference reference = chooseReference();
             if(reference == null)
             {
+                if(options.hosted)
+                {
+                    // A hosted game doesn't end when the pool empties: wait for the host to add another
+                    // song (and end only if they don't within the idle window).
+                    preparing = false;
+                    if(awaitingRound)
+                        beginHostWait();
+                    return;
+                }
                 abortOrFinish("The game ran out of playable songs.");
                 return;
             }
@@ -2021,6 +2514,8 @@ public class GuessMusicService
 
         private TrackReference chooseReference()
         {
+            if(options.hosted)
+                return hostQueue.poll(); // FIFO: play host picks in the order they were added; null when dry
             boolean discovery = !discoveryReferences.isEmpty() && random.nextInt(100) >= options.knownPercent;
             List<TrackReference> primary = discovery ? discoveryReferences : knownReferences;
             List<TrackReference> fallback = discovery ? knownReferences : discoveryReferences;
@@ -2291,6 +2786,14 @@ public class GuessMusicService
                     .addField("Hints", options.hintSummary(), true)
                     .addField("Round Ends", options.roundTimeSummary(), true)
                     .addField("Leaderboard", leaderboard(5), false);
+            ActionRow hostControls = options.hosted
+                    ? ActionRow.of(
+                            Button.secondary(ADD_SONG_BUTTON, "➕ Add song"),
+                            Button.secondary(REVEAL_BUTTON, "Reveal"),
+                            Button.danger(STOP_BUTTON, "Stop"))
+                    : ActionRow.of(
+                            Button.secondary(REVEAL_BUTTON, "Reveal"),
+                            Button.danger(STOP_BUTTON, "Stop"));
             return new MessageCreateBuilder()
                     .setEmbeds(embed.build())
                     .setComponents(
@@ -2300,9 +2803,7 @@ public class GuessMusicService
                                     Button.secondary(REPLAY_BUTTON, "Play Again"),
                                     Button.secondary(CLIP_SHORTER_BUTTON, "Shorter"),
                                     Button.secondary(CLIP_LONGER_BUTTON, "Longer")),
-                            ActionRow.of(
-                                    Button.secondary(REVEAL_BUTTON, "Reveal"),
-                                    Button.danger(STOP_BUTTON, "Stop")))
+                            hostControls)
                     .build();
         }
 
@@ -2940,6 +3441,8 @@ public class GuessMusicService
             awaitingRound = false;
             preparing = false;
             preparedRound = null;
+            hostWaitActive = false;
+            cancelHostIdleTimer();
             cancelRoundTimers();
             cancelAnswerTimer();
             if(lobby)
@@ -2963,6 +3466,10 @@ public class GuessMusicService
          */
         private void awardEconomyRewards()
         {
+            // Hosted games are excluded from all guess economy rewards (play/win/correct) to prevent
+            // farming with hand-picked songs; participants only keep their passive listening XP.
+            if(options.hosted)
+                return;
             var economy = bot.getEconomyService();
             if(economy == null || !economy.isEnabled() || scores.isEmpty())
                 return;
@@ -2982,6 +3489,8 @@ public class GuessMusicService
             awaitingRound = false;
             preparing = false;
             preparedRound = null;
+            hostWaitActive = false;
+            cancelHostIdleTimer();
             cancelAnswerTimer();
             sessions.remove(guildId, this);
         }
@@ -3197,6 +3706,13 @@ public class GuessMusicService
             return false;
         if(bot.getConfig().isTooLong(track))
             return false;
+        if(reference.host)
+        {
+            // The host explicitly chose this song: trust it. Skip cover/remix/live/dedupe vetting and
+            // the artist/title match (those exist to keep the bot's auto-discovery on-target), and allow
+            // the host to repeat a song. Only require a usable title for the answer matcher.
+            return hasUsableTitle(GuessMusicTitleMatcher.parse(track.getInfo().title, track.getInfo().author));
+        }
         long duration = track.getDuration();
         if(duration == Long.MAX_VALUE || duration < 20_000L || duration > 15 * 60_000L)
             return false;
@@ -3425,14 +3941,24 @@ public class GuessMusicService
         private final String author;
         private final boolean discovery;
         private final String source;
+        // A song the host explicitly chose for a hosted game: it bypasses the cover/remix/dedupe
+        // vetting (the host's pick is their choice) and never repopulates the bot's discovery pool.
+        private final boolean host;
 
         private TrackReference(List<String> queries, String title, String author, boolean discovery, String source)
+        {
+            this(queries, title, author, discovery, source, false);
+        }
+
+        private TrackReference(List<String> queries, String title, String author, boolean discovery, String source,
+                               boolean host)
         {
             this.queries = queries;
             this.title = title;
             this.author = author;
             this.discovery = discovery;
             this.source = source;
+            this.host = host;
         }
 
         private String normalizedKey()
@@ -3537,6 +4063,9 @@ public class GuessMusicService
         private int finalGuessSeconds = DEFAULT_FINAL_GUESS_SECONDS;
         private String playlistName;
         private String artistName;
+        // Hosted mode: the host supplies every song (privately) instead of the bot building a pool.
+        private boolean hosted = false;
+        private int hostIdleSeconds = DEFAULT_HOST_IDLE_SECONDS;
 
         public static Options defaults()
         {
@@ -3561,9 +4090,15 @@ public class GuessMusicService
             hintReplays = clamp(hintReplays, 0, 8);
             replayIntervalSeconds = clamp(replayIntervalSeconds, 5, 60);
             finalGuessSeconds = clamp(finalGuessSeconds, 5, 60);
+            hostIdleSeconds = clamp(hostIdleSeconds, 15, 1800);
             playlistName = normalizeOptional(playlistName);
             artistName = normalizeArtistFilter(artistName);
             return this;
+        }
+
+        private long hostIdleMillis()
+        {
+            return hostIdleSeconds * 1000L;
         }
 
         private long clipMillis()
@@ -3680,6 +4215,8 @@ public class GuessMusicService
 
         private String poolSummary()
         {
+            if(hosted)
+                return "`host-picked` songs added privately by the host";
             String pool = "`" + knownPercent + "%` known songs, discovery from same artists";
             return hasArtistFilter() ? pool + ", artists " + artistSummary() : pool;
         }
