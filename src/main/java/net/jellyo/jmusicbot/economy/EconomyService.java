@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.EnumSet;
+import java.util.concurrent.ThreadLocalRandom;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
@@ -59,6 +60,17 @@ public class EconomyService
     public static final long GUESS_WIN_COINS = 75;
     public static final long GUESS_WIN_XP = 60;
     public static final long GAME_PLAYED_XP = 10;
+    // Work: a short-cooldown earner. Yield is kept well below the house-edge burn a gambler
+    // pays, so it tops players up without out-minting the sinks.
+    public static final long WORK_COOLDOWN_SECONDS = 1200; // 20 minutes
+    public static final long WORK_MIN_COINS = 50;
+    public static final long WORK_MAX_COINS = 250;
+    public static final long WORK_COINS_PER_LEVEL = 2;
+    public static final long WORK_MAX_LEVEL_BONUS = 200;
+    public static final long WORK_XP = 15;
+    // Trivia: a short-cooldown quiz. Correct answers pay by difficulty.
+    public static final long TRIVIA_COOLDOWN_SECONDS = 600; // 10 minutes
+    public static final long TRIVIA_XP = 20;
 
     private final EconomyStore store;
     private final boolean enabled;
@@ -235,6 +247,67 @@ public class EconomyService
         return DailyResult.claimed(amount, DAILY_XP, streak, balance);
     }
 
+    // ---- work (cooldown earner) --------------------------------------------
+
+    public WorkResult claimWork(User user, MessageChannel channel)
+    {
+        if(!isEnabled() || user == null)
+            return WorkResult.disabled();
+        long userId = user.getIdLong();
+        ensureUser(user);
+        long nowEpoch = Instant.now().getEpochSecond();
+        long amount;
+        long balance;
+        // Atomic read-decide-write, mirroring claimDaily, so two quick /work calls can't both pay.
+        synchronized(store)
+        {
+            UserProfile profile = store.getProfile(userId);
+            CooldownDecision decision = decideCooldown(profile.getLastWorkAt(), nowEpoch, WORK_COOLDOWN_SECONDS);
+            if(!decision.isReady())
+                return WorkResult.onCooldown(decision.getSecondsUntilNext());
+            int level = LevelCurve.levelForXp(profile.getXp());
+            long levelBonus = Math.min(WORK_MAX_LEVEL_BONUS, (long) level * WORK_COINS_PER_LEVEL);
+            int span = (int) (WORK_MAX_COINS - WORK_MIN_COINS + 1);
+            amount = WORK_MIN_COINS + ThreadLocalRandom.current().nextInt(span) + levelBonus;
+            store.setLastWorkAt(userId, nowEpoch);
+            balance = store.addCurrency(userId, amount);
+        }
+        addXpWithLevelCheck(userId, WORK_XP, channel);
+        notifyObserver(userId, EconomyEvent.GAME_PLAYED, channel); // triggers achievement re-evaluation
+        return WorkResult.claimed(amount, WORK_XP, balance);
+    }
+
+    // ---- trivia (cooldown quiz) --------------------------------------------
+
+    /**
+     * Atomically checks the trivia cooldown and, if ready, stamps it (so the
+     * attempt is consumed whether or not the answer is right). Returns the seconds
+     * remaining if on cooldown, or 0 if the attempt was started.
+     */
+    public long tryStartTrivia(User user)
+    {
+        if(!isEnabled() || user == null)
+            return 0;
+        long userId = user.getIdLong();
+        ensureUser(user);
+        long nowEpoch = Instant.now().getEpochSecond();
+        synchronized(store)
+        {
+            UserProfile profile = store.getProfile(userId);
+            CooldownDecision decision = decideCooldown(profile.getLastTriviaAt(), nowEpoch, TRIVIA_COOLDOWN_SECONDS);
+            if(!decision.isReady())
+                return decision.getSecondsUntilNext();
+            store.setLastTriviaAt(userId, nowEpoch);
+            return 0;
+        }
+    }
+
+    /** Awards a correct trivia answer (coins by difficulty + XP), announcing a level-up. */
+    public long rewardTrivia(long userId, long coins, MessageChannel channel)
+    {
+        return award(userId, coins, TRIVIA_XP, channel);
+    }
+
     // ---- gambling ----------------------------------------------------------
 
     /** Atomically removes a wager from the balance. Returns false if unaffordable. */
@@ -402,6 +475,36 @@ public class EconomyService
         }
     }
 
+    /**
+     * Pure fixed-interval cooldown decision (elapsed-seconds based), shared by
+     * {@code /work} and {@code /trivia}. Claimable when at least
+     * {@code cooldownSeconds} have elapsed since {@code lastEpoch}.
+     */
+    public static CooldownDecision decideCooldown(long lastEpoch, long nowEpoch, long cooldownSeconds)
+    {
+        if(lastEpoch <= 0)
+            return new CooldownDecision(true, 0);
+        long readyAt = lastEpoch + cooldownSeconds;
+        if(nowEpoch >= readyAt)
+            return new CooldownDecision(true, 0);
+        return new CooldownDecision(false, readyAt - nowEpoch);
+    }
+
+    public static final class CooldownDecision
+    {
+        private final boolean ready;
+        private final long secondsUntilNext;
+
+        CooldownDecision(boolean ready, long secondsUntilNext)
+        {
+            this.ready = ready;
+            this.secondsUntilNext = secondsUntilNext;
+        }
+
+        public boolean isReady() { return ready; }
+        public long getSecondsUntilNext() { return secondsUntilNext; }
+    }
+
     /** Immutable result of a settled casino round, for building the reply embed. */
     public static final class GameOutcome
     {
@@ -434,6 +537,38 @@ public class EconomyService
         public long getXpAwarded() { return xpAwarded; }
         public long getNewBalance() { return newBalance; }
         public boolean isWin() { return net > 0; }
+    }
+
+    public static final class WorkResult
+    {
+        private final boolean enabled;
+        private final boolean worked;
+        private final long amount;
+        private final long xp;
+        private final long newBalance;
+        private final long secondsUntilNext;
+
+        private WorkResult(boolean enabled, boolean worked, long amount, long xp,
+                           long newBalance, long secondsUntilNext)
+        {
+            this.enabled = enabled;
+            this.worked = worked;
+            this.amount = amount;
+            this.xp = xp;
+            this.newBalance = newBalance;
+            this.secondsUntilNext = secondsUntilNext;
+        }
+
+        static WorkResult disabled() { return new WorkResult(false, false, 0, 0, 0, 0); }
+        static WorkResult claimed(long amount, long xp, long balance) { return new WorkResult(true, true, amount, xp, balance, 0); }
+        static WorkResult onCooldown(long secondsUntilNext) { return new WorkResult(true, false, 0, 0, 0, secondsUntilNext); }
+
+        public boolean isEnabled() { return enabled; }
+        public boolean isWorked() { return worked; }
+        public long getAmount() { return amount; }
+        public long getXp() { return xp; }
+        public long getNewBalance() { return newBalance; }
+        public long getSecondsUntilNext() { return secondsUntilNext; }
     }
 
     public static final class DailyResult

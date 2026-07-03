@@ -95,6 +95,18 @@ public class SlashCommandListenerTest
     }
 
     @Test
+    public void earnerCommandsHaveSlashCommands()
+    {
+        Set<String> names = new HashSet<>();
+        for (SlashCommandData command : SlashCommandListener.buildSlashCommands())
+            names.add(command.getName());
+
+        String[] earners = {"work", "trivia", "duel", "lottery"};
+        for (String earner : earners)
+            assertTrue("Missing earner slash command: " + earner, names.contains(earner));
+    }
+
+    @Test
     public void slashCommandsAreGuildOnly()
     {
         for (SlashCommandData command : SlashCommandListener.buildSlashCommands())

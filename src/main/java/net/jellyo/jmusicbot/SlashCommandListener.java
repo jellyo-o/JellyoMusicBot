@@ -42,17 +42,21 @@ import com.jagrosh.jmusicbot.commands.economy.BlackjackCmd;
 import com.jagrosh.jmusicbot.commands.economy.CrashCmd;
 import com.jagrosh.jmusicbot.commands.economy.DailyCmd;
 import com.jagrosh.jmusicbot.commands.economy.DoubleCmd;
+import com.jagrosh.jmusicbot.commands.economy.DuelCmd;
 import com.jagrosh.jmusicbot.commands.economy.GambleCmd;
 import com.jagrosh.jmusicbot.commands.economy.HiLoCmd;
 import com.jagrosh.jmusicbot.commands.economy.KenoCmd;
 import com.jagrosh.jmusicbot.commands.economy.LeaderboardCmd;
+import com.jagrosh.jmusicbot.commands.economy.LotteryCmd;
 import com.jagrosh.jmusicbot.commands.economy.MinesCmd;
 import com.jagrosh.jmusicbot.commands.economy.PredictCmd;
 import com.jagrosh.jmusicbot.commands.economy.RouletteCmd;
 import com.jagrosh.jmusicbot.commands.economy.RpsCmd;
 import com.jagrosh.jmusicbot.commands.economy.ScratchCmd;
 import com.jagrosh.jmusicbot.commands.economy.StatsCmd;
+import com.jagrosh.jmusicbot.commands.economy.TriviaCmd;
 import com.jagrosh.jmusicbot.commands.economy.WheelCmd;
+import com.jagrosh.jmusicbot.commands.economy.WorkCmd;
 import com.jagrosh.jmusicbot.lyrics.InputValidator;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
@@ -179,6 +183,10 @@ public class SlashCommandListener extends ListenerAdapter
     private final CrashCmd crashCmd;
     private final MinesCmd minesCmd;
     private final BlackjackCmd blackjackCmd;
+    private final WorkCmd workCmd;
+    private final TriviaCmd triviaCmd;
+    private final DuelCmd duelCmd;
+    private final LotteryCmd lotteryCmd;
     private final LeaderboardCmd leaderboardCmd;
     private final AchievementsCmd achievementsCmd;
     private final AvoidCmd avoidCmd;
@@ -224,6 +232,10 @@ public class SlashCommandListener extends ListenerAdapter
         this.crashCmd = new CrashCmd(bot);
         this.minesCmd = new MinesCmd(bot);
         this.blackjackCmd = new BlackjackCmd(bot);
+        this.workCmd = new WorkCmd(bot);
+        this.triviaCmd = new TriviaCmd(bot);
+        this.duelCmd = new DuelCmd(bot);
+        this.lotteryCmd = new LotteryCmd(bot);
         this.leaderboardCmd = new LeaderboardCmd(bot);
         this.achievementsCmd = new AchievementsCmd(bot);
         this.avoidCmd = new AvoidCmd(bot);
@@ -573,6 +585,16 @@ public class SlashCommandListener extends ListenerAdapter
                         new OptionData(OptionType.INTEGER, "bombs", "Number of mines (1-10)", false).setRequiredRange(1, 10)));
         commands.add(slashCommand("blackjack", "Play blackjack against the dealer")
                 .addOptions(new OptionData(OptionType.INTEGER, "amount", "Amount to bet", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("work", "Earn coins with a quick job (short cooldown)"));
+        commands.add(slashCommand("trivia", "Answer a trivia question for coins (short cooldown)"));
+        commands.add(slashCommand("duel", "Challenge another player to a coinflip duel")
+                .addOptions(new OptionData(OptionType.USER, "opponent", "Who to duel", true),
+                        new OptionData(OptionType.INTEGER, "amount", "The ante", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("lottery", "Buy tickets or check the server lottery")
+                .addOptions(new OptionData(OptionType.STRING, "action", "Buy tickets or view the pot", false)
+                                .addChoice("info", "info").addChoice("buy", "buy"),
+                        new OptionData(OptionType.INTEGER, "tickets", "How many tickets to buy", false)
+                                .setRequiredRange(1, 100)));
         commands.add(slashCommand("leaderboard", "Show the global leaderboard")
                 .addOptions(new OptionData(OptionType.STRING, "metric", "Ranking metric", false)
                         .addChoice("coins", "coins")
@@ -784,6 +806,12 @@ public class SlashCommandListener extends ListenerAdapter
                     event.getOption("amount").getAsLong() + optionalLongSuffix(event, "bombs")); break;
             case "blackjack": handleEconomyCommand(event, blackjackCmd,
                     String.valueOf(event.getOption("amount").getAsLong())); break;
+            case "work": handleEconomyCommand(event, workCmd, ""); break;
+            case "trivia": handleEconomyCommand(event, triviaCmd, ""); break;
+            case "duel": handleEconomyCommand(event, duelCmd,
+                    event.getOption("opponent").getAsUser().getId() + " " + event.getOption("amount").getAsLong()); break;
+            case "lottery": handleEconomyCommand(event, lotteryCmd,
+                    getOptionalStringArg(event, "action") + optionalLongSuffix(event, "tickets")); break;
             case "leaderboard": handleEconomyCommand(event, leaderboardCmd, getOptionalStringArg(event, "metric")); break;
             case "achievements": handleEconomyCommand(event, achievementsCmd, userArg(event)); break;
             case "avoid": handleSharedDJCommand(event, avoidCmd, getOptionalStringArg(event, "song")); break;

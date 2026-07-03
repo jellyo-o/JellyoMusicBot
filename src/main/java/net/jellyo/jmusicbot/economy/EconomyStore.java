@@ -74,6 +74,8 @@ public class EconomyStore
                     + "rebate_day INTEGER NOT NULL DEFAULT 0,"
                     + "daily_streak INTEGER NOT NULL DEFAULT 0,"
                     + "last_daily_at INTEGER NOT NULL DEFAULT 0,"
+                    + "last_work_at INTEGER NOT NULL DEFAULT 0,"
+                    + "last_trivia_at INTEGER NOT NULL DEFAULT 0,"
                     + "last_seen_at INTEGER NOT NULL DEFAULT 0,"
                     + "last_username TEXT,"
                     + "last_avatar TEXT,"
@@ -96,6 +98,8 @@ public class EconomyStore
         ensureColumn("user_profiles", "biggest_win", "INTEGER NOT NULL DEFAULT 0");
         ensureColumn("user_profiles", "rebate_accrued_today", "INTEGER NOT NULL DEFAULT 0");
         ensureColumn("user_profiles", "rebate_day", "INTEGER NOT NULL DEFAULT 0");
+        ensureColumn("user_profiles", "last_work_at", "INTEGER NOT NULL DEFAULT 0");
+        ensureColumn("user_profiles", "last_trivia_at", "INTEGER NOT NULL DEFAULT 0");
         LOG.info("Economy database ready in unified database at {}", dbPath.toAbsolutePath());
     }
 
@@ -355,6 +359,33 @@ public class EconomyStore
         }
     }
 
+    public synchronized void setLastWorkAt(long userId, long epoch)
+    {
+        setTimestamp(userId, "last_work_at", epoch);
+    }
+
+    public synchronized void setLastTriviaAt(long userId, long epoch)
+    {
+        setTimestamp(userId, "last_trivia_at", epoch);
+    }
+
+    private void setTimestamp(long userId, String column, long epoch)
+    {
+        ensureRow(userId);
+        try(PreparedStatement ps = connection.prepareStatement(
+                "UPDATE user_profiles SET " + column + "=?, updated_at=? WHERE user_id=?"))
+        {
+            ps.setLong(1, epoch);
+            ps.setLong(2, now());
+            ps.setLong(3, userId);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to update " + column, ex);
+        }
+    }
+
     // ---- achievements ------------------------------------------------------
 
     public synchronized boolean hasAchievement(long userId, String achievementId)
@@ -605,6 +636,8 @@ public class EconomyStore
                 .biggestWin(rs.getLong("biggest_win"))
                 .dailyStreak(rs.getInt("daily_streak"))
                 .lastDailyAt(rs.getLong("last_daily_at"))
+                .lastWorkAt(rs.getLong("last_work_at"))
+                .lastTriviaAt(rs.getLong("last_trivia_at"))
                 .lastSeenAt(rs.getLong("last_seen_at"))
                 .username(rs.getString("last_username"))
                 .avatar(rs.getString("last_avatar"))

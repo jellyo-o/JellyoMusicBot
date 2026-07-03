@@ -262,6 +262,10 @@ public class JMusicBot
                         new CrashCmd(bot),
                         new MinesCmd(bot),
                         new BlackjackCmd(bot),
+                        new WorkCmd(bot),
+                        new TriviaCmd(bot),
+                        new DuelCmd(bot),
+                        new LotteryCmd(bot),
                         new LeaderboardCmd(bot),
                         new AchievementsCmd(bot),
 

@@ -38,6 +38,8 @@ public final class UserProfile
     private final long biggestWin;
     private final int dailyStreak;
     private final long lastDailyAt;
+    private final long lastWorkAt;
+    private final long lastTriviaAt;
     private final long lastSeenAt;
     private final String username;
     private final String avatar;
@@ -60,6 +62,8 @@ public final class UserProfile
         this.biggestWin = b.biggestWin;
         this.dailyStreak = b.dailyStreak;
         this.lastDailyAt = b.lastDailyAt;
+        this.lastWorkAt = b.lastWorkAt;
+        this.lastTriviaAt = b.lastTriviaAt;
         this.lastSeenAt = b.lastSeenAt;
         this.username = b.username;
         this.avatar = b.avatar;
@@ -93,6 +97,8 @@ public final class UserProfile
     public long getBiggestWin() { return biggestWin; }
     public int getDailyStreak() { return dailyStreak; }
     public long getLastDailyAt() { return lastDailyAt; }
+    public long getLastWorkAt() { return lastWorkAt; }
+    public long getLastTriviaAt() { return lastTriviaAt; }
     public long getLastSeenAt() { return lastSeenAt; }
     public String getUsername() { return username; }
     public String getAvatar() { return avatar; }
@@ -119,6 +125,8 @@ public final class UserProfile
         private long biggestWin;
         private int dailyStreak;
         private long lastDailyAt;
+        private long lastWorkAt;
+        private long lastTriviaAt;
         private long lastSeenAt;
         private String username;
         private String avatar;
@@ -140,6 +148,8 @@ public final class UserProfile
         public Builder biggestWin(long v) { this.biggestWin = v; return this; }
         public Builder dailyStreak(int v) { this.dailyStreak = v; return this; }
         public Builder lastDailyAt(long v) { this.lastDailyAt = v; return this; }
+        public Builder lastWorkAt(long v) { this.lastWorkAt = v; return this; }
+        public Builder lastTriviaAt(long v) { this.lastTriviaAt = v; return this; }
         public Builder lastSeenAt(long v) { this.lastSeenAt = v; return this; }
         public Builder username(String v) { this.username = v; return this; }
         public Builder avatar(String v) { this.avatar = v; return this; }

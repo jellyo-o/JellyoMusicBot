@@ -54,9 +54,9 @@ public final class GameButtons
                     .setEphemeral(true).queue(x -> {}, t -> {});
             return true;
         }
-        if(event.getUser().getIdLong() != session.getOwnerId())
+        if(!session.canPress(event.getUser().getIdLong(), action))
         {
-            event.reply(bot.getConfig().getError() + " This isn't your game — start your own with the game command.")
+            event.reply(bot.getConfig().getError() + " This button isn't for you.")
                     .setEphemeral(true).queue(x -> {}, t -> {});
             return true;
         }
