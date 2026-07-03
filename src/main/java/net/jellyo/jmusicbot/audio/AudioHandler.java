@@ -920,8 +920,8 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     }
 
     /**
-     * Warms the lyrics cache for the next few queued songs (LRCLIB-only) so a later
-     * /lyrics or auto-show is instant. Runs only when the guild has preloading on;
+     * Warms the lyrics cache for the next few queued songs (LRCLIB then rate-limited Genius)
+     * so a later /lyrics or auto-show is instant. Runs only when the guild has preloading on;
      * the actual fetching happens on Bot's dedicated lyrics-preload pool.
      */
     private void maybePreloadUpcomingLyrics()

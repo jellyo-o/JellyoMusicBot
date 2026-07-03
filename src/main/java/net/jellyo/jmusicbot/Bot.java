@@ -89,7 +89,9 @@ public class Bot
     private final ListeningRewardService listeningRewardService;
     private final AvoidStore avoidStore;
     private final CrashRecoveryService crashRecoveryService;
-    private final LyricsService lyricsService;
+    private volatile LyricsService lyricsService;
+    private final Object lyricsInitLock = new Object();
+    private volatile long lyricsInitAttemptAt = 0L;
     private final LyricsPreloader lyricsPreloader;
     private final ExecutorService lyricsPreloadPool;
 
@@ -231,7 +233,8 @@ public class Bot
         this.listeningRewardService.init();
 
         // Shared lyrics service (one SQLite-backed cache) used by /lyrics, the panel
-        // button, preloading, and auto-show. Failure here must not abort startup.
+        // button, preloading, and auto-show. Failure here must not abort startup — it is
+        // retried lazily by getLyricsService().
         LyricsService ls = null;
         try
         {
@@ -239,21 +242,26 @@ public class Bot
         }
         catch(Exception ex)
         {
-            LOG.warn("Failed to initialize lyrics service; lyrics features disabled", ex);
+            LOG.warn("Failed to initialize lyrics service at startup; will retry on demand", ex);
         }
         this.lyricsService = ls;
-        // Dedicated single-thread pool so speculative preloads never contend with
-        // real-time /lyrics, economy writes, or dashboard I/O on the blocking pool.
+        // Dedicated single-thread pool so lyrics network work (preload + auto-show, incl. the
+        // blocking Genius rate limiter) never contends with economy/dashboard/Spotify I/O.
         this.lyricsPreloadPool = Executors.newSingleThreadExecutor(r ->
         {
             Thread thread = new Thread(r, "jmusicbot-lyrics-preload");
             thread.setDaemon(true);
             return thread;
         });
-        final LyricsService lsFinal = ls;
-        this.lyricsPreloader = (ls == null) ? null : new LyricsPreloader(lyricsPreloadPool, query ->
+        // The warmer resolves the service lazily so preloading works even if the service
+        // initialized later. Uses the full pipeline (LRCLIB -> Genius, rate-limited) so a
+        // song only on Genius is still pre-cached.
+        this.lyricsPreloader = new LyricsPreloader(lyricsPreloadPool, query ->
         {
-            try { lsFinal.preloadPrimary(query); }
+            LyricsService svc = getLyricsService();
+            if(svc == null)
+                return;
+            try { svc.fetchAndCache(query, true); }
             catch(Exception ignored) {}
         }, 256);
 
@@ -286,13 +294,40 @@ public class Bot
         return blockingThreadpool;
     }
 
-    /** Shared lyrics service (may be {@code null} if initialization failed). */
+    /**
+     * Shared lyrics service. If startup construction failed, this retries at most once per
+     * minute so a transient failure (e.g. a briefly-locked DB) self-heals instead of
+     * disabling lyrics until restart. May still return {@code null} while unavailable.
+     */
     public LyricsService getLyricsService()
     {
-        return lyricsService;
+        LyricsService ls = lyricsService;
+        if(ls != null)
+            return ls;
+        synchronized(lyricsInitLock)
+        {
+            if(lyricsService == null && !shuttingDown)
+            {
+                long now = System.currentTimeMillis();
+                if(now - lyricsInitAttemptAt >= 60_000L || lyricsInitAttemptAt == 0L)
+                {
+                    lyricsInitAttemptAt = now;
+                    try
+                    {
+                        lyricsService = new LyricsService(Paths.get("lyrics-cache.db"));
+                        LOG.info("Lyrics service initialized on demand");
+                    }
+                    catch(Exception ex)
+                    {
+                        LOG.warn("Lyrics service re-init failed; will retry later", ex);
+                    }
+                }
+            }
+            return lyricsService;
+        }
     }
 
-    /** Preloader that warms lyrics for upcoming songs (may be {@code null} if lyrics are unavailable). */
+    /** Preloader that warms lyrics for upcoming songs (resolves the service lazily). */
     public LyricsPreloader getLyricsPreloader()
     {
         return lyricsPreloader;

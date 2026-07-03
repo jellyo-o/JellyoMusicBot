@@ -285,7 +285,10 @@ public class NowplayingHandler
         {
             try
             {
-                Optional<LyricsCache.CachedLyrics> found = service.preloadPrimary(query); // cache -> LRCLIB, no Genius
+                // Full pipeline: cache -> LRCLIB -> Genius (rate-limited); negative-cached misses
+                // are skipped. Runs on the dedicated lyrics thread so the Genius throttle can't
+                // stall other work.
+                Optional<LyricsCache.CachedLyrics> found = service.fetchAndCache(query, true);
                 if(found.isEmpty())
                     return;
                 LyricsCache.CachedLyrics lyrics = found.get();
