@@ -249,23 +249,60 @@ public class EconomyService
     }
 
     /**
-     * Settles a resolved gamble after the wager has already been deducted via
-     * {@link #trySpend}. {@code payout} is the total returned to the player (0 on
-     * a total loss, {@code wager} on a push, {@code >wager} on a win).
+     * Settles a resolved casino round after the wager has already been deducted
+     * via {@link #trySpend}. This is the single settlement path for every game:
+     * it applies the per-round return cap, credits the payout, records the gamble
+     * stats, awards participation XP (announcing a level-up), and pays a
+     * daily-capped loyalty rebate on a net loss.
      *
-     * @return the net change for the player (payout - wager)
+     * <p>{@code rawPayout} is the total returned to the player, stake-inclusive
+     * (0 on a total loss, {@code wager} on a push, {@code > wager} on a win) — see
+     * {@link Payouts} for the convention.
+     *
+     * @return a {@link GameOutcome} describing the settled round
      */
-    public long settleGamble(long userId, long wager, long payout, MessageChannel channel)
+    public GameOutcome settleGame(long userId, long wager, long rawPayout, MessageChannel channel)
     {
         if(!isEnabled())
-            return 0;
+            return GameOutcome.disabled(getBalance(userId));
+        long payout = Payouts.clampReturn(Math.max(0, rawPayout));
+        if(payout < rawPayout)
+            LOG.debug("Clamped game payout {} -> {} for user {}", rawPayout, payout, userId);
+        // Read the level before awarding this round's XP so the rebate reflects the
+        // player's standing at the time of the loss.
+        int level = LevelCurve.levelForXp(store.getProfile(userId).getXp());
         if(payout > 0)
             store.addCurrency(userId, payout);
         long net = payout - wager;
         boolean won = net > 0;
         store.recordGamble(userId, wager, net, won);
+        store.incrementGamesPlayed(userId, 1);
+        if(won)
+            store.updateBiggestWin(userId, net);
+        long xp = Payouts.gameXp(wager);
+        addXpWithLevelCheck(userId, xp, channel);
+        long rebate = 0;
+        if(net < 0)
+        {
+            long rawRebate = Payouts.loyaltyRebate(-net, level);
+            if(rawRebate > 0)
+            {
+                long dayKey = Payouts.dayKey(Instant.now().getEpochSecond(), zone);
+                rebate = store.addRebateCapped(userId, rawRebate, dayKey, Payouts.REBATE_DAILY_CAP);
+            }
+        }
         notifyObserver(userId, won ? EconomyEvent.GAMBLE_WON : EconomyEvent.GAMBLE_LOST, channel);
-        return net;
+        return new GameOutcome(net, payout, rebate, xp, getBalance(userId));
+    }
+
+    /**
+     * Back-compat thin delegate for {@code /gamble}: settles through
+     * {@link #settleGame} (so it now inherits the return cap, participation XP and
+     * loyalty rebate) and returns just the net change.
+     */
+    public long settleGamble(long userId, long wager, long payout, MessageChannel channel)
+    {
+        return settleGame(userId, wager, payout, channel).getNet();
     }
 
     // ---- helpers -----------------------------------------------------------
@@ -363,6 +400,40 @@ public class EconomyService
             this.streak = streak;
             this.secondsUntilNext = secondsUntilNext;
         }
+    }
+
+    /** Immutable result of a settled casino round, for building the reply embed. */
+    public static final class GameOutcome
+    {
+        private final long net;
+        private final long payout;
+        private final long rebate;
+        private final long xpAwarded;
+        private final long newBalance;
+
+        public GameOutcome(long net, long payout, long rebate, long xpAwarded, long newBalance)
+        {
+            this.net = net;
+            this.payout = payout;
+            this.rebate = rebate;
+            this.xpAwarded = xpAwarded;
+            this.newBalance = newBalance;
+        }
+
+        static GameOutcome disabled(long balance)
+        {
+            return new GameOutcome(0, 0, 0, 0, balance);
+        }
+
+        /** Net change for the player (payout - wager); negative on a loss. */
+        public long getNet() { return net; }
+        /** Total coins returned this round after the per-round cap (0 on a total loss). */
+        public long getPayout() { return payout; }
+        /** Loyalty rebate credited on a net loss (0 otherwise / when the daily cap is spent). */
+        public long getRebate() { return rebate; }
+        public long getXpAwarded() { return xpAwarded; }
+        public long getNewBalance() { return newBalance; }
+        public boolean isWin() { return net > 0; }
     }
 
     public static final class DailyResult

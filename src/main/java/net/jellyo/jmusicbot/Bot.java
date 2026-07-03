@@ -86,6 +86,8 @@ public class Bot
     private final EconomyStore economyStore;
     private final EconomyService economyService;
     private final AchievementService achievementService;
+    private final ScheduledExecutorService gamesScheduler;
+    private final com.jagrosh.jmusicbot.commands.economy.games.GameSessions gameSessions;
     private final ListeningRewardService listeningRewardService;
     private final AvoidStore avoidStore;
     private final CrashRecoveryService crashRecoveryService;
@@ -188,6 +190,16 @@ public class Bot
         this.economyService = economyService;
         this.achievementService = new AchievementService(this);
         this.economyService.setObserver(this.achievementService);
+
+        // Dedicated pool for casino game animations + interactive-session timeouts, kept off the
+        // single-thread scheduler so a spinning-dice animation never contends with music timers.
+        this.gamesScheduler = Executors.newScheduledThreadPool(2, r ->
+        {
+            Thread thread = new Thread(r, "jmusicbot-games");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.gameSessions = new com.jagrosh.jmusicbot.commands.economy.games.GameSessions(this);
 
         // Per-guild persistent avoid list (songs autoplay must never pick).
         AvoidStore avoid = new AvoidStore(databasePath);
@@ -401,6 +413,17 @@ public class Bot
         return achievementService;
     }
 
+    /** Dedicated scheduler for casino game animations + interactive-session timeouts. */
+    public ScheduledExecutorService getGamesScheduler()
+    {
+        return gamesScheduler;
+    }
+
+    public com.jagrosh.jmusicbot.commands.economy.games.GameSessions getGameSessions()
+    {
+        return gameSessions;
+    }
+
     public AvoidStore getAvoidStore()
     {
         return avoidStore;
@@ -469,9 +492,12 @@ public class Bot
         LOG.warn("Bot shutdown requested");
         if(crashRecoveryService != null)
             crashRecoveryService.saveAllSnapshots();
+        if(gameSessions != null)
+            gameSessions.resolveAll(); // settle abandoned games so no debit is left dangling
         threadpool.shutdownNow();
         blockingThreadpool.shutdownNow();
         lyricsPreloadPool.shutdownNow();
+        gamesScheduler.shutdownNow();
         if(jda.getStatus()!=JDA.Status.SHUTTING_DOWN)
         {
             jda.getGuilds().stream().forEach(g -> 

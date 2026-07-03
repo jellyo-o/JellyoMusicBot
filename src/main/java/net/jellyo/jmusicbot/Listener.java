@@ -132,6 +132,8 @@ public class Listener extends ListenerAdapter
             return;
         if(PlaylistViewPaginator.handleButtonInteraction(bot, event))
             return;
+        if(com.jagrosh.jmusicbot.commands.economy.games.GameButtons.handle(bot, event))
+            return;
         bot.getNowplayingHandler().onButtonInteraction(event);
     }
 

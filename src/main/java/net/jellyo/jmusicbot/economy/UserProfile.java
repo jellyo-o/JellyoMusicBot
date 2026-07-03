@@ -35,6 +35,7 @@ public final class UserProfile
     private final long gambleLosses;
     private final long gambleWagered;
     private final long gambleNet;
+    private final long biggestWin;
     private final int dailyStreak;
     private final long lastDailyAt;
     private final long lastSeenAt;
@@ -56,6 +57,7 @@ public final class UserProfile
         this.gambleLosses = b.gambleLosses;
         this.gambleWagered = b.gambleWagered;
         this.gambleNet = b.gambleNet;
+        this.biggestWin = b.biggestWin;
         this.dailyStreak = b.dailyStreak;
         this.lastDailyAt = b.lastDailyAt;
         this.lastSeenAt = b.lastSeenAt;
@@ -88,6 +90,7 @@ public final class UserProfile
     public long getGambleLosses() { return gambleLosses; }
     public long getGambleWagered() { return gambleWagered; }
     public long getGambleNet() { return gambleNet; }
+    public long getBiggestWin() { return biggestWin; }
     public int getDailyStreak() { return dailyStreak; }
     public long getLastDailyAt() { return lastDailyAt; }
     public long getLastSeenAt() { return lastSeenAt; }
@@ -113,6 +116,7 @@ public final class UserProfile
         private long gambleLosses;
         private long gambleWagered;
         private long gambleNet;
+        private long biggestWin;
         private int dailyStreak;
         private long lastDailyAt;
         private long lastSeenAt;
@@ -133,6 +137,7 @@ public final class UserProfile
         public Builder gambleLosses(long v) { this.gambleLosses = v; return this; }
         public Builder gambleWagered(long v) { this.gambleWagered = v; return this; }
         public Builder gambleNet(long v) { this.gambleNet = v; return this; }
+        public Builder biggestWin(long v) { this.biggestWin = v; return this; }
         public Builder dailyStreak(int v) { this.dailyStreak = v; return this; }
         public Builder lastDailyAt(long v) { this.lastDailyAt = v; return this; }
         public Builder lastSeenAt(long v) { this.lastSeenAt = v; return this; }

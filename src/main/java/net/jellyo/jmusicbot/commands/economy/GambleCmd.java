@@ -17,27 +17,25 @@ package com.jagrosh.jmusicbot.commands.economy;
 
 import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.commands.CommandContext;
+import com.jagrosh.jmusicbot.commands.economy.games.GameEmbeds;
 import com.jagrosh.jmusicbot.economy.EconomyService;
+import com.jagrosh.jmusicbot.economy.EconomyService.GameOutcome;
 import com.jagrosh.jmusicbot.economy.GambleGames;
 import com.jagrosh.jmusicbot.economy.GambleGames.Game;
 import com.jagrosh.jmusicbot.economy.GambleGames.Result;
-import java.awt.Color;
+import com.jagrosh.jmusicbot.economy.Payouts;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
-import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder;
 
 /**
  * Bet coins on a game of chance (coinflip, dice or slots). The wager is debited
- * atomically before the game resolves, so it can never go negative.
+ * atomically before the game resolves, then settled through the shared game
+ * settlement so it earns XP, honours the per-game table limit and can pay the
+ * loyalty rebate — just like the other casino games.
  */
 public class GambleCmd extends EconomyCommand
 {
-    private static final long MIN_BET = 10;
-    private static final long MAX_BET = 1_000_000;
-    private static final Color WIN_COLOR = new Color(0x2ECC71);
-    private static final Color LOSS_COLOR = new Color(0xE74C3C);
-
     public GambleCmd(Bot bot)
     {
         super(bot, "gamble", "bet coins on coinflip, dice or slots", "<amount|all|half> [coinflip|dice|slots]");
@@ -73,20 +71,24 @@ public class GambleCmd extends EconomyCommand
 
         long authorId = ctx.getAuthor().getIdLong();
         long balance = economy.getBalance(authorId);
-        if(balance < MIN_BET)
+        if(balance < Payouts.MIN_BET)
         {
-            ctx.replyWarning("You need at least " + EconomyService.coins(MIN_BET) + " to gamble. Try `daily` to top up.");
+            ctx.replyWarning("You need at least " + EconomyService.coins(Payouts.MIN_BET)
+                    + " to gamble. Try `daily` to top up.");
             return;
         }
+        Game game = Game.from(gameToken);
+        long maxBet = Payouts.maxBetFor(sizingFor(game));
         long amount = parseAmount(amountToken, balance);
-        if(amount < MIN_BET)
+        if(amount < Payouts.MIN_BET)
         {
-            ctx.replyError("The minimum bet is " + EconomyService.coins(MIN_BET) + ".");
+            ctx.replyError("The minimum bet is " + EconomyService.coins(Payouts.MIN_BET) + ".");
             return;
         }
-        if(amount > MAX_BET)
+        if(amount > maxBet)
         {
-            ctx.replyError("The maximum bet is " + EconomyService.coins(MAX_BET) + ".");
+            ctx.replyError("The table limit for " + game.name().toLowerCase(Locale.ROOT) + " is "
+                    + EconomyService.coins(maxBet) + " (higher-payout games have lower limits).");
             return;
         }
         if(amount > balance)
@@ -100,21 +102,23 @@ public class GambleCmd extends EconomyCommand
             return;
         }
 
-        Game game = Game.from(gameToken);
         Result result = GambleGames.play(game, amount, ThreadLocalRandom.current());
-        long net = economy.settleGamble(authorId, amount, result.getPayout(), ctx.getChannel());
-        long newBalance = economy.getBalance(authorId);
+        GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), ctx.getChannel());
+        ctx.reply(new MessageCreateBuilder()
+                .setEmbeds(GameEmbeds.result(gameTitle(game), result.getDetail(), outcome, amount))
+                .build());
+    }
 
-        EmbedBuilder eb = new EmbedBuilder();
-        eb.setColor(result.isWon() ? WIN_COLOR : LOSS_COLOR);
-        eb.setTitle(gameTitle(game));
-        eb.setDescription(result.getDetail());
-        eb.addField(result.isWon() ? "🎉 You won" : "💀 You lost",
-                result.isWon() ? "**+" + EconomyService.coins(net) + "**" : "**-" + EconomyService.coins(amount) + "**",
-                true);
-        eb.addField("💰 New balance", EconomyService.coins(newBalance), true);
-        eb.setFooter("Bet " + String.format("%,d", amount) + " " + EconomyService.CURRENCY_NAME, null);
-        ctx.reply(new MessageCreateBuilder().setEmbeds(eb.build()).build());
+    /** The top stake-inclusive multiplier a game can pay, used to size its table limit. */
+    private static double sizingFor(Game game)
+    {
+        switch(game)
+        {
+            case SLOTS: return 40.0; // triple-seven jackpot
+            case DICE: return 1.7;
+            case COINFLIP:
+            default: return 1.95;
+        }
     }
 
     private static boolean isAmountToken(String token)
