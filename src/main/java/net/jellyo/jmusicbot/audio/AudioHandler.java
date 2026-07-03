@@ -19,6 +19,8 @@ import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
 import com.jagrosh.jmusicbot.economy.EconomyService;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService.SkipInfo;
+import com.jagrosh.jmusicbot.lyrics.LyricsPreloader;
+import com.jagrosh.jmusicbot.lyrics.LyricsQuery;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
@@ -914,6 +916,42 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         LOG.info("Track started for guild {}; volume={}; queueSize={}; track={}",
                 guildId, player.getVolume(), queue.size(), trackSummary(track));
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, track);
+        maybePreloadUpcomingLyrics();
+    }
+
+    /**
+     * Warms the lyrics cache for the next few queued songs (LRCLIB-only) so a later
+     * /lyrics or auto-show is instant. Runs only when the guild has preloading on;
+     * the actual fetching happens on Bot's dedicated lyrics-preload pool.
+     */
+    private void maybePreloadUpcomingLyrics()
+    {
+        LyricsPreloader preloader = manager.getBot().getLyricsPreloader();
+        if(preloader == null)
+            return;
+        if(!manager.getBot().getSettingsManager().getSettings(guildId).isAutoPreloadLyrics())
+            return;
+        int limit = Integer.getInteger("lyrics.preloadCount", 5);
+        List<QueuedTrack> upcoming;
+        try
+        {
+            upcoming = new ArrayList<>(queue.getList());
+        }
+        catch(Exception ex)
+        {
+            return;
+        }
+        List<String> keys = new ArrayList<>();
+        for(int i = 0; i < upcoming.size() && keys.size() < limit; i++)
+        {
+            AudioTrack t = upcoming.get(i).getTrack();
+            if(t == null || t.getInfo() == null || t.getInfo().isStream)
+                continue;
+            String key = LyricsQuery.forTrack(t);
+            if(!key.isEmpty())
+                keys.add(key);
+        }
+        preloader.preloadKeys(keys);
     }
 
     /**
