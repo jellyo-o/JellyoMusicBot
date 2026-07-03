@@ -242,7 +242,62 @@ public class NowplayingHandler
             TextChannel channel = getDefaultPanelChannel(guild, track);
             if(channel != null && getPanelMessageId(guildId, channel.getIdLong()) == null)
                 showPanel(guild, channel, false);
+            maybeAutoShowLyrics(guild, track);
         }
+    }
+
+    /**
+     * When the guild has autoShowLyrics enabled, post the song's lyrics to the
+     * now-playing channel as it starts. LRCLIB-only (cache -> LRCLIB, never the
+     * rate-limited Genius fallback) and silent when nothing is found or perms are
+     * missing. Runs off the JDA/playback thread.
+     */
+    private void maybeAutoShowLyrics(Guild guild, AudioTrack track)
+    {
+        if(!bot.getSettingsManager().getSettings(guild.getIdLong()).isAutoShowLyrics())
+            return;
+        LyricsService service = bot.getLyricsService();
+        if(service == null)
+            return;
+        if(track.getInfo() != null && track.getInfo().isStream)
+            return;
+        TextChannel channel = getDefaultPanelChannel(guild, track);
+        if(channel == null || !guild.getSelfMember().hasPermission(channel,
+                Permission.MESSAGE_SEND, Permission.MESSAGE_EMBED_LINKS))
+            return;
+        final String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(track);
+        if(query.isEmpty())
+            return;
+        final long channelId = channel.getIdLong();
+        final long gid = guild.getIdLong();
+        bot.getBlockingThreadpool().submit(() ->
+        {
+            try
+            {
+                Optional<LyricsCache.CachedLyrics> found = service.preloadPrimary(query); // cache -> LRCLIB, no Genius
+                if(found.isEmpty())
+                    return;
+                LyricsCache.CachedLyrics lyrics = found.get();
+                String content = lyrics.lyrics();
+                if(content == null || content.isBlank() || content.length() > 3900)
+                    return; // keep auto-post to a single tidy embed
+                Guild g = bot.getJDA() == null ? null : bot.getJDA().getGuildById(gid);
+                if(g == null)
+                    return;
+                TextChannel target = g.getTextChannelById(channelId);
+                if(target == null)
+                    return;
+                String titleLine = (lyrics.artist() == null || lyrics.artist().isBlank() ? "" : lyrics.artist() + " - ") + lyrics.title();
+                EmbedBuilder eb = new EmbedBuilder()
+                        .setColor(g.getSelfMember().getColor())
+                        .setTitle(titleLine, lyrics.sourceUrl())
+                        .setDescription(content);
+                target.sendMessageEmbeds(eb.build()).queue(null, t -> {});
+            }
+            catch(Exception ignored)
+            {
+            }
+        });
     }
     
     public void onMessageDelete(Guild guild, long messageId)
