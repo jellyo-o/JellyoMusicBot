@@ -15,7 +15,7 @@ import java.util.concurrent.Executor;
  */
 public class LyricsPreloader
 {
-    /** Warms a single query key (e.g. LyricsService::preloadPrimary). */
+    /** Warms a single query key (e.g. LyricsService::fetchAndCache). */
     public interface Warmer { void warm(String query); }
 
     private final Executor executor;
