@@ -94,8 +94,8 @@ public class NowplayingHandler
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
     private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
-    private volatile LyricsService lyricsService;
-    
+    private final Map<Long, String> lastAutoShownTrack = new java.util.concurrent.ConcurrentHashMap<>(); // guild -> track identifier
+
     public NowplayingHandler(Bot bot)
     {
         this.bot = bot;
@@ -243,7 +243,72 @@ public class NowplayingHandler
             TextChannel channel = getDefaultPanelChannel(guild, track);
             if(channel != null && getPanelMessageId(guildId, channel.getIdLong()) == null)
                 showPanel(guild, channel, false);
+            maybeAutoShowLyrics(guild, track);
         }
+    }
+
+    /**
+     * When the guild has autoShowLyrics enabled, post the song's lyrics to the
+     * now-playing channel as it starts. LRCLIB-only (cache -> LRCLIB, never the
+     * rate-limited Genius fallback) and silent when nothing is found or perms are
+     * missing. Runs off the JDA/playback thread.
+     */
+    private void maybeAutoShowLyrics(Guild guild, AudioTrack track)
+    {
+        if(!bot.getSettingsManager().getSettings(guild.getIdLong()).isAutoShowLyrics())
+            return;
+        LyricsService service = bot.getLyricsService();
+        if(service == null)
+            return;
+        if(track.getInfo() != null && track.getInfo().isStream)
+            return;
+        TextChannel channel = getDefaultPanelChannel(guild, track);
+        if(channel == null || !guild.getSelfMember().hasPermission(channel,
+                Permission.MESSAGE_SEND, Permission.MESSAGE_EMBED_LINKS))
+            return;
+        final String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(track);
+        if(query.isEmpty())
+            return;
+        final long gid = guild.getIdLong();
+        // Don't re-post the same song's lyrics on consecutive starts (e.g. repeat mode
+        // re-adds a clone, or the panel restart button) — only when the track actually changes.
+        String identifier = track.getInfo() == null ? query : track.getInfo().identifier;
+        if(identifier == null || identifier.isEmpty())
+            identifier = query;
+        if(identifier.equals(lastAutoShownTrack.get(gid)))
+            return;
+        lastAutoShownTrack.put(gid, identifier);
+        final long channelId = channel.getIdLong();
+        // Run on the dedicated lyrics executor (not the shared blocking pool) so lyrics
+        // fetches never contend with Spotify/economy/dashboard I/O.
+        bot.getLyricsExecutor().submit(() ->
+        {
+            try
+            {
+                Optional<LyricsCache.CachedLyrics> found = service.preloadPrimary(query); // cache -> LRCLIB, no Genius
+                if(found.isEmpty())
+                    return;
+                LyricsCache.CachedLyrics lyrics = found.get();
+                String content = lyrics.lyrics();
+                if(content == null || content.isBlank() || content.length() > 3900)
+                    return; // keep auto-post to a single tidy embed
+                Guild g = bot.getJDA() == null ? null : bot.getJDA().getGuildById(gid);
+                if(g == null)
+                    return;
+                TextChannel target = g.getTextChannelById(channelId);
+                if(target == null)
+                    return;
+                String titleLine = (lyrics.artist() == null || lyrics.artist().isBlank() ? "" : lyrics.artist() + " - ") + lyrics.title();
+                EmbedBuilder eb = new EmbedBuilder()
+                        .setColor(g.getSelfMember().getColor())
+                        .setTitle(titleLine, lyrics.sourceUrl())
+                        .setDescription(content);
+                target.sendMessageEmbeds(eb.build()).queue(null, t -> {});
+            }
+            catch(Exception ignored)
+            {
+            }
+        });
     }
     
     public void onMessageDelete(Guild guild, long messageId)
@@ -1109,7 +1174,7 @@ public class NowplayingHandler
         if(handler == null)
             return;
 
-        String query = handler.getPlayer().getPlayingTrack().getInfo().title;
+        String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(handler.getPlayer().getPlayingTrack());
         event.deferReply(true).queue(hook -> CompletableFuture
                 .supplyAsync(() -> fetchLyrics(query))
                 .thenAccept(opt ->
@@ -1157,24 +1222,7 @@ public class NowplayingHandler
 
     private LyricsService getLyricsService()
     {
-        if(lyricsService == null)
-        {
-            synchronized(this)
-            {
-                if(lyricsService == null)
-                {
-                    try
-                    {
-                        lyricsService = new LyricsService(Path.of("lyrics-cache.db"));
-                    }
-                    catch(Exception ignored)
-                    {
-                        return null;
-                    }
-                }
-            }
-        }
-        return lyricsService;
+        return bot.getLyricsService();
     }
 
     private AudioHandler requirePlaying(ButtonInteractionEvent event)

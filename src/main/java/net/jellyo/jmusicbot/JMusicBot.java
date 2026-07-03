@@ -270,6 +270,8 @@ public class JMusicBot
                         
                         new PrefixCmd(bot),
                         new QueueTypeCmd(bot),
+                        new PreloadLyricsCmd(bot),
+                        new AutoLyricsCmd(bot),
                         new SetdjCmd(bot),
                         new SkipratioCmd(bot),
                         new SettcCmd(bot),
@@ -369,7 +371,9 @@ public class JMusicBot
                 {"settc <channel|none>", "Restrict music text channel"},
                 {"setvc <channel|none>", "Restrict music voice channel"},
                 {"setskip <0-100>", "Set skip percentage"},
-                {"queuetype [fair|linear]", "Show or set queue type"}
+                {"queuetype [fair|linear]", "Show or set queue type"},
+                {"preloadlyrics [on|off]", "Preload lyrics for upcoming songs"},
+                {"autolyrics [on|off]", "Auto-post lyrics when a song starts"}
         });
         if(event.isOwner())
         {

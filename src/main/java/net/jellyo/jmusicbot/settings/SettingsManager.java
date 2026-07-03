@@ -60,7 +60,9 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                         o.has("autoplay_mode")   ? o.getEnum(AutoplayMode.class, "autoplay_mode"): AutoplayMode.OFF,
                         o.has("prefix")          ? o.getString("prefix")                     : null,
                         o.has("skip_ratio")      ? o.getDouble("skip_ratio")                 : -1,
-                        o.has("queue_type")      ? o.getEnum(QueueType.class, "queue_type")  : QueueType.FAIR));
+                        o.has("queue_type")      ? o.getEnum(QueueType.class, "queue_type")  : QueueType.FAIR,
+                        o.has("auto_preload_lyrics") ? o.getBoolean("auto_preload_lyrics")    : true,
+                        o.has("auto_show_lyrics")    ? o.getBoolean("auto_show_lyrics")       : false));
             });
         } catch (NoSuchFileException e) {
             // create an empty json file
@@ -97,7 +99,7 @@ public class SettingsManager implements GuildSettingsManager<Settings>
 
     private Settings createDefaultSettings()
     {
-        return new Settings(this, 0, 0, 0, 100, RepeatMode.OFF, AutoplayMode.OFF, null, -1, QueueType.FAIR);
+        return new Settings(this, 0, 0, 0, 100, RepeatMode.OFF, AutoplayMode.OFF, null, -1, QueueType.FAIR, true, false);
     }
 
     protected void writeSettings()
@@ -124,6 +126,10 @@ public class SettingsManager implements GuildSettingsManager<Settings>
                 o.put("skip_ratio", s.getSkipRatio());
             if(s.getQueueType() != QueueType.FAIR)
                 o.put("queue_type", s.getQueueType().name());
+            if(!s.isAutoPreloadLyrics())
+                o.put("auto_preload_lyrics", false);
+            if(s.isAutoShowLyrics())
+                o.put("auto_show_lyrics", true);
             obj.put(Long.toString(key), o);
         });
         try {

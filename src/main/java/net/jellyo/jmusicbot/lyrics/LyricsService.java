@@ -66,6 +66,35 @@ public class LyricsService
         }
     }
 
+    /**
+     * Warm the cache using the primary (LRCLIB) provider only — never the
+     * rate-limited Genius fallback. Used by preload and auto-show so speculative
+     * lookups can't block on Genius's 10s limiter or spend its shared budget.
+     */
+    public Optional<LyricsCache.CachedLyrics> preloadPrimary(String rawQuery) throws IOException
+    {
+        String sanitized = InputValidator.sanitizeQuery(rawQuery);
+        if(sanitized == null)
+            return Optional.empty();
+        try
+        {
+            Optional<LyricsCache.CachedLyrics> cached = cache.findBestMatch(sanitized);
+            if(cached.isPresent())
+                return cached;
+        }
+        catch(SQLException ignored)
+        {
+        }
+        try
+        {
+            return fetchFromProvider(primaryProvider, sanitized, false);
+        }
+        catch(IOException ignored)
+        {
+            return Optional.empty();
+        }
+    }
+
     public Optional<LyricsCache.CachedLyrics> fetchByGeniusUrl(String url) throws IOException
     {
         Optional<LyricsResult> result = fallbackProvider.fetchByUrl(url);

@@ -21,10 +21,10 @@ import com.jagrosh.jmusicbot.audio.AudioHandler;
 import com.jagrosh.jmusicbot.commands.MusicCommand;
 import com.jagrosh.jmusicbot.lyrics.LyricsService;
 import com.jagrosh.jmusicbot.lyrics.LyricsCache;
+import com.jagrosh.jmusicbot.lyrics.LyricsQuery;
 import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 
-import java.nio.file.Path;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -33,7 +33,6 @@ import java.util.concurrent.CompletableFuture;
  * @author John Grosh (john.a.grosh@gmail.com)
  */
 public class LyricsCmd extends MusicCommand {
-    private static volatile LyricsService service;
     public LyricsCmd(Bot bot) {
         super(bot);
         this.name = "lyrics";
@@ -43,34 +42,18 @@ public class LyricsCmd extends MusicCommand {
         this.botPermissions = new Permission[]{Permission.MESSAGE_EMBED_LINKS};
     }
 
-    private void initService() {
-        if (service == null) {
-            synchronized (LyricsCmd.class) {
-                if (service == null) {
-                    try {
-                        service = new LyricsService(Path.of("lyrics-cache.db"));
-                    } catch (Exception e) {
-                        // swallow: service remains null
-                    }
-                }
-            }
-        }
-    }
-
     @Override
     public void doCommand(CommandEvent event) {
+        final LyricsService service = bot.getLyricsService();
         if (service == null) {
-            initService();
-            if (service == null) {
-                event.replyError("Lyrics service failed to initialize.");
-                return;
-            }
+            event.replyError("Lyrics service failed to initialize.");
+            return;
         }
         String query;
         if (event.getArgs().isEmpty()) {
             AudioHandler sendingHandler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
             if (sendingHandler.isMusicPlaying(event.getJDA())) {
-                query = sendingHandler.getPlayer().getPlayingTrack().getInfo().title;
+                query = LyricsQuery.forTrack(sendingHandler.getPlayer().getPlayingTrack());
             } else {
                 event.replyError("There must be music playing to use that!");
                 return;
@@ -122,7 +105,8 @@ public class LyricsCmd extends MusicCommand {
 
     private Optional<LyricsCache.CachedLyrics> serviceFetch(String query) {
         try {
-            return service.fetchAndCache(query, true);
+            LyricsService service = bot.getLyricsService();
+            return service == null ? Optional.empty() : service.fetchAndCache(query, true);
         } catch (Exception e) {
             return Optional.empty();
         }
