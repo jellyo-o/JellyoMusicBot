@@ -124,6 +124,18 @@ public abstract class GameSession
     /** Settles after a successful {@link #claimResolution()} with an explicit stake. */
     protected GameOutcome settleClaimed(long stake, long rawPayout)
     {
+        closeClaimed();
+        return bot.getEconomyService().settleGame(ownerId, stake, rawPayout, channel());
+    }
+
+    /**
+     * Finalizes a claimed game without any house settlement (cleanup only): cancels
+     * the timeout, deregisters the session and runs {@link #onResolved()}. For
+     * non-wager games (trivia, PvP duel) that award/transfer coins themselves.
+     * Call only after a successful {@link #claimResolution()}.
+     */
+    protected void closeClaimed()
+    {
         cancelTimeout();
         bot.getGameSessions().remove(messageId);
         try
@@ -134,10 +146,18 @@ public abstract class GameSession
         {
             LOG.debug("onResolved hook failed for message {}", messageId, ex);
         }
-        return bot.getEconomyService().settleGame(ownerId, stake, rawPayout, channel());
     }
 
     protected boolean isSettled() { return guard.isResolved(); }
+
+    /**
+     * Whether {@code userId} is allowed to press the button {@code action}. Defaults
+     * to owner-only; PvP games override so a specific opponent can accept/decline.
+     */
+    public boolean canPress(long userId, String action)
+    {
+        return userId == ownerId;
+    }
 
     /** Updates the interactive panel (embed + buttons) in response to a click. */
     protected void editPanel(ButtonInteractionEvent event, MessageEmbed embed, List<ActionRow> rows)

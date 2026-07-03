@@ -34,6 +34,8 @@ import com.jagrosh.jmusicbot.database.DatabaseMigrator;
 import com.jagrosh.jmusicbot.economy.EconomyService;
 import com.jagrosh.jmusicbot.economy.EconomyStore;
 import com.jagrosh.jmusicbot.economy.ListeningRewardService;
+import com.jagrosh.jmusicbot.economy.LotteryService;
+import com.jagrosh.jmusicbot.economy.LotteryStore;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.guessmusic.GuessMusicService;
 import com.jagrosh.jmusicbot.lyrics.LyricsPreloader;
@@ -88,6 +90,8 @@ public class Bot
     private final AchievementService achievementService;
     private final ScheduledExecutorService gamesScheduler;
     private final com.jagrosh.jmusicbot.commands.economy.games.GameSessions gameSessions;
+    private final com.jagrosh.jmusicbot.economy.LotteryStore lotteryStore;
+    private final com.jagrosh.jmusicbot.economy.LotteryService lotteryService;
     private final ListeningRewardService listeningRewardService;
     private final AvoidStore avoidStore;
     private final CrashRecoveryService crashRecoveryService;
@@ -200,6 +204,24 @@ public class Bot
             return thread;
         });
         this.gameSessions = new com.jagrosh.jmusicbot.commands.economy.games.GameSessions(this);
+
+        // Per-guild lottery with durable, self-healing draws (DB is the source of truth).
+        LotteryStore lottery = new LotteryStore(databasePath);
+        LotteryService lotteryService;
+        try
+        {
+            lottery.init();
+            lotteryService = new LotteryService(this, lottery);
+        }
+        catch(Exception ex)
+        {
+            LOG.warn("Failed to initialize lottery storage; /lottery disabled", ex);
+            lottery = null;
+            lotteryService = new LotteryService(this, null);
+        }
+        this.lotteryStore = lottery;
+        this.lotteryService = lotteryService;
+        this.lotteryService.init();
 
         // Per-guild persistent avoid list (songs autoplay must never pick).
         AvoidStore avoid = new AvoidStore(databasePath);
@@ -424,6 +446,11 @@ public class Bot
         return gameSessions;
     }
 
+    public LotteryService getLotteryService()
+    {
+        return lotteryService;
+    }
+
     public AvoidStore getAvoidStore()
     {
         return avoidStore;
@@ -498,6 +525,8 @@ public class Bot
         blockingThreadpool.shutdownNow();
         lyricsPreloadPool.shutdownNow();
         gamesScheduler.shutdownNow();
+        if(lotteryService != null)
+            lotteryService.shutdown();
         if(jda.getStatus()!=JDA.Status.SHUTTING_DOWN)
         {
             jda.getGuilds().stream().forEach(g -> 
