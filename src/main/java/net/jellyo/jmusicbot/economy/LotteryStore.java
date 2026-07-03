@@ -30,13 +30,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Per-guild lottery storage in the unified database: one open round per guild plus
- * its tickets. The database is the source of truth for the draw schedule (a bare
- * {@code ScheduledFuture} would drop draws on restart), so a due draw is resolved
- * by {@link #resolveDraw} — which picks the winner, credits them and closes the
- * round <b>in a single transaction</b>. That makes resolution atomic and idempotent:
- * a crash mid-draw rolls back and retries on reboot, and a second attempt finds no
- * open round and pays nothing.
+ * Storage for the single, bot-wide lottery — one global pot at a time. The draw
+ * schedule (a bot-owner setting) lives in the database rather than a bare
+ * {@code ScheduledFuture}, so a due draw survives restarts. {@link #resolveDraw}
+ * picks a ticket-weighted winner, credits them and closes the round in one
+ * transaction: a crash mid-draw rolls back and retries on reboot, and a second
+ * attempt finds no open round and pays nothing.
  */
 public class LotteryStore
 {
@@ -55,69 +54,125 @@ public class LotteryStore
         connection = Database.open(dbPath);
         try(Statement st = connection.createStatement())
         {
-            st.executeUpdate("CREATE TABLE IF NOT EXISTS lottery_draws ("
-                    + "guild_id INTEGER PRIMARY KEY,"
-                    + "channel_id INTEGER NOT NULL,"
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS lottery_global ("
+                    + "id INTEGER PRIMARY KEY CHECK(id = 1),"
                     + "draw_epoch INTEGER NOT NULL,"
-                    + "pot INTEGER NOT NULL DEFAULT 0,"
-                    + "created_at INTEGER NOT NULL)");
+                    + "pot INTEGER NOT NULL DEFAULT 0)");
             st.executeUpdate("CREATE TABLE IF NOT EXISTS lottery_tickets ("
-                    + "guild_id INTEGER NOT NULL,"
-                    + "user_id INTEGER NOT NULL,"
-                    + "tickets INTEGER NOT NULL DEFAULT 0,"
-                    + "PRIMARY KEY(guild_id, user_id))");
+                    + "user_id INTEGER PRIMARY KEY,"
+                    + "tickets INTEGER NOT NULL DEFAULT 0)");
         }
-        LOG.info("Lottery storage ready in unified database at {}", dbPath.toAbsolutePath());
+        LOG.info("Global lottery storage ready in unified database at {}", dbPath.toAbsolutePath());
     }
 
-    /**
-     * Adds {@code count} tickets for a user (coins already debited by the caller),
-     * opening a new round (draw_epoch = now + interval) if none is open. Returns the
-     * updated round info.
-     */
-    public synchronized DrawInfo buyTickets(long guildId, long channelId, long userId, int count,
-                                            long ticketPrice, long drawIntervalSeconds, long nowEpoch)
-    {
-        ensureRound(guildId, channelId, nowEpoch, drawIntervalSeconds);
-        bumpTickets(guildId, userId, count);
-        addPot(guildId, count * ticketPrice);
-        return draw(guildId, userId);
-    }
-
-    public synchronized DrawInfo getDraw(long guildId, long userId)
-    {
-        return draw(guildId, userId);
-    }
-
-    /** Guild ids whose open round is due (draw_epoch &le; now). */
-    public synchronized List<Long> dueDraws(long nowEpoch)
+    /** Tickets the user already holds in the current round (0 if none / no round open). */
+    public synchronized long getUserTickets(long userId)
     {
         ensureOpen();
-        List<Long> due = new ArrayList<>();
         try(PreparedStatement ps = connection.prepareStatement(
-                "SELECT guild_id FROM lottery_draws WHERE draw_epoch <= ?"))
+                "SELECT tickets FROM lottery_tickets WHERE user_id=?"))
         {
-            ps.setLong(1, nowEpoch);
+            ps.setLong(1, userId);
             try(ResultSet rs = ps.executeQuery())
             {
-                while(rs.next())
-                    due.add(rs.getLong(1));
+                return rs.next() ? rs.getLong(1) : 0;
             }
         }
         catch(SQLException ex)
         {
-            throw new EconomyStore.EconomyException("Failed to query due lottery draws", ex);
+            throw new EconomyStore.EconomyException("Failed to read lottery tickets", ex);
         }
-        return due;
     }
 
     /**
-     * Atomically resolves a guild's open round: picks a ticket-weighted winner,
-     * credits the pot to their profile, and deletes the tickets + round — all in one
-     * transaction. Returns the result, {@code null} if there was no open round
-     * (already resolved), or a no-winner result if the round had no tickets.
+     * Adds {@code count} tickets for a user (coins already debited by the caller),
+     * opening the round if none is live. Returns the updated round info.
      */
-    public synchronized DrawResult resolveDraw(long guildId, Random rng)
+    public synchronized DrawInfo buyTickets(long userId, int count, long ticketPrice,
+                                            long drawIntervalSeconds, long nowEpoch)
+    {
+        try(PreparedStatement ps = connection.prepareStatement(
+                "INSERT OR IGNORE INTO lottery_global(id, draw_epoch, pot) VALUES(1, ?, 0)"))
+        {
+            ps.setLong(1, nowEpoch + drawIntervalSeconds);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyStore.EconomyException("Failed to open lottery round", ex);
+        }
+        try(PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO lottery_tickets(user_id, tickets) VALUES(?, ?) "
+                        + "ON CONFLICT(user_id) DO UPDATE SET tickets=tickets+?"))
+        {
+            ps.setLong(1, userId);
+            ps.setInt(2, count);
+            ps.setInt(3, count);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyStore.EconomyException("Failed to add lottery tickets", ex);
+        }
+        try(PreparedStatement ps = connection.prepareStatement("UPDATE lottery_global SET pot=pot+? WHERE id=1"))
+        {
+            ps.setLong(1, count * ticketPrice);
+            ps.executeUpdate();
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyStore.EconomyException("Failed to grow lottery pot", ex);
+        }
+        return getInfo(userId);
+    }
+
+    public synchronized DrawInfo getInfo(long userId)
+    {
+        ensureOpen();
+        long drawEpoch;
+        long pot;
+        try(PreparedStatement ps = connection.prepareStatement("SELECT draw_epoch, pot FROM lottery_global WHERE id=1"))
+        {
+            try(ResultSet rs = ps.executeQuery())
+            {
+                if(!rs.next())
+                    return null;
+                drawEpoch = rs.getLong(1);
+                pot = rs.getLong(2);
+            }
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyStore.EconomyException("Failed to read lottery info", ex);
+        }
+        return new DrawInfo(drawEpoch, pot, totalTickets(), getUserTickets(userId));
+    }
+
+    /** True if a round is open and its draw time has passed. */
+    public synchronized boolean isDue(long nowEpoch)
+    {
+        ensureOpen();
+        try(PreparedStatement ps = connection.prepareStatement(
+                "SELECT 1 FROM lottery_global WHERE id=1 AND draw_epoch <= ?"))
+        {
+            ps.setLong(1, nowEpoch);
+            try(ResultSet rs = ps.executeQuery())
+            {
+                return rs.next();
+            }
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyStore.EconomyException("Failed to check lottery due", ex);
+        }
+    }
+
+    /**
+     * Atomically resolves the open round: picks a ticket-weighted winner, credits the
+     * pot to their profile, and closes the round — all in one transaction. Returns the
+     * result, or {@code null} if there was no open round (already resolved).
+     */
+    public synchronized DrawResult resolveDraw(Random rng)
     {
         ensureOpen();
         boolean previousAutoCommit = true;
@@ -126,45 +181,40 @@ public class LotteryStore
             previousAutoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
 
-            long channelId;
             long pot;
-            try(PreparedStatement ps = connection.prepareStatement(
-                    "SELECT channel_id, pot FROM lottery_draws WHERE guild_id=?"))
+            try(PreparedStatement ps = connection.prepareStatement("SELECT pot FROM lottery_global WHERE id=1"))
             {
-                ps.setLong(1, guildId);
                 try(ResultSet rs = ps.executeQuery())
                 {
                     if(!rs.next())
                     {
                         connection.commit();
-                        return null; // already resolved / never existed
+                        return null; // already resolved / never opened
                     }
-                    channelId = rs.getLong(1);
-                    pot = rs.getLong(2);
+                    pot = rs.getLong(1);
                 }
             }
 
             List<TicketHolder> holders = new ArrayList<>();
-            long totalTickets = 0;
+            long total = 0;
             try(PreparedStatement ps = connection.prepareStatement(
-                    "SELECT user_id, tickets FROM lottery_tickets WHERE guild_id=? ORDER BY user_id ASC"))
+                    "SELECT user_id, tickets FROM lottery_tickets ORDER BY user_id ASC"))
             {
-                ps.setLong(1, guildId);
                 try(ResultSet rs = ps.executeQuery())
                 {
                     while(rs.next())
                     {
                         long tickets = rs.getLong(2);
                         holders.add(new TicketHolder(rs.getLong(1), tickets));
-                        totalTickets += tickets;
+                        total += tickets;
                     }
                 }
             }
 
             long winnerId = -1;
-            if(totalTickets > 0)
+            if(total > 0)
             {
-                winnerId = weightedPick(holders, Math.floorMod(rng.nextLong(), totalTickets));
+                winnerId = weightedPick(holders, Math.floorMod(rng.nextLong(), total));
                 try(PreparedStatement ps = connection.prepareStatement(
                         "UPDATE user_profiles SET currency=currency+?, updated_at=? WHERE user_id=?"))
                 {
@@ -175,9 +225,13 @@ public class LotteryStore
                 }
             }
 
-            deleteRound(guildId);
+            try(Statement st = connection.createStatement())
+            {
+                st.executeUpdate("DELETE FROM lottery_tickets");
+                st.executeUpdate("DELETE FROM lottery_global");
+            }
             connection.commit();
-            return new DrawResult(guildId, channelId, winnerId, pot, totalTickets, holders.size());
+            return new DrawResult(winnerId, pot, total, holders.size());
         }
         catch(SQLException ex)
         {
@@ -208,8 +262,6 @@ public class LotteryStore
         }
     }
 
-    // ---- pure winner selection --------------------------------------------
-
     /** Returns the user whose cumulative ticket range contains {@code roll} (0-based). */
     static long weightedPick(List<TicketHolder> holders, long roll)
     {
@@ -223,118 +275,16 @@ public class LotteryStore
         return holders.isEmpty() ? -1 : holders.get(holders.size() - 1).userId;
     }
 
-    // ---- internals ---------------------------------------------------------
-
-    private void ensureRound(long guildId, long channelId, long nowEpoch, long drawIntervalSeconds)
+    private long totalTickets()
     {
-        try(PreparedStatement ps = connection.prepareStatement(
-                "INSERT OR IGNORE INTO lottery_draws(guild_id, channel_id, draw_epoch, pot, created_at) "
-                        + "VALUES(?,?,?,0,?)"))
+        try(Statement st = connection.createStatement();
+            ResultSet rs = st.executeQuery("SELECT COALESCE(SUM(tickets),0) FROM lottery_tickets"))
         {
-            ps.setLong(1, guildId);
-            ps.setLong(2, channelId);
-            ps.setLong(3, nowEpoch + drawIntervalSeconds);
-            ps.setLong(4, nowEpoch);
-            ps.executeUpdate();
+            return rs.next() ? rs.getLong(1) : 0;
         }
         catch(SQLException ex)
         {
-            throw new EconomyStore.EconomyException("Failed to open lottery round", ex);
-        }
-    }
-
-    private void bumpTickets(long guildId, long userId, int count)
-    {
-        try(PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO lottery_tickets(guild_id, user_id, tickets) VALUES(?,?,?) "
-                        + "ON CONFLICT(guild_id, user_id) DO UPDATE SET tickets=tickets+?"))
-        {
-            ps.setLong(1, guildId);
-            ps.setLong(2, userId);
-            ps.setInt(3, count);
-            ps.setInt(4, count);
-            ps.executeUpdate();
-        }
-        catch(SQLException ex)
-        {
-            throw new EconomyStore.EconomyException("Failed to add lottery tickets", ex);
-        }
-    }
-
-    private void addPot(long guildId, long amount)
-    {
-        try(PreparedStatement ps = connection.prepareStatement(
-                "UPDATE lottery_draws SET pot=pot+? WHERE guild_id=?"))
-        {
-            ps.setLong(1, amount);
-            ps.setLong(2, guildId);
-            ps.executeUpdate();
-        }
-        catch(SQLException ex)
-        {
-            throw new EconomyStore.EconomyException("Failed to grow lottery pot", ex);
-        }
-    }
-
-    private void deleteRound(long guildId) throws SQLException
-    {
-        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM lottery_tickets WHERE guild_id=?"))
-        {
-            ps.setLong(1, guildId);
-            ps.executeUpdate();
-        }
-        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM lottery_draws WHERE guild_id=?"))
-        {
-            ps.setLong(1, guildId);
-            ps.executeUpdate();
-        }
-    }
-
-    private DrawInfo draw(long guildId, long userId)
-    {
-        long channelId;
-        long drawEpoch;
-        long pot;
-        try(PreparedStatement ps = connection.prepareStatement(
-                "SELECT channel_id, draw_epoch, pot FROM lottery_draws WHERE guild_id=?"))
-        {
-            ps.setLong(1, guildId);
-            try(ResultSet rs = ps.executeQuery())
-            {
-                if(!rs.next())
-                    return null;
-                channelId = rs.getLong(1);
-                drawEpoch = rs.getLong(2);
-                pot = rs.getLong(3);
-            }
-        }
-        catch(SQLException ex)
-        {
-            throw new EconomyStore.EconomyException("Failed to read lottery draw", ex);
-        }
-        long total = sumTickets(guildId, null);
-        long mine = sumTickets(guildId, userId);
-        return new DrawInfo(guildId, channelId, drawEpoch, pot, total, mine);
-    }
-
-    private long sumTickets(long guildId, Long userId)
-    {
-        String sql = userId == null
-                ? "SELECT COALESCE(SUM(tickets),0) FROM lottery_tickets WHERE guild_id=?"
-                : "SELECT COALESCE(SUM(tickets),0) FROM lottery_tickets WHERE guild_id=? AND user_id=?";
-        try(PreparedStatement ps = connection.prepareStatement(sql))
-        {
-            ps.setLong(1, guildId);
-            if(userId != null)
-                ps.setLong(2, userId);
-            try(ResultSet rs = ps.executeQuery())
-            {
-                return rs.next() ? rs.getLong(1) : 0;
-            }
-        }
-        catch(SQLException ex)
-        {
-            throw new EconomyStore.EconomyException("Failed to sum lottery tickets", ex);
+            throw new EconomyStore.EconomyException("Failed to total lottery tickets", ex);
         }
     }
 
@@ -368,8 +318,6 @@ public class LotteryStore
             throw new EconomyStore.EconomyException("Lottery database is not initialized");
     }
 
-    // ---- value types -------------------------------------------------------
-
     public static final class TicketHolder
     {
         final long userId;
@@ -384,25 +332,19 @@ public class LotteryStore
 
     public static final class DrawInfo
     {
-        private final long guildId;
-        private final long channelId;
         private final long drawEpoch;
         private final long pot;
         private final long totalTickets;
         private final long userTickets;
 
-        DrawInfo(long guildId, long channelId, long drawEpoch, long pot, long totalTickets, long userTickets)
+        DrawInfo(long drawEpoch, long pot, long totalTickets, long userTickets)
         {
-            this.guildId = guildId;
-            this.channelId = channelId;
             this.drawEpoch = drawEpoch;
             this.pot = pot;
             this.totalTickets = totalTickets;
             this.userTickets = userTickets;
         }
 
-        public long getGuildId() { return guildId; }
-        public long getChannelId() { return channelId; }
         public long getDrawEpoch() { return drawEpoch; }
         public long getPot() { return pot; }
         public long getTotalTickets() { return totalTickets; }
@@ -411,25 +353,19 @@ public class LotteryStore
 
     public static final class DrawResult
     {
-        private final long guildId;
-        private final long channelId;
         private final long winnerId;
         private final long pot;
         private final long totalTickets;
         private final int participants;
 
-        DrawResult(long guildId, long channelId, long winnerId, long pot, long totalTickets, int participants)
+        DrawResult(long winnerId, long pot, long totalTickets, int participants)
         {
-            this.guildId = guildId;
-            this.channelId = channelId;
             this.winnerId = winnerId;
             this.pot = pot;
             this.totalTickets = totalTickets;
             this.participants = participants;
         }
 
-        public long getGuildId() { return guildId; }
-        public long getChannelId() { return channelId; }
         public long getWinnerId() { return winnerId; }
         public long getPot() { return pot; }
         public long getTotalTickets() { return totalTickets; }
