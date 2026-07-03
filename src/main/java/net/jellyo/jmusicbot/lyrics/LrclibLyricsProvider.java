@@ -8,7 +8,9 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -26,6 +28,19 @@ class LrclibLyricsProvider implements LyricsProvider
     @Override
     public Optional<LyricsResult> search(String query, boolean allowDifferentArtistFallback) throws IOException
     {
+        // When we know the artist (query is "Artist - Title"), ask LRCLIB for that
+        // exact pairing first so the right track surfaces even if free-text q= buries it.
+        String[] artistTitle = InputValidator.splitArtistTitle(query);
+        if(artistTitle != null)
+        {
+            HttpUrl url = HttpUrl.parse(BASE + "/api/search").newBuilder()
+                    .addQueryParameter("track_name", artistTitle[1])
+                    .addQueryParameter("artist_name", artistTitle[0])
+                    .build();
+            Optional<LyricsResult> scoped = runSearch(url, query, query);
+            if(scoped.isPresent())
+                return scoped;
+        }
         for(String providerQuery : InputValidator.providerQueries(query))
         {
             Optional<LyricsResult> result = searchOnce(providerQuery, query);
@@ -40,6 +55,11 @@ class LrclibLyricsProvider implements LyricsProvider
         HttpUrl url = HttpUrl.parse(BASE + "/api/search").newBuilder()
                 .addQueryParameter("q", providerQuery)
                 .build();
+        return runSearch(url, providerQuery, scoringQuery);
+    }
+
+    private Optional<LyricsResult> runSearch(HttpUrl url, String providerQuery, String scoringQuery) throws IOException
+    {
         Request request = new Request.Builder()
                 .url(url)
                 .header("User-Agent", "JellyoMusicBot lyrics lookup")
@@ -53,25 +73,35 @@ class LrclibLyricsProvider implements LyricsProvider
             if(!root.isArray())
                 return Optional.empty();
 
-            LyricsResult best = null;
-            double bestScore = -1d;
+            List<LyricsResult> candidates = new ArrayList<>();
             for(JsonNode item : root)
             {
                 LyricsResult candidate = toResult(item);
-                if(candidate == null || !candidate.hasLyrics())
-                    continue;
-                double score = Math.max(score(scoringQuery, candidate), score(providerQuery, candidate));
-                if(score > bestScore)
-                {
-                    bestScore = score;
-                    best = candidate;
-                }
+                if(candidate != null)
+                    candidates.add(candidate);
             }
-
-            if(best != null && bestScore >= 0.12d)
-                return Optional.of(best);
-            return Optional.empty();
+            return selectBest(scoringQuery, providerQuery, candidates);
         }
+    }
+
+    static Optional<LyricsResult> selectBest(String scoringQuery, String providerQuery, List<LyricsResult> candidates)
+    {
+        LyricsResult best = null;
+        double bestScore = -1d;
+        for(LyricsResult candidate : candidates)
+        {
+            if(candidate == null || !candidate.hasLyrics())
+                continue;
+            double s = Math.max(score(scoringQuery, candidate), score(providerQuery, candidate));
+            if(s > bestScore)
+            {
+                bestScore = s;
+                best = candidate;
+            }
+        }
+        if(best != null && bestScore >= 0.12d)
+            return Optional.of(best);
+        return Optional.empty();
     }
 
     private LyricsResult toResult(JsonNode item)
@@ -112,7 +142,7 @@ class LrclibLyricsProvider implements LyricsProvider
         );
     }
 
-    private double score(String query, LyricsResult result)
+    static double score(String query, LyricsResult result)
     {
         String normalizedQuery = InputValidator.normalizeLookup(query);
         String normalizedTitle = InputValidator.normalizeLookup(result.title());
@@ -138,7 +168,7 @@ class LrclibLyricsProvider implements LyricsProvider
         return score;
     }
 
-    private double tokenScore(String query, String candidate)
+    static double tokenScore(String query, String candidate)
     {
         if(query.isEmpty() || candidate.isEmpty())
             return 0d;
