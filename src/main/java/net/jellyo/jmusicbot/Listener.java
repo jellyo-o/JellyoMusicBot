@@ -69,7 +69,11 @@ public class Listener extends ListenerAdapter
         if(bot.getConfig().useUpdateAlerts())
         {
             LOG.debug("Update alerts enabled; scheduling update check");
-            bot.getThreadpool().scheduleWithFixedDelay(() -> 
+            // The update check does blocking HTTP and a blocking JDA REST .complete(); never run it on
+            // bot.getThreadpool() (the single shared scheduler that drives fades, timers and panel
+            // refreshes) or it stalls everything bot-wide for seconds. Schedule the trigger there but
+            // run the actual work on the blocking pool.
+            bot.getThreadpool().scheduleWithFixedDelay(() -> bot.getBlockingThreadpool().submit(() ->
             {
                 try
                 {
@@ -101,7 +105,7 @@ public class Listener extends ListenerAdapter
                 {
                     LOG.warn("Failed to check for updates", ex);
                 }
-            }, 0, 24, TimeUnit.HOURS);
+            }), 0, 24, TimeUnit.HOURS);
         }
         else
         {

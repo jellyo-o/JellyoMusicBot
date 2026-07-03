@@ -428,6 +428,26 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(slashCommand("g", "Fast private guess for guess the music")
                 .addOptions(new OptionData(OptionType.STRING, "answer", "Song title", true)));
         commands.add(slashCommand("idk", "Toggle passing the current guess the music round"));
+        commands.add(slashCommand("hostgame", "Host a guess the music game where you pick the songs")
+                .addSubcommands(
+                        new SubcommandData("start", "Start a hosted lobby — you privately pick every song")
+                                .addOptions(guessModeOption(), guessWinOption(), guessInputOption(), guessMatchOption(),
+                                        guessClipPositionOption(),
+                                        new OptionData(OptionType.INTEGER, "seconds", "Clip seconds for custom mode", false).setRequiredRange(1, 60),
+                                        new OptionData(OptionType.INTEGER, "timeout", "Seconds before an unanswered round reveals; omitted uses auto", false).setRequiredRange(5, 600),
+                                        new OptionData(OptionType.INTEGER, "idle", "Seconds to wait for a new song before the game ends", false).setRequiredRange(15, 1800),
+                                        new OptionData(OptionType.INTEGER, "rounds", "Rounds for rounds mode", false).setRequiredRange(1, 50),
+                                        new OptionData(OptionType.INTEGER, "points", "Target points for points mode", false).setRequiredRange(1, 200),
+                                        new OptionData(OptionType.INTEGER, "guesses", "Guesses per user per round; 0 means unlimited", false).setRequiredRange(0, 20),
+                                        new OptionData(OptionType.INTEGER, "winners", "Correct guesses before a round ends", false).setRequiredRange(1, 10),
+                                        new OptionData(OptionType.BOOLEAN, "hints", "Progressively replay longer clips until someone guesses", false),
+                                        new OptionData(OptionType.STRING, "playlist", "Optional: pre-load songs from one of your playlists (private)", false).setAutoComplete(true)),
+                        new SubcommandData("add", "Privately add songs to your hosted game"),
+                        new SubcommandData("status", "Show the current hosted game"),
+                        new SubcommandData("join", "Join the current hosted game"),
+                        new SubcommandData("leave", "Leave the current hosted game"),
+                        new SubcommandData("reveal", "Reveal the current round"),
+                        new SubcommandData("stop", "Stop the current hosted game")));
         commands.add(slashCommand("playlists", "Shows your playlists"));
         commands.add(slashCommand("search", "Search YouTube and choose a result")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Search query", true)));
@@ -706,6 +726,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "lyrics": handleLyrics(event); break;
             case "correctlyrics": handleCorrectLyrics(event); break;
             case "guess": handleGuess(event); break;
+            case "hostgame": handleHostGame(event); break;
             case "g": bot.getGuessMusicService().guess(event, event.getOption("answer").getAsString()); break;
             case "idk": bot.getGuessMusicService().idk(event); break;
             case "playlists": handlePlaylists(event); break;
@@ -875,6 +896,50 @@ public class SlashCommandListener extends ListenerAdapter
         }
     }
 
+    private void handleHostGame(SlashCommandInteractionEvent event)
+    {
+        String subcommand = event.getSubcommandName();
+        if(subcommand == null)
+        {
+            event.reply(bot.getConfig().getError() + " Unknown host command.").setEphemeral(true).queue();
+            return;
+        }
+        if("add".equals(subcommand))
+        {
+            // Opens a private modal; the host's song text never appears in the channel.
+            bot.getGuessMusicService().openHostAddModal(event);
+            return;
+        }
+
+        SlashCommandContext context = new SlashCommandContext(event, bot, "");
+        switch(subcommand)
+        {
+            case "start":
+                if(!CommandChecks.checkMusicCommand(bot, context, false, true))
+                    return;
+                bot.getGuessMusicService().start(context, bot.getGuessMusicService().hostOptionsFromSlash(event));
+                break;
+            case "status":
+                bot.getGuessMusicService().status(context);
+                break;
+            case "join":
+                bot.getGuessMusicService().join(context);
+                break;
+            case "leave":
+                bot.getGuessMusicService().leave(context);
+                break;
+            case "reveal":
+                bot.getGuessMusicService().reveal(context);
+                break;
+            case "stop":
+                bot.getGuessMusicService().stop(context);
+                break;
+            default:
+                event.reply(bot.getConfig().getError() + " Unknown host command.").setEphemeral(true).queue();
+                break;
+        }
+    }
+
     private void handleEconomyCommand(SlashCommandInteractionEvent event, UnifiedCommand command, String args)
     {
         command.doCommand(new SlashCommandContext(event, bot, args));
@@ -943,6 +1008,8 @@ public class SlashCommandListener extends ListenerAdapter
         String optionName = event.getFocusedOption().getName();
         return ("name".equals(optionName) && isPlaylistNameCommand(event))
                 || ("playlist".equals(optionName) && "guess".equals(event.getName())
+                && "start".equals(event.getSubcommandName()))
+                || ("playlist".equals(optionName) && "hostgame".equals(event.getName())
                 && "start".equals(event.getSubcommandName()));
     }
 

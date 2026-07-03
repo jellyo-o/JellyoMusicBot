@@ -973,7 +973,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         EconomyService economy = manager.getBot().getEconomyService();
         if(economy == null || !economy.isEnabled())
             return;
-        manager.getBot().getThreadpool().submit(() ->
+        // Economy crediting does synchronous SQLite writes; run them on the blocking pool, never the
+        // single shared scheduler (a stalled write there would starve fades/timers/panel refreshes).
+        manager.getBot().getBlockingThreadpool().submit(() ->
         {
             try
             {
@@ -1478,6 +1480,10 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(history == null)
             return;
 
+        // Kept synchronous on the lavaplayer thread: this runs in onTrackStart, AFTER the new track has
+        // already begun (it is not on the silent transition gap between songs, unlike recordTrackEnd), so
+        // there is no latency to win here — and the store consolidates "same as previous track" by reading
+        // the latest row, which requires per-guild writes to land in true playback order.
         try
         {
             history.record(guildId, track);
@@ -1494,8 +1500,22 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(stats == null)
             return;
 
+        // Capture the session key synchronously (the caller nulls it right after) but run the dashboard
+        // DB write off the lavaplayer thread so it never sits between the ended track and the next one.
+        final String sessionKey = currentStatsSessionKey;
         Guild guild = manager.getBot().getJDA() == null ? null : guild(manager.getBot().getJDA());
-        stats.recordTrackEnd(currentStatsSessionKey, guildId, guild == null ? null : guild.getName(), track, endReason, skipInfo);
+        final String guildName = guild == null ? null : guild.getName();
+        manager.getBot().getBlockingThreadpool().submit(() ->
+        {
+            try
+            {
+                stats.recordTrackEnd(sessionKey, guildId, guildName, track, endReason, skipInfo);
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.warn("Failed to record track end stats for guild {}", guildId, ex);
+            }
+        });
     }
 
     private void recordTrackIssue(AudioTrack track, String eventType, String detail)
