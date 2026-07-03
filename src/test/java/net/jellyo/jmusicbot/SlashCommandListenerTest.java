@@ -57,6 +57,7 @@ public class SlashCommandListenerTest
         assertQueryAutocompleteEnabled("playnext");
         assertOptionAutocompleteEnabled("unlike", "target");
         assertSubcommandOptionAutocompleteEnabled("guess", "start", "playlist");
+        assertSubcommandOptionAutocompleteEnabled("hostgame", "start", "playlist");
     }
 
     @Test
@@ -69,7 +70,7 @@ public class SlashCommandListenerTest
         String[] expected = {
                 "about", "help", "ping", "settings",
                 "play", "playtop", "playplaylist", "playlist", "like", "unlike", "liked", "nowplaying", "queue", "history", "skip", "remove", "shuffle", "seek",
-                "lyrics", "correctlyrics", "guess", "g", "idk", "playlists", "search", "scsearch",
+                "lyrics", "correctlyrics", "guess", "hostgame", "g", "idk", "playlists", "search", "scsearch",
                 "forceskip", "pause", "resume", "stop", "volume", "filter", "repeat", "loop", "autoplay", "radio", "skipto", "move", "playnext", "forceremove",
                 "prefix", "setdj", "settc", "setvc", "setskip", "skipratio", "queuetype"
         };
@@ -217,6 +218,41 @@ public class SlashCommandListenerTest
         SlashCommandData idk = findSlashCommand("idk");
         assertNotNull(idk);
         assertTrue(idk.getOptions().isEmpty());
+    }
+
+    @Test
+    public void hostGameCommandHasExpectedShape()
+    {
+        SlashCommandData host = findSlashCommand("hostgame");
+        assertNotNull(host);
+        Set<String> subcommands = host.getSubcommands().stream()
+                .map(subcommand -> subcommand.getName())
+                .collect(Collectors.toSet());
+
+        String[] expected = {"start", "add", "status", "join", "leave", "reveal", "stop"};
+        for(String subcommand : expected)
+            assertTrue("Missing hostgame subcommand: " + subcommand, subcommands.contains(subcommand));
+
+        SubcommandData start = host.getSubcommands().stream()
+                .filter(subcommand -> "start".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(start);
+        // The hosted game is controlled by the host: an idle window ends it when songs run out, and a
+        // private playlist can pre-load songs.
+        assertTrue(hasOption(start.getOptions(), "idle"));
+        assertTrue(hasOption(start.getOptions(), "playlist"));
+        assertTrue(hasOption(start.getOptions(), "hints"));
+        assertTrue(hasOption(start.getOptions(), "timeout"));
+
+        // Privacy guarantee: songs are added through a modal (private), never a visible slash option, so
+        // the "add" subcommand must expose no options at all.
+        SubcommandData add = host.getSubcommands().stream()
+                .filter(subcommand -> "add".equals(subcommand.getName()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(add);
+        assertTrue("hostgame add must not expose a public song option", add.getOptions().isEmpty());
     }
 
     @Test
