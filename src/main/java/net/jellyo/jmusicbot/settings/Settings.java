@@ -39,8 +39,10 @@ public class Settings implements GuildSettingsProvider
     private QueueType queueType;
     private String prefix;
     private double skipRatio;
+    private boolean autoPreloadLyrics;
+    private boolean autoShowLyrics;
 
-    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType)
+    public Settings(SettingsManager manager, String textId, String voiceId, String roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType, boolean autoPreloadLyrics, boolean autoShowLyrics)
     {
         this.manager = manager;
         try
@@ -73,9 +75,11 @@ public class Settings implements GuildSettingsProvider
         this.prefix = prefix;
         this.skipRatio = skipRatio;
         this.queueType = queueType;
+        this.autoPreloadLyrics = autoPreloadLyrics;
+        this.autoShowLyrics = autoShowLyrics;
     }
-    
-    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType)
+
+    public Settings(SettingsManager manager, long textId, long voiceId, long roleId, int volume, RepeatMode repeatMode, AutoplayMode autoplayMode, String prefix, double skipRatio, QueueType queueType, boolean autoPreloadLyrics, boolean autoShowLyrics)
     {
         this.manager = manager;
         this.textId = textId;
@@ -87,6 +91,8 @@ public class Settings implements GuildSettingsProvider
         this.prefix = prefix;
         this.skipRatio = skipRatio;
         this.queueType = queueType;
+        this.autoPreloadLyrics = autoPreloadLyrics;
+        this.autoShowLyrics = autoShowLyrics;
     }
     
     // Getters
@@ -133,6 +139,16 @@ public class Settings implements GuildSettingsProvider
     public QueueType getQueueType()
     {
         return queueType;
+    }
+
+    public boolean isAutoPreloadLyrics()
+    {
+        return autoPreloadLyrics;
+    }
+
+    public boolean isAutoShowLyrics()
+    {
+        return autoShowLyrics;
     }
 
     @Override
@@ -193,6 +209,18 @@ public class Settings implements GuildSettingsProvider
     public void setQueueType(QueueType queueType)
     {
         this.queueType = queueType;
+        this.manager.writeSettings();
+    }
+
+    public void setAutoPreloadLyrics(boolean value)
+    {
+        this.autoPreloadLyrics = value;
+        this.manager.writeSettings();
+    }
+
+    public void setAutoShowLyrics(boolean value)
+    {
+        this.autoShowLyrics = value;
         this.manager.writeSettings();
     }
 }
