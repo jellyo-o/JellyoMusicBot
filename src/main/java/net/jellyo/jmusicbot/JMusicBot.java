@@ -265,6 +265,8 @@ public class JMusicBot
                         new WorkCmd(bot),
                         new TriviaCmd(bot),
                         new DuelCmd(bot),
+                        new FourDCmd(bot),
+                        new TotoCmd(bot),
                         new LotteryCmd(bot),
                         new LeaderboardCmd(bot),
                         new AchievementsCmd(bot),

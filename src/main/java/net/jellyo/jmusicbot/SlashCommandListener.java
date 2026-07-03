@@ -43,6 +43,7 @@ import com.jagrosh.jmusicbot.commands.economy.CrashCmd;
 import com.jagrosh.jmusicbot.commands.economy.DailyCmd;
 import com.jagrosh.jmusicbot.commands.economy.DoubleCmd;
 import com.jagrosh.jmusicbot.commands.economy.DuelCmd;
+import com.jagrosh.jmusicbot.commands.economy.FourDCmd;
 import com.jagrosh.jmusicbot.commands.economy.GambleCmd;
 import com.jagrosh.jmusicbot.commands.economy.HiLoCmd;
 import com.jagrosh.jmusicbot.commands.economy.KenoCmd;
@@ -54,6 +55,7 @@ import com.jagrosh.jmusicbot.commands.economy.RouletteCmd;
 import com.jagrosh.jmusicbot.commands.economy.RpsCmd;
 import com.jagrosh.jmusicbot.commands.economy.ScratchCmd;
 import com.jagrosh.jmusicbot.commands.economy.StatsCmd;
+import com.jagrosh.jmusicbot.commands.economy.TotoCmd;
 import com.jagrosh.jmusicbot.commands.economy.TriviaCmd;
 import com.jagrosh.jmusicbot.commands.economy.WheelCmd;
 import com.jagrosh.jmusicbot.commands.economy.WorkCmd;
@@ -186,6 +188,8 @@ public class SlashCommandListener extends ListenerAdapter
     private final WorkCmd workCmd;
     private final TriviaCmd triviaCmd;
     private final DuelCmd duelCmd;
+    private final FourDCmd fourDCmd;
+    private final TotoCmd totoCmd;
     private final LotteryCmd lotteryCmd;
     private final LeaderboardCmd leaderboardCmd;
     private final AchievementsCmd achievementsCmd;
@@ -235,6 +239,8 @@ public class SlashCommandListener extends ListenerAdapter
         this.workCmd = new WorkCmd(bot);
         this.triviaCmd = new TriviaCmd(bot);
         this.duelCmd = new DuelCmd(bot);
+        this.fourDCmd = new FourDCmd(bot);
+        this.totoCmd = new TotoCmd(bot);
         this.lotteryCmd = new LotteryCmd(bot);
         this.leaderboardCmd = new LeaderboardCmd(bot);
         this.achievementsCmd = new AchievementsCmd(bot);
@@ -590,6 +596,15 @@ public class SlashCommandListener extends ListenerAdapter
         commands.add(slashCommand("duel", "Challenge another player to a coinflip duel")
                 .addOptions(new OptionData(OptionType.USER, "opponent", "Who to duel", true),
                         new OptionData(OptionType.INTEGER, "amount", "The ante", true).setRequiredRange(10, 1_000_000)));
+        commands.add(slashCommand("4d", "Singapore 4-D: bet a 4-digit number vs the house")
+                .addOptions(new OptionData(OptionType.STRING, "number", "A 4-digit number, a roll like R234, or qp", true),
+                        new OptionData(OptionType.INTEGER, "amount", "Stake per number", true).setRequiredRange(10, 1_000_000),
+                        new OptionData(OptionType.STRING, "bet", "Big (all prizes) or Small (top 3, bigger payout)", false)
+                                .addChoice("big", "big").addChoice("small", "small"),
+                        new OptionData(OptionType.BOOLEAN, "system", "Bet every permutation of the digits", false)));
+        commands.add(slashCommand("toto", "Singapore TOTO: pick 6 of 49 vs the house")
+                .addOptions(new OptionData(OptionType.STRING, "numbers", "6-12 numbers, 'roll n1..n5', or 'qp'/'qp7'..'qp12'", true),
+                        new OptionData(OptionType.INTEGER, "amount", "Stake per board", true).setRequiredRange(10, 1_000_000)));
         commands.add(slashCommand("lottery", "Buy tickets or check the server lottery")
                 .addOptions(new OptionData(OptionType.STRING, "action", "Buy tickets or view the pot", false)
                                 .addChoice("info", "info").addChoice("buy", "buy"),
@@ -810,6 +825,13 @@ public class SlashCommandListener extends ListenerAdapter
             case "trivia": handleEconomyCommand(event, triviaCmd, ""); break;
             case "duel": handleEconomyCommand(event, duelCmd,
                     event.getOption("opponent").getAsUser().getId() + " " + event.getOption("amount").getAsLong()); break;
+            case "4d": handleEconomyCommand(event, fourDCmd,
+                    getOptionalStringArg(event, "number") + " "
+                            + (event.getOption("bet") != null ? event.getOption("bet").getAsString() : "big") + " "
+                            + event.getOption("amount").getAsLong()
+                            + (event.getOption("system") != null && event.getOption("system").getAsBoolean() ? " system" : "")); break;
+            case "toto": handleEconomyCommand(event, totoCmd,
+                    getOptionalStringArg(event, "numbers") + " " + event.getOption("amount").getAsLong()); break;
             case "lottery": handleEconomyCommand(event, lotteryCmd,
                     getOptionalStringArg(event, "action") + optionalLongSuffix(event, "tickets")); break;
             case "leaderboard": handleEconomyCommand(event, leaderboardCmd, getOptionalStringArg(event, "metric")); break;
