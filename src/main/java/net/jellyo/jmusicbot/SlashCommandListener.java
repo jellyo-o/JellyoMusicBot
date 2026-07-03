@@ -134,7 +134,6 @@ public class SlashCommandListener extends ListenerAdapter
     private final Bot bot;
     private final AtomicLong searchMenuCounter = new AtomicLong();
     private final Map<String, SearchMenuState> searchMenus = new ConcurrentHashMap<>();
-    private volatile LyricsService lyricsService;
     private final SkipCmd skipCmd;
     private final RemoveCmd removeCmd;
     private final ShuffleCmd shuffleCmd;
@@ -1830,7 +1829,7 @@ public class SlashCommandListener extends ListenerAdapter
                 event.reply(bot.getConfig().getError() + " There must be music playing, or you must provide a song name.").setEphemeral(true).queue();
                 return;
             }
-            query = sendingHandler.getPlayer().getPlayingTrack().getInfo().title;
+            query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(sendingHandler.getPlayer().getPlayingTrack());
         }
 
         String usedQuery = query;
@@ -1913,24 +1912,7 @@ public class SlashCommandListener extends ListenerAdapter
 
     private LyricsService getLyricsService()
     {
-        if (lyricsService == null)
-        {
-            synchronized (this)
-            {
-                if (lyricsService == null)
-                {
-                    try
-                    {
-                        lyricsService = new LyricsService(Path.of("lyrics-cache.db"));
-                    }
-                    catch (Exception ex)
-                    {
-                        LOG.warn("Failed to initialize lyrics service", ex);
-                    }
-                }
-            }
-        }
-        return lyricsService;
+        return bot.getLyricsService();
     }
 
     private Optional<LyricsCache.CachedLyrics> fetchLyrics(LyricsService service, String query)

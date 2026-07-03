@@ -36,6 +36,8 @@ import com.jagrosh.jmusicbot.economy.EconomyStore;
 import com.jagrosh.jmusicbot.economy.ListeningRewardService;
 import com.jagrosh.jmusicbot.gui.GUI;
 import com.jagrosh.jmusicbot.guessmusic.GuessMusicService;
+import com.jagrosh.jmusicbot.lyrics.LyricsPreloader;
+import com.jagrosh.jmusicbot.lyrics.LyricsService;
 import com.jagrosh.jmusicbot.playlist.PlaylistLoader;
 import com.jagrosh.jmusicbot.playlist.UserPlaylistService;
 import com.jagrosh.jmusicbot.recovery.CrashRecoveryService;
@@ -87,7 +89,10 @@ public class Bot
     private final ListeningRewardService listeningRewardService;
     private final AvoidStore avoidStore;
     private final CrashRecoveryService crashRecoveryService;
-    
+    private final LyricsService lyricsService;
+    private final LyricsPreloader lyricsPreloader;
+    private final ExecutorService lyricsPreloadPool;
+
     private boolean shuttingDown = false;
     private JDA jda;
     private GUI gui;
@@ -224,6 +229,34 @@ public class Bot
         this.aloneInVoiceHandler.init();
         this.listeningRewardService = new ListeningRewardService(this);
         this.listeningRewardService.init();
+
+        // Shared lyrics service (one SQLite-backed cache) used by /lyrics, the panel
+        // button, preloading, and auto-show. Failure here must not abort startup.
+        LyricsService ls = null;
+        try
+        {
+            ls = new LyricsService(Paths.get("lyrics-cache.db"));
+        }
+        catch(Exception ex)
+        {
+            LOG.warn("Failed to initialize lyrics service; lyrics features disabled", ex);
+        }
+        this.lyricsService = ls;
+        // Dedicated single-thread pool so speculative preloads never contend with
+        // real-time /lyrics, economy writes, or dashboard I/O on the blocking pool.
+        this.lyricsPreloadPool = Executors.newSingleThreadExecutor(r ->
+        {
+            Thread thread = new Thread(r, "jmusicbot-lyrics-preload");
+            thread.setDaemon(true);
+            return thread;
+        });
+        final LyricsService lsFinal = ls;
+        this.lyricsPreloader = (ls == null) ? null : new LyricsPreloader(lyricsPreloadPool, query ->
+        {
+            try { lsFinal.preloadPrimary(query); }
+            catch(Exception ignored) {}
+        }, 256);
+
         LOG.info("Bot services initialized");
     }
     
@@ -251,6 +284,18 @@ public class Bot
     public ExecutorService getBlockingThreadpool()
     {
         return blockingThreadpool;
+    }
+
+    /** Shared lyrics service (may be {@code null} if initialization failed). */
+    public LyricsService getLyricsService()
+    {
+        return lyricsService;
+    }
+
+    /** Preloader that warms lyrics for upcoming songs (may be {@code null} if lyrics are unavailable). */
+    public LyricsPreloader getLyricsPreloader()
+    {
+        return lyricsPreloader;
     }
     
     public PlayerManager getPlayerManager()
@@ -383,6 +428,7 @@ public class Bot
             crashRecoveryService.saveAllSnapshots();
         threadpool.shutdownNow();
         blockingThreadpool.shutdownNow();
+        lyricsPreloadPool.shutdownNow();
         if(jda.getStatus()!=JDA.Status.SHUTTING_DOWN)
         {
             jda.getGuilds().stream().forEach(g -> 

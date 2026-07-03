@@ -94,8 +94,7 @@ public class NowplayingHandler
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
     private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
-    private volatile LyricsService lyricsService;
-    
+
     public NowplayingHandler(Bot bot)
     {
         this.bot = bot;
@@ -1109,7 +1108,7 @@ public class NowplayingHandler
         if(handler == null)
             return;
 
-        String query = handler.getPlayer().getPlayingTrack().getInfo().title;
+        String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(handler.getPlayer().getPlayingTrack());
         event.deferReply(true).queue(hook -> CompletableFuture
                 .supplyAsync(() -> fetchLyrics(query))
                 .thenAccept(opt ->
@@ -1157,24 +1156,7 @@ public class NowplayingHandler
 
     private LyricsService getLyricsService()
     {
-        if(lyricsService == null)
-        {
-            synchronized(this)
-            {
-                if(lyricsService == null)
-                {
-                    try
-                    {
-                        lyricsService = new LyricsService(Path.of("lyrics-cache.db"));
-                    }
-                    catch(Exception ignored)
-                    {
-                        return null;
-                    }
-                }
-            }
-        }
-        return lyricsService;
+        return bot.getLyricsService();
     }
 
     private AudioHandler requirePlaying(ButtonInteractionEvent event)
