@@ -39,7 +39,7 @@ public class TriviaSession extends GameSession
 
     public TriviaSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, Question question)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, 0); // no wager
+        super(bot, ownerId, ownerName, guildId, channelId, 0, null); // no wager, no escrow
         this.question = question;
     }
 

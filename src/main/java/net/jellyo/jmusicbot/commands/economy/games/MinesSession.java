@@ -45,9 +45,9 @@ public class MinesSession extends GameSession
     private int revealedCount;
 
     public MinesSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId,
-                        long wager, int bombs, Random rng)
+                        long wager, String escrowId, int bombs, Random rng)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
         this.bombs = bombs;
         this.mines = MinesGame.placeBombs(bombs, rng);
     }

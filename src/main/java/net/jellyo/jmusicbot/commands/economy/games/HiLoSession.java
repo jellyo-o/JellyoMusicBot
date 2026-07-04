@@ -39,9 +39,10 @@ public class HiLoSession extends GameSession
     private long pot;
     private int streak;
 
-    public HiLoSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager, int card)
+    public HiLoSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager,
+                       String escrowId, int card)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
         this.card = card;
         this.pot = wager;
         this.streak = 0;

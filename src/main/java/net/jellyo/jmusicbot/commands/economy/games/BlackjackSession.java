@@ -37,13 +37,13 @@ public class BlackjackSession extends GameSession
 
     private final List<Integer> player = new ArrayList<>();
     private final List<Integer> dealer = new ArrayList<>();
-    private long stake;
+    private volatile long stake; // volatile: a double-down grows it on the click thread; a timeout may read it on the scheduler
     private boolean canDouble = true;
 
     public BlackjackSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId,
-                            long wager, List<Integer> playerCards, List<Integer> dealerCards)
+                            long wager, String escrowId, List<Integer> playerCards, List<Integer> dealerCards)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
         this.player.addAll(playerCards);
         this.dealer.addAll(dealerCards);
         this.stake = wager;
@@ -95,7 +95,9 @@ public class BlackjackSession extends GameSession
                         .setEphemeral(true).queue(x -> {}, t -> {});
                 return;
             }
-            if(!bot.getEconomyService().trySpend(ownerId, wager))
+            // Grow the escrow (debit the extra stake + record it) so the doubled amount is crash-recoverable
+            // too, rather than a bare debit that a crash could strand.
+            if(!bot.getEconomyService().increaseEscrow(escrowId, wager))
             {
                 event.reply(bot.getConfig().getError() + " You can't afford to double.")
                         .setEphemeral(true).queue(x -> {}, t -> {});

@@ -39,12 +39,13 @@ public class RpsCmd extends InteractiveGameCommand
             ctx.replyError("Usage: `rps <amount>` — then pick rock, paper or scissors.");
             return;
         }
-        long amount = takeWager(ctx, economy, tokens[0], RpsSession.SIZING_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], RpsSession.SIZING_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
         RpsSession session = new RpsSession(bot, ctx.getAuthor().getIdLong(),
                 ctx.getAuthor().getEffectiveName(), ctx.getGuild().getIdLong(),
-                ctx.getChannel().getIdLong(), amount);
+                ctx.getChannel().getIdLong(), amount, w.id());
         start(ctx, session, RpsSession.panel(amount), RpsSession.buttons(), DEFAULT_TIMEOUT_MS);
     }
 }

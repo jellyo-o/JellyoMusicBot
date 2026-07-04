@@ -99,13 +99,14 @@ public class FourDCmd extends WagerGameCommand
                     + " numbers x " + EconomyService.coins(unit) + ") — you only have " + EconomyService.coins(balance) + ".");
             return;
         }
-        if(!economy.trySpend(ctx.getAuthor().getIdLong(), totalStake))
+        final long authorId = ctx.getAuthor().getIdLong();
+        final String escrowId = economy.escrow(authorId, totalStake, name);
+        if(escrowId == null)
         {
             ctx.replyError("You don't have enough coins for that bet.");
             return;
         }
 
-        final long authorId = ctx.getAuthor().getIdLong();
         final MessageChannel channel = ctx.getChannel();
         final Draw draw = FourDGame.draw(ThreadLocalRandom.current());
         final Outcome outcome = FourDGame.settle(numbers, betType, unit, draw);
@@ -119,7 +120,7 @@ public class FourDCmd extends WagerGameCommand
                     + "** (" + betType.name().toLowerCase(Locale.ROOT) + ")"));
 
         // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
-        final GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel);
+        final GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel, escrowId);
         final MessageEmbed reveal = resultEmbed(draw, outcome, betType, betLabel, settled);
         sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg -> msg.editMessageEmbeds(reveal).queue());
     }

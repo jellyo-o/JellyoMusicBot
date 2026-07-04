@@ -44,13 +44,14 @@ public class HiLoCmd extends InteractiveGameCommand
             ctx.replyError("Usage: `hilo <amount>` — then guess higher or lower.");
             return;
         }
-        long amount = takeWager(ctx, economy, tokens[0], HiLoSession.SIZING_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], HiLoSession.SIZING_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
         int firstCard = HiLoGame.draw(ThreadLocalRandom.current());
         HiLoSession session = new HiLoSession(bot, ctx.getAuthor().getIdLong(),
                 ctx.getAuthor().getEffectiveName(), ctx.getGuild().getIdLong(),
-                ctx.getChannel().getIdLong(), amount, firstCard);
+                ctx.getChannel().getIdLong(), amount, w.id(), firstCard);
         start(ctx, session, HiLoSession.panel(firstCard, amount, 0, amount),
                 HiLoSession.buttons(firstCard), DEFAULT_TIMEOUT_MS);
     }

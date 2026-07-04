@@ -46,6 +46,10 @@ import com.jagrosh.jmusicbot.recovery.CrashRecoveryService;
 import com.jagrosh.jmusicbot.recovery.QueueSnapshotStore;
 import com.jagrosh.jmusicbot.settings.SettingsManager;
 import com.jagrosh.jmusicbot.utils.OtherUtil;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.Activity;
@@ -86,6 +90,8 @@ public class Bot
     private final DashboardStatsService dashboardStats;
     private final DashboardServer dashboardServer;
     private final EconomyStore economyStore;
+    /** Wagers refunded on boot (games live in memory at a previous crash); the players are DM'd once ready. */
+    private volatile List<EconomyStore.PendingWager> reclaimedWagers = Collections.emptyList();
     private final EconomyService economyService;
     private final AchievementService achievementService;
     private final ScheduledExecutorService gamesScheduler;
@@ -194,6 +200,19 @@ public class Bot
         this.economyService = economyService;
         this.achievementService = new AchievementService(this);
         this.economyService.setObserver(this.achievementService);
+
+        // Refund any wager whose game was still live in memory when a previous run crashed, so a crash can
+        // never cost a player the coins they staked. Affected players are DM'd once JDA is ready (onReady).
+        try
+        {
+            this.reclaimedWagers = this.economyService.reclaimAbandonedWagers();
+        }
+        catch(RuntimeException ex)
+        {
+            LOG.warn("Failed to reclaim interrupted wagers on boot", ex);
+        }
+        if(!this.reclaimedWagers.isEmpty())
+            LOG.info("Refunded {} interrupted wager(s) staked before a previous crash", this.reclaimedWagers.size());
 
         // Dedicated pool for casino game animations + interactive-session timeouts, kept off the
         // single-thread scheduler so a spinning-dice animation never contends with music timers.
@@ -423,6 +442,33 @@ public class Bot
     public EconomyStore getEconomyStore()
     {
         return economyStore;
+    }
+
+    /**
+     * Best-effort DM to each player whose interrupted wager was refunded on boot, so a crash-time refund is
+     * transparent (people prefer being told over a silent balance change) rather than a mystery. Runs once
+     * JDA is ready and clears the list so a reconnect can't double-notify.
+     */
+    public void announceReclaimedWagers()
+    {
+        JDA jdaRef = getJDA();
+        if(jdaRef == null)
+            return; // JDA not ready yet — keep the list so a later onReady can still deliver the DMs
+        List<EconomyStore.PendingWager> reclaimed = this.reclaimedWagers;
+        this.reclaimedWagers = Collections.emptyList(); // cleared only once delivery is attempted (no reconnect double-DM)
+        if(reclaimed.isEmpty())
+            return;
+        Map<Long, Long> byUser = new LinkedHashMap<>();
+        for(EconomyStore.PendingWager w : reclaimed)
+            byUser.merge(w.getUserId(), w.getAmount(), Long::sum);
+        byUser.forEach((userId, amount) ->
+                jdaRef.retrieveUserById(userId).queue(user ->
+                        user.openPrivateChannel().queue(channel ->
+                                channel.sendMessage("♻️ The bot restarted while you had a game in progress, so your "
+                                        + "staked **" + EconomyService.coins(amount)
+                                        + "** has been refunded. Sorry for the interruption!").queue(m -> {}, t -> {}),
+                                t -> {}),
+                        t -> LOG.debug("Could not DM wager refund to {}: {}", userId, t.toString())));
     }
 
     public EconomyService getEconomyService()

@@ -85,26 +85,45 @@ public class LotteryStore
     }
 
     /**
-     * Adds {@code count} tickets for a user (coins already debited by the caller), opening the round if
-     * none is live and enforcing the per-user cap atomically. The three writes (round / tickets / pot)
-     * commit as <b>one transaction</b>, so a crash mid-buy rolls back instead of leaving the pot short of
-     * the tickets it should have funded. Returns the updated round info, or {@code null} if the cap would
-     * be exceeded — in which case nothing is written and the caller must refund the coins.
+     * Buys {@code count} tickets for a user in a <b>single transaction</b> that debits their coins, opens the
+     * round if none is live, enforces the per-user cap, and grows the pot — all on this store's connection.
+     * Because the coin debit and the ticket write commit or roll back together, a crash mid-buy can never
+     * take the coins without granting the tickets (or vice-versa): the whole buy is crash-safe with no
+     * separate refund needed. Returns {@link BuyOutcome.Status#INSUFFICIENT} if the buyer can't afford the
+     * cost, {@link BuyOutcome.Status#CAP_REACHED} if it would exceed the cap (nothing written), or
+     * {@link BuyOutcome.Status#BOUGHT} with the updated round info.
      *
      * <p>The caller guarantees {@code count <= maxTicketsPerUser} (a single request never exceeds the cap),
      * so the fresh-insert branch is always within the cap; concurrent repeat buys route through the
-     * conflict {@code UPDATE ... WHERE tickets+count <= cap}, which is what closes the check-then-act race.
+     * conflict {@code UPDATE ... WHERE tickets+count <= cap}, which closes the check-then-act race.
      */
-    public synchronized DrawInfo buyTickets(long userId, int count, long ticketPrice,
-                                            long drawIntervalSeconds, long nowEpoch, int maxTicketsPerUser)
+    public synchronized BuyOutcome buyTickets(long userId, int count, long ticketPrice,
+                                              long drawIntervalSeconds, long nowEpoch, int maxTicketsPerUser)
     {
         ensureOpen();
+        long cost = (long) count * ticketPrice;
         boolean previousAutoCommit = true;
-        DrawInfo info = null; // stays null iff the cap rejected the buy (nothing written)
         try
         {
             previousAutoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
+
+            // Debit the buyer's coins on THIS connection, inside the same transaction as the ticket write.
+            int debited;
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE user_profiles SET currency=currency-?, updated_at=? WHERE user_id=? AND currency>=?"))
+            {
+                ps.setLong(1, cost);
+                ps.setLong(2, nowEpoch);
+                ps.setLong(3, userId);
+                ps.setLong(4, cost);
+                debited = ps.executeUpdate();
+            }
+            if(debited == 0)
+            {
+                connection.rollback(); // can't afford — nothing taken
+                return BuyOutcome.insufficient();
+            }
 
             try(PreparedStatement ps = connection.prepareStatement(
                     "INSERT OR IGNORE INTO lottery_global(id, draw_epoch, pot) VALUES(1, ?, 0)"))
@@ -127,21 +146,20 @@ public class LotteryStore
             }
             if(updated == 0)
             {
-                connection.rollback(); // cap would be exceeded — leave the round/pot untouched
+                connection.rollback(); // cap would be exceeded — this also undoes the debit above
+                return BuyOutcome.capReached();
             }
-            else
+
+            try(PreparedStatement ps = connection.prepareStatement("UPDATE lottery_global SET pot=pot+? WHERE id=1"))
             {
-                try(PreparedStatement ps = connection.prepareStatement("UPDATE lottery_global SET pot=pot+? WHERE id=1"))
-                {
-                    ps.setLong(1, count * ticketPrice);
-                    ps.executeUpdate();
-                }
-                // Read the return value INSIDE the transaction, before commit: if this read faults it is a
-                // SQLException caught below → rollback, so the caller refunds a buy that never committed.
-                // (Reading after commit could throw on an already-durable write and wrongly trigger a refund.)
-                info = readInfoInTransaction(userId);
-                connection.commit();
+                ps.setLong(1, cost);
+                ps.executeUpdate();
             }
+            // Read the return value INSIDE the transaction, before commit, so a read fault rolls the whole
+            // buy back rather than being mistaken for a committed-but-unreadable buy.
+            DrawInfo info = readInfoInTransaction(userId);
+            connection.commit();
+            return BuyOutcome.bought(info);
         }
         catch(SQLException ex)
         {
@@ -152,7 +170,6 @@ public class LotteryStore
         {
             restoreAutoCommit(previousAutoCommit);
         }
-        return info;
     }
 
     /** Reads the round info on the current connection, letting a fault surface as SQLException (so the
@@ -409,6 +426,28 @@ public class LotteryStore
         public long getPot() { return pot; }
         public long getTotalTickets() { return totalTickets; }
         public long getUserTickets() { return userTickets; }
+    }
+
+    /** Outcome of a {@link #buyTickets} call: the buy went through, or was refused (can't afford / cap). */
+    public static final class BuyOutcome
+    {
+        public enum Status { INSUFFICIENT, CAP_REACHED, BOUGHT }
+
+        private final Status status;
+        private final DrawInfo info;
+
+        private BuyOutcome(Status status, DrawInfo info)
+        {
+            this.status = status;
+            this.info = info;
+        }
+
+        static BuyOutcome insufficient() { return new BuyOutcome(Status.INSUFFICIENT, null); }
+        static BuyOutcome capReached() { return new BuyOutcome(Status.CAP_REACHED, null); }
+        static BuyOutcome bought(DrawInfo info) { return new BuyOutcome(Status.BOUGHT, info); }
+
+        public Status getStatus() { return status; }
+        public DrawInfo getInfo() { return info; }
     }
 
     public static final class DrawResult

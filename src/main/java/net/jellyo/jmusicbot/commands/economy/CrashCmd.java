@@ -71,14 +71,15 @@ public class CrashCmd extends InteractiveGameCommand
             return;
         }
 
-        long amount = takeWager(ctx, economy, tokens[0], CrashGame.MAX_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], CrashGame.MAX_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
 
         double crashPoint = CrashGame.crashPoint(ThreadLocalRandom.current());
         CrashSession session = new CrashSession(bot, ctx.getAuthor().getIdLong(),
                 ctx.getAuthor().getEffectiveName(), ctx.getGuild().getIdLong(),
-                ctx.getChannel().getIdLong(), amount, crashPoint, target);
+                ctx.getChannel().getIdLong(), amount, w.id(), crashPoint, target);
         start(ctx, session, CrashSession.startPanel(amount, target), CrashSession.buttons(), CRASH_TIMEOUT_MS);
     }
 }

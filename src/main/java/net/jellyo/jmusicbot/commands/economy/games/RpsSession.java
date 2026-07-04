@@ -34,9 +34,10 @@ public class RpsSession extends GameSession
     private static final double WIN_MULTIPLIER = 1.95;
     public static final double SIZING_MULTIPLIER = WIN_MULTIPLIER;
 
-    public RpsSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager)
+    public RpsSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager,
+                      String escrowId)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
     }
 
     public static List<ActionRow> buttons()

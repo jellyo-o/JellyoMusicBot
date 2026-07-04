@@ -52,9 +52,9 @@ public class CrashSession extends GameSession
     private final List<ScheduledFuture<?>> tickTasks = new CopyOnWriteArrayList<>();
 
     public CrashSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId,
-                        long wager, double crashPoint, double target)
+                        long wager, String escrowId, double crashPoint, double target)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
         this.crashPoint = crashPoint;
         this.target = target;
     }

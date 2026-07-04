@@ -66,6 +66,7 @@ public class Listener extends ListenerAdapter
             LOG.warn(event.getJDA().getInviteUrl(JMusicBot.RECOMMENDED_PERMS));
         }
         credit(event.getJDA());
+        bot.announceReclaimedWagers(); // tell players about any wager refunded after a crash restart
         if(bot.getConfig().useUpdateAlerts())
         {
             LOG.debug("Update alerts enabled; scheduling update check");

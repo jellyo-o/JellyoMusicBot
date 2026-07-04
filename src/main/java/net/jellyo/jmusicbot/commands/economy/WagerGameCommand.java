@@ -43,11 +43,12 @@ public abstract class WagerGameCommand extends EconomyCommand
     }
 
     /**
-     * Validates a bet token against the table limit for {@code sizingMultiplier}
-     * and atomically debits it. On any problem it replies to the user and returns
-     * {@code -1}; on success the wager has already been spent.
+     * Validates a bet token against the table limit for {@code sizingMultiplier} and atomically escrows it
+     * (debit + durable crash-recovery record). On any problem it replies to the user and returns
+     * {@code null}; on success the wager is held under the returned {@link EscrowedWager#id()}, which the
+     * caller must hand to {@code settleGame}/{@code resolveEscrow} when the game ends.
      */
-    protected long takeWager(CommandContext ctx, EconomyService economy, String token, double sizingMultiplier)
+    protected EscrowedWager takeWager(CommandContext ctx, EconomyService economy, String token, double sizingMultiplier)
     {
         long authorId = ctx.getAuthor().getIdLong();
         long balance = economy.getBalance(authorId);
@@ -55,32 +56,49 @@ public abstract class WagerGameCommand extends EconomyCommand
         {
             ctx.replyWarning("You need at least " + EconomyService.coins(Payouts.MIN_BET)
                     + " to play. Try `daily` to top up.");
-            return -1;
+            return null;
         }
         long amount = parseAmount(token, balance);
         long maxBet = Payouts.maxBetFor(sizingMultiplier);
         if(amount < Payouts.MIN_BET)
         {
             ctx.replyError("The minimum bet is " + EconomyService.coins(Payouts.MIN_BET) + ".");
-            return -1;
+            return null;
         }
         if(amount > maxBet)
         {
             ctx.replyError("The table limit for this bet is " + EconomyService.coins(maxBet)
                     + " (higher-payout bets have lower limits).");
-            return -1;
+            return null;
         }
         if(amount > balance)
         {
             ctx.replyError("You only have " + EconomyService.coins(balance) + ".");
-            return -1;
+            return null;
         }
-        if(!economy.trySpend(authorId, amount))
+        String escrowId = economy.escrow(authorId, amount, name);
+        if(escrowId == null)
         {
             ctx.replyError("You don't have enough coins for that bet.");
-            return -1;
+            return null;
         }
-        return amount;
+        return new EscrowedWager(amount, escrowId);
+    }
+
+    /** A wager whose stake has been escrowed (debited + crash-recorded): its amount and its escrow id. */
+    public static final class EscrowedWager
+    {
+        private final long amount;
+        private final String id;
+
+        public EscrowedWager(long amount, String id)
+        {
+            this.amount = amount;
+            this.id = id;
+        }
+
+        public long amount() { return amount; }
+        public String id() { return id; }
     }
 
     /** Parses {@code all}/{@code half}/{@code max} or a plain number; {@code -1} if unparseable. */

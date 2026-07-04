@@ -96,14 +96,15 @@ public class GambleCmd extends EconomyCommand
             ctx.replyError("You only have " + EconomyService.coins(balance) + ".");
             return;
         }
-        if(!economy.trySpend(authorId, amount))
+        String escrowId = economy.escrow(authorId, amount, name);
+        if(escrowId == null)
         {
             ctx.replyError("You don't have enough coins for that bet.");
             return;
         }
 
         Result result = GambleGames.play(game, amount, ThreadLocalRandom.current());
-        GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), ctx.getChannel());
+        GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), ctx.getChannel(), escrowId);
         ctx.reply(new MessageCreateBuilder()
                 .setEmbeds(GameEmbeds.result(gameTitle(game), result.getDetail(), outcome, amount))
                 .build());

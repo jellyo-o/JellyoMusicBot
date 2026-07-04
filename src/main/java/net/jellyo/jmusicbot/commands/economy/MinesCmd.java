@@ -51,12 +51,13 @@ public class MinesCmd extends InteractiveGameCommand
                 return;
             }
         }
-        long amount = takeWager(ctx, economy, tokens[0], MinesSession.SIZING_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], MinesSession.SIZING_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
         MinesSession session = new MinesSession(bot, ctx.getAuthor().getIdLong(),
                 ctx.getAuthor().getEffectiveName(), ctx.getGuild().getIdLong(),
-                ctx.getChannel().getIdLong(), amount, bombs, ThreadLocalRandom.current());
+                ctx.getChannel().getIdLong(), amount, w.id(), bombs, ThreadLocalRandom.current());
         start(ctx, session, session.panel(), session.grid(false), DEFAULT_TIMEOUT_MS);
     }
 }
