@@ -76,7 +76,9 @@ public class TotoCmd extends WagerGameCommand
             return;
         }
 
-        long maxUnit = Payouts.maxBetFor(TotoGame.PRACTICAL_TOP_MULTIPLIER);
+        // Bound the per-board unit AND the whole entry's stake to the per-round return cap, so a large
+        // System entry (up to 924 boards) can never stake more than the capped payout could return.
+        long maxUnit = Payouts.maxUnitForEntry(TotoGame.PRACTICAL_TOP_MULTIPLIER, combinations.size());
         if(unit < Payouts.MIN_BET)
         {
             ctx.replyError("The minimum stake is " + EconomyService.coins(Payouts.MIN_BET) + " per board.");
@@ -84,7 +86,8 @@ public class TotoCmd extends WagerGameCommand
         }
         if(unit > maxUnit)
         {
-            ctx.replyError("The TOTO stake limit is " + EconomyService.coins(maxUnit) + " per board.");
+            ctx.replyError("The stake limit for this entry is " + EconomyService.coins(maxUnit) + " per board ("
+                    + combinations.size() + " board(s); larger System entries have a lower per-board limit).");
             return;
         }
         long totalStake = (long) combinations.size() * unit;
@@ -111,11 +114,10 @@ public class TotoCmd extends WagerGameCommand
         for(int i = 0; i < 4; i++)
             frames.add(spinEmbed("🎯 TOTO Draw", "Drawing 6 + additional…\n" + boards + " board(s)"));
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg ->
-        {
-            GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel);
-            msg.editMessageEmbeds(resultEmbed(draw, outcome, boards, settled)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
+        final GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel);
+        final MessageEmbed reveal = resultEmbed(draw, outcome, boards, settled);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 
     private MessageEmbed resultEmbed(Draw draw, Outcome outcome, int boards, GameOutcome settled)

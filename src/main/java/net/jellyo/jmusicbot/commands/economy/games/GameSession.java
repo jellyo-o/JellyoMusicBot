@@ -82,6 +82,19 @@ public abstract class GameSession
         onStarted();
     }
 
+    /**
+     * Called when the panel could not be sent (the reply failed), so the game never went live:
+     * refunds the escrowed wager exactly once. The session was never registered and no timeout was
+     * armed, so there is nothing else to unwind. Safe to call at most once; a no-op if already resolved.
+     */
+    public void cancelBeforeStart()
+    {
+        if(!guard.claim())
+            return; // already resolved somehow — never double-refund
+        if(wager > 0)
+            bot.getEconomyService().addCurrency(ownerId, wager);
+    }
+
     /** Hook invoked once the session's message is bound and registered (e.g. to start ticks). */
     protected void onStarted() {}
 

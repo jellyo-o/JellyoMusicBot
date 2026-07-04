@@ -129,7 +129,15 @@ public interface CommandContext
      * Reply with a MessageCreateData and callback
      */
     void reply(MessageCreateData message, Consumer<net.dv8tion.jda.api.entities.Message> callback);
-    
+
+    /**
+     * Reply with a MessageCreateData, invoking {@code onSuccess} once the message is sent or
+     * {@code onFailure} if the send fails — so callers can unwind side effects (e.g. a debited
+     * wager) when the panel never goes live.
+     */
+    void reply(MessageCreateData message, Consumer<net.dv8tion.jda.api.entities.Message> onSuccess,
+               Consumer<Throwable> onFailure);
+
     /**
      * Whether this is a slash command context
      */

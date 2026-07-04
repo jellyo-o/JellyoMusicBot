@@ -97,17 +97,35 @@ public class LotteryService
         if(!isEnabled())
             return BuyResult.disabled();
         int tickets = Math.max(1, count);
-        long held = store.getUserTickets(user.getIdLong());
-        if(held + tickets > MAX_TICKETS_PER_USER)
+        long userId = user.getIdLong();
+        // Fast, friendly pre-check (also guarantees a single request never exceeds the cap). The
+        // authoritative check is the atomic, cap-guarded write in the store below, which closes the
+        // concurrent-buy race the pre-check alone cannot.
+        long held = store.getUserTickets(userId);
+        if(tickets > MAX_TICKETS_PER_USER || held + tickets > MAX_TICKETS_PER_USER)
             return BuyResult.capReached(MAX_TICKETS_PER_USER, held);
         long price = ticketPrice();
         long cost = tickets * price;
         bot.getEconomyService().ensureUser(user);
-        if(!bot.getEconomyService().trySpend(user.getIdLong(), cost))
+        if(!bot.getEconomyService().trySpend(userId, cost))
             return BuyResult.insufficient(cost);
         long intervalSeconds = bot.getConfig().getLotteryDrawIntervalHours() * 3600L;
-        DrawInfo info = store.buyTickets(user.getIdLong(), tickets, price, intervalSeconds,
-                Instant.now().getEpochSecond());
+        DrawInfo info;
+        try
+        {
+            info = store.buyTickets(userId, tickets, price, intervalSeconds,
+                    Instant.now().getEpochSecond(), MAX_TICKETS_PER_USER);
+        }
+        catch(RuntimeException ex)
+        {
+            bot.getEconomyService().addCurrency(userId, cost); // coins were debited but the ticket write failed
+            throw ex;
+        }
+        if(info == null) // cap hit atomically (a concurrent buy won the race) — refund and report
+        {
+            bot.getEconomyService().addCurrency(userId, cost);
+            return BuyResult.capReached(MAX_TICKETS_PER_USER, store.getUserTickets(userId));
+        }
         return BuyResult.bought(tickets, cost, info);
     }
 

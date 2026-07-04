@@ -35,19 +35,25 @@ public final class GameSessions
         this.bot = bot;
     }
 
-    /** Registers a started session (its message already sent + bound), resolving any prior one. */
+    /**
+     * Registers a started session (its message already sent + bound), resolving any prior one.
+     *
+     * <p>The owner slot is claimed with a single atomic {@link java.util.concurrent.ConcurrentHashMap#put}
+     * whose returned previous value tells us exactly which prior message (if any) we displaced — so two
+     * near-simultaneous starts by the same owner (e.g. prefix + slash) can never both believe they are the
+     * first and leave two live games: whichever put runs second sees the other's message id and resolves it.
+     */
     public void register(GameSession session)
     {
-        Long priorMessage = byUser.get(session.getOwnerId());
-        if(priorMessage != null && priorMessage != session.getMessageId())
+        long messageId = session.getMessageId();
+        byMessage.put(messageId, session);
+        Long priorMessage = byUser.put(session.getOwnerId(), messageId);
+        if(priorMessage != null && priorMessage != messageId)
         {
-            GameSession prior = byMessage.get(priorMessage);
+            GameSession prior = byMessage.remove(priorMessage);
             if(prior != null && prior != session)
-                prior.forceAutoResolve();
-            byMessage.remove(priorMessage); // ensure it is gone even if already resolved
+                prior.forceAutoResolve(); // resolve the displaced game (refunds/settles it) outside any map lock
         }
-        byMessage.put(session.getMessageId(), session);
-        byUser.put(session.getOwnerId(), session.getMessageId());
     }
 
     public GameSession get(long messageId)

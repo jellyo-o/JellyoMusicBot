@@ -92,17 +92,16 @@ public class KenoCmd extends WagerGameCommand
         for(int i = 0; i < 4; i++)
             frames.add(spinEmbed("🔢 Keno", "Your picks: **" + pickList + "**\nDrawing the balls… 🎱"));
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 500, msg ->
-        {
-            GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
-            String drawn = Arrays.stream(result.getDrawn()).sorted()
-                    .mapToObj(n -> chosen.contains(n) ? "**[" + n + "]**" : String.valueOf(n))
-                    .collect(Collectors.joining(" "));
-            String detail = "Your picks: **" + pickList + "**\nDraw: " + drawn
-                    + "\nHits: **" + result.getHits() + "**"
-                    + (result.getHits() == KenoGame.PICKS ? " — 💎 JACKPOT!" : "");
-            msg.editMessageEmbeds(resultEmbed("🔢 Keno", detail, outcome, amount)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final String drawn = Arrays.stream(result.getDrawn()).sorted()
+                .mapToObj(n -> chosen.contains(n) ? "**[" + n + "]**" : String.valueOf(n))
+                .collect(Collectors.joining(" "));
+        final String detail = "Your picks: **" + pickList + "**\nDraw: " + drawn
+                + "\nHits: **" + result.getHits() + "**"
+                + (result.getHits() == KenoGame.PICKS ? " — 💎 JACKPOT!" : "");
+        final MessageEmbed reveal = resultEmbed("🔢 Keno", detail, outcome, amount);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 500, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 
     private static Set<Integer> quickPick()

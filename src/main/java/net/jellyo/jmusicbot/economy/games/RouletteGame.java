@@ -110,7 +110,7 @@ public final class RouletteGame
     {
         int number = rng.nextInt(37); // 0..36
         boolean won = isWin(bet, straightTarget, number);
-        long payout = won ? Math.round(wager * bet.multiplier()) : 0;
+        long payout = won ? (long) Math.floor(wager * bet.multiplier()) : 0;
         return new Result(number, colorOf(number), won, payout);
     }
 

@@ -82,7 +82,7 @@ public class RpsSession extends GameSession
         if(player == house)
             return wager; // push
         boolean win = (player == 0 && house == 2) || (player == 1 && house == 0) || (player == 2 && house == 1);
-        return win ? Math.round(wager * WIN_MULTIPLIER) : 0;
+        return win ? (long) Math.floor(wager * WIN_MULTIPLIER) : 0;
     }
 
     private MessageEmbed finalEmbed(int player, int house, GameOutcome outcome)

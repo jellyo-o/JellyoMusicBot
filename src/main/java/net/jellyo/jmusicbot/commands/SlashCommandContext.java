@@ -231,7 +231,26 @@ public class SlashCommandContext implements CommandContext
             event.getHook().sendMessage(message).queue(callback);
         }
     }
-    
+
+    @Override
+    public void reply(MessageCreateData message, Consumer<Message> onSuccess, Consumer<Throwable> onFailure)
+    {
+        if(deferred && hook != null)
+        {
+            hook.editOriginal(net.dv8tion.jda.api.utils.messages.MessageEditData.fromCreateData(message))
+                    .queue(onSuccess, onFailure);
+        }
+        else if(!replied)
+        {
+            event.reply(message).queue(ih -> ih.retrieveOriginal().queue(onSuccess, onFailure), onFailure);
+            replied = true;
+        }
+        else
+        {
+            event.getHook().sendMessage(message).queue(onSuccess, onFailure);
+        }
+    }
+
     @Override
     public boolean isSlashCommand()
     {

@@ -130,7 +130,7 @@ public final class GambleGames
         boolean heads = rng.nextBoolean();
         if(heads)
         {
-            long payout = Math.round(wager * COINFLIP_MULTIPLIER);
+            long payout = (long) Math.floor(wager * COINFLIP_MULTIPLIER);
             return new Result(true, payout, "🪙 The coin landed on **heads** — you win!");
         }
         return new Result(false, 0, "🪙 The coin landed on **tails** — you lose.");
@@ -141,7 +141,7 @@ public final class GambleGames
         int player = rng.nextInt(6) + 1;
         int house = rng.nextInt(6) + 1;
         boolean won = player >= house; // ties go to the player
-        long payout = won ? Math.round(wager * DICE_MULTIPLIER) : 0;
+        long payout = won ? (long) Math.floor(wager * DICE_MULTIPLIER) : 0;
         String detail = "🎲 You rolled **" + player + "**, the house rolled **" + house + "** — "
                 + (won ? "you win!" : "you lose.");
         return new Result(won, payout, detail);
