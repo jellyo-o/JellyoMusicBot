@@ -65,6 +65,46 @@ public class GambleGamesTest
     }
 
     @Test
+    public void coinflipFloorsPayoutSoTheEdgeSurvivesAtTheMinBet()
+    {
+        // floor(10 * 1.95) = 19, not round's 20 — round-half-up would make a 10-coin coinflip a 2.0x
+        // break-even (RTP 100%), erasing the house edge at the minimum bet.
+        Random rng = new Random(3);
+        boolean sawWin = false;
+        for(int i = 0; i < 200; i++)
+        {
+            Result r = GambleGames.coinflip(10, rng);
+            if(r.isWon())
+            {
+                assertEquals(19, r.getPayout());
+                sawWin = true;
+            }
+            else
+                assertEquals(0, r.getPayout());
+        }
+        assertTrue(sawWin);
+    }
+
+    @Test
+    public void diceFloorsPayoutSoNoWagerBecomesPositiveEv()
+    {
+        // floor(15 * 1.7) = 25, not round's 26 — round-half-up would flip a 15-coin dice bet to a
+        // positive expected value (26/15 * 21/36 > 1) that the house loses long-term.
+        Random rng = new Random(9);
+        boolean sawWin = false;
+        for(int i = 0; i < 400; i++)
+        {
+            Result r = GambleGames.dice(15, rng);
+            if(r.getPayout() > 0)
+            {
+                assertEquals(25, r.getPayout());
+                sawWin = true;
+            }
+        }
+        assertTrue(sawWin);
+    }
+
+    @Test
     public void everyGameKeepsAHouseEdge()
     {
         assertEdge(Game.COINFLIP, new Random(1));

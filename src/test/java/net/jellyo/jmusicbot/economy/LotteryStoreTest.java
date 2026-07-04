@@ -67,11 +67,11 @@ public class LotteryStoreTest
     @Test
     public void buyingOpensTheGlobalRoundAndGrowsThePot()
     {
-        DrawInfo info = lottery.buyTickets(100L, 3, 100, 86_400, 1000); // draw_epoch = 87400
+        DrawInfo info = lottery.buyTickets(100L, 3, 100, 86_400, 1000, 1000); // draw_epoch = 87400
         assertEquals(300, info.getPot());
         assertEquals(3, info.getUserTickets());
         assertEquals(3, info.getTotalTickets());
-        DrawInfo info2 = lottery.buyTickets(200L, 2, 100, 86_400, 1000);
+        DrawInfo info2 = lottery.buyTickets(200L, 2, 100, 86_400, 1000, 1000);
         assertEquals(500, info2.getPot());
         assertEquals(5, info2.getTotalTickets());
         assertEquals(2, info2.getUserTickets());
@@ -81,9 +81,23 @@ public class LotteryStoreTest
     @Test
     public void isDueReflectsTheDrawEpoch()
     {
-        lottery.buyTickets(100L, 1, 100, 0, 1000); // draw_epoch = 1000
+        lottery.buyTickets(100L, 1, 100, 0, 1000, 1000); // draw_epoch = 1000
         assertTrue(lottery.isDue(1000));
         assertFalse(lottery.isDue(999));
+    }
+
+    @Test
+    public void perUserCapIsEnforcedAtomicallyAndRejectionWritesNothing()
+    {
+        // A first buy of 40 (cap 50) succeeds; a second buy of 20 would exceed the cap, so it is rejected
+        // with null and NOTHING is written — tickets and pot are unchanged.
+        assertEquals(40, lottery.buyTickets(100L, 40, 100, 86_400, 1000, 50).getUserTickets());
+        assertNull(lottery.buyTickets(100L, 20, 100, 86_400, 1000, 50));
+        assertEquals("tickets unchanged after a capped buy", 40, lottery.getUserTickets(100L));
+        assertEquals("pot not grown by the rejected buy", 4000, lottery.getInfo(100L).getPot());
+        // A buy that lands exactly on the cap is allowed.
+        assertEquals(50, lottery.buyTickets(100L, 10, 100, 86_400, 1000, 50).getUserTickets());
+        assertEquals(5000, lottery.getInfo(100L).getPot());
     }
 
     @Test
@@ -91,7 +105,7 @@ public class LotteryStoreTest
     {
         long winner = 100L;
         economy.addCurrency(winner, 1000); // give the winner a profile + starting balance
-        lottery.buyTickets(winner, 5, 100, 86_400, 1000); // pot 500, sole participant
+        lottery.buyTickets(winner, 5, 100, 86_400, 1000, 1000); // pot 500, sole participant
 
         DrawResult result = lottery.resolveDraw(new Random(7));
         assertTrue(result.hasWinner());

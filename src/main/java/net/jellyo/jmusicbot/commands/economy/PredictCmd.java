@@ -85,12 +85,11 @@ public class PredictCmd extends WagerGameCommand
             frames.add(spinEmbed("🎲 Dice Predict", "The die tumbles… " + face + "\nYou called **" + call + "**"));
         }
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg ->
-        {
-            GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
-            String detail = "The die landed on **" + result.getRoll() + "** " + FACES[result.getRoll() - 1]
-                    + "\nYou called **" + call + "** — " + (result.isWon() ? "nailed it!" : "no luck.");
-            msg.editMessageEmbeds(resultEmbed("🎲 Dice Predict", detail, outcome, amount)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final String detail = "The die landed on **" + result.getRoll() + "** " + FACES[result.getRoll() - 1]
+                + "\nYou called **" + call + "** — " + (result.isWon() ? "nailed it!" : "no luck.");
+        final MessageEmbed reveal = resultEmbed("🎲 Dice Predict", detail, outcome, amount);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 }

@@ -442,9 +442,18 @@ public class EconomyService
     }
 
     /**
-     * Pure daily-chest decision based on host-local calendar days. Same calendar
-     * day &rarr; on cooldown until next local midnight. Consecutive day &rarr;
-     * streak increments; a skipped day resets the streak to 1.
+     * Minimum wall-clock gap between two daily claims. A pure calendar-day check
+     * would let a claim at 23:59 and another at 00:01 both land (different local
+     * dates, seconds apart); this floor makes the chest genuinely once per ~day.
+     */
+    static final long MIN_DAILY_INTERVAL_SECONDS = 20 * 3600; // 20h
+
+    /**
+     * Pure daily-chest decision based on host-local calendar days plus a minimum
+     * elapsed gap. Claimable only when it is a different local day <b>and</b> at
+     * least {@link #MIN_DAILY_INTERVAL_SECONDS} have elapsed since the last claim,
+     * so two claims can never straddle local midnight a few seconds apart.
+     * Consecutive day &rarr; streak increments; a skipped day resets it to 1.
      */
     static DailyDecision decideDaily(long lastDailyEpoch, int prevStreak, long nowEpoch, ZoneId zone)
     {
@@ -452,10 +461,16 @@ public class EconomyService
         LocalDate lastDate = lastDailyEpoch > 0
                 ? Instant.ofEpochSecond(lastDailyEpoch).atZone(zone).toLocalDate()
                 : null;
-        if(lastDate != null && lastDate.equals(today))
+        boolean sameDay = lastDate != null && lastDate.equals(today);
+        boolean tooSoon = lastDailyEpoch > 0 && nowEpoch - lastDailyEpoch < MIN_DAILY_INTERVAL_SECONDS;
+        if(sameDay || tooSoon)
         {
-            long nextMidnight = today.plusDays(1).atStartOfDay(zone).toEpochSecond();
-            return new DailyDecision(false, prevStreak, Math.max(0, nextMidnight - nowEpoch));
+            long waitUntil = nowEpoch;
+            if(sameDay)
+                waitUntil = Math.max(waitUntil, today.plusDays(1).atStartOfDay(zone).toEpochSecond());
+            if(tooSoon)
+                waitUntil = Math.max(waitUntil, lastDailyEpoch + MIN_DAILY_INTERVAL_SECONDS);
+            return new DailyDecision(false, prevStreak, Math.max(0, waitUntil - nowEpoch));
         }
         int streak = (lastDate != null && lastDate.plusDays(1).equals(today)) ? prevStreak + 1 : 1;
         return new DailyDecision(true, streak, 0);

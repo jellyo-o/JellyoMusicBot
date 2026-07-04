@@ -85,45 +85,105 @@ public class LotteryStore
     }
 
     /**
-     * Adds {@code count} tickets for a user (coins already debited by the caller),
-     * opening the round if none is live. Returns the updated round info.
+     * Adds {@code count} tickets for a user (coins already debited by the caller), opening the round if
+     * none is live and enforcing the per-user cap atomically. The three writes (round / tickets / pot)
+     * commit as <b>one transaction</b>, so a crash mid-buy rolls back instead of leaving the pot short of
+     * the tickets it should have funded. Returns the updated round info, or {@code null} if the cap would
+     * be exceeded — in which case nothing is written and the caller must refund the coins.
+     *
+     * <p>The caller guarantees {@code count <= maxTicketsPerUser} (a single request never exceeds the cap),
+     * so the fresh-insert branch is always within the cap; concurrent repeat buys route through the
+     * conflict {@code UPDATE ... WHERE tickets+count <= cap}, which is what closes the check-then-act race.
      */
     public synchronized DrawInfo buyTickets(long userId, int count, long ticketPrice,
-                                            long drawIntervalSeconds, long nowEpoch)
+                                            long drawIntervalSeconds, long nowEpoch, int maxTicketsPerUser)
     {
-        try(PreparedStatement ps = connection.prepareStatement(
-                "INSERT OR IGNORE INTO lottery_global(id, draw_epoch, pot) VALUES(1, ?, 0)"))
+        ensureOpen();
+        boolean previousAutoCommit = true;
+        DrawInfo info = null; // stays null iff the cap rejected the buy (nothing written)
+        try
         {
-            ps.setLong(1, nowEpoch + drawIntervalSeconds);
-            ps.executeUpdate();
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "INSERT OR IGNORE INTO lottery_global(id, draw_epoch, pot) VALUES(1, ?, 0)"))
+            {
+                ps.setLong(1, nowEpoch + drawIntervalSeconds);
+                ps.executeUpdate();
+            }
+
+            int updated;
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO lottery_tickets(user_id, tickets) VALUES(?, ?) "
+                            + "ON CONFLICT(user_id) DO UPDATE SET tickets=tickets+? WHERE tickets+? <= ?"))
+            {
+                ps.setLong(1, userId);
+                ps.setInt(2, count);
+                ps.setInt(3, count);
+                ps.setInt(4, count);
+                ps.setInt(5, maxTicketsPerUser);
+                updated = ps.executeUpdate();
+            }
+            if(updated == 0)
+            {
+                connection.rollback(); // cap would be exceeded — leave the round/pot untouched
+            }
+            else
+            {
+                try(PreparedStatement ps = connection.prepareStatement("UPDATE lottery_global SET pot=pot+? WHERE id=1"))
+                {
+                    ps.setLong(1, count * ticketPrice);
+                    ps.executeUpdate();
+                }
+                // Read the return value INSIDE the transaction, before commit: if this read faults it is a
+                // SQLException caught below → rollback, so the caller refunds a buy that never committed.
+                // (Reading after commit could throw on an already-durable write and wrongly trigger a refund.)
+                info = readInfoInTransaction(userId);
+                connection.commit();
+            }
         }
         catch(SQLException ex)
         {
-            throw new EconomyStore.EconomyException("Failed to open lottery round", ex);
+            rollbackQuietly();
+            throw new EconomyStore.EconomyException("Failed to buy lottery tickets", ex);
         }
-        try(PreparedStatement ps = connection.prepareStatement(
-                "INSERT INTO lottery_tickets(user_id, tickets) VALUES(?, ?) "
-                        + "ON CONFLICT(user_id) DO UPDATE SET tickets=tickets+?"))
+        finally
         {
-            ps.setLong(1, userId);
-            ps.setInt(2, count);
-            ps.setInt(3, count);
-            ps.executeUpdate();
+            restoreAutoCommit(previousAutoCommit);
         }
-        catch(SQLException ex)
+        return info;
+    }
+
+    /** Reads the round info on the current connection, letting a fault surface as SQLException (so the
+     *  enclosing transaction can roll back). Used for buyTickets' pre-commit return value. */
+    private DrawInfo readInfoInTransaction(long userId) throws SQLException
+    {
+        long drawEpoch = 0;
+        long pot = 0;
+        try(PreparedStatement ps = connection.prepareStatement("SELECT draw_epoch, pot FROM lottery_global WHERE id=1");
+            ResultSet rs = ps.executeQuery())
         {
-            throw new EconomyStore.EconomyException("Failed to add lottery tickets", ex);
+            if(rs.next())
+            {
+                drawEpoch = rs.getLong(1);
+                pot = rs.getLong(2);
+            }
         }
-        try(PreparedStatement ps = connection.prepareStatement("UPDATE lottery_global SET pot=pot+? WHERE id=1"))
+        long total = 0;
+        long userTickets = 0;
+        try(PreparedStatement ps = connection.prepareStatement("SELECT user_id, tickets FROM lottery_tickets");
+            ResultSet rs = ps.executeQuery())
         {
-            ps.setLong(1, count * ticketPrice);
-            ps.executeUpdate();
+            while(rs.next())
+            {
+                long tickets = rs.getLong(2);
+                total += tickets;
+                if(rs.getLong(1) == userId)
+                    userTickets = tickets;
+            }
         }
-        catch(SQLException ex)
-        {
-            throw new EconomyStore.EconomyException("Failed to grow lottery pot", ex);
-        }
-        return getInfo(userId);
+        return new DrawInfo(drawEpoch, pot, total, userTickets);
     }
 
     public synchronized DrawInfo getInfo(long userId)

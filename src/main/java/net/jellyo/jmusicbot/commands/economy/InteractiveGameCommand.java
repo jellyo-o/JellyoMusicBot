@@ -51,6 +51,7 @@ public abstract class InteractiveGameCommand extends WagerGameCommand
                          List<ActionRow> rows, long timeoutMs)
     {
         ctx.reply(new MessageCreateBuilder().setEmbeds(panel).setComponents(rows).build(),
-                msg -> session.begin(msg.getIdLong(), timeoutMs));
+                msg -> session.begin(msg.getIdLong(), timeoutMs),
+                error -> session.cancelBeforeStart());
     }
 }

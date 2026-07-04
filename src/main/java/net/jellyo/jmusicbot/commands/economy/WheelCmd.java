@@ -65,13 +65,13 @@ public class WheelCmd extends WagerGameCommand
             frames.add(spinEmbed("🎡 Wheel of Fortune", "The wheel spins… ➡️ " + label(s)));
         }
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 500, msg ->
-        {
-            GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
-            String detail = "The pointer stops on **" + label(result.getSegment()) + "**"
-                    + (result.getMultiplier() >= 8.0 ? " — huge!" : "");
-            msg.editMessageEmbeds(resultEmbed("🎡 Wheel of Fortune", detail, outcome, amount)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe
+        // unit — a crash during the ~3s animation can no longer strand the already-decided wager.
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final String detail = "The pointer stops on **" + label(result.getSegment()) + "**"
+                + (result.getMultiplier() >= 8.0 ? " — huge!" : "");
+        final MessageEmbed reveal = resultEmbed("🎡 Wheel of Fortune", detail, outcome, amount);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 500, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 
     private static String label(Segment s)

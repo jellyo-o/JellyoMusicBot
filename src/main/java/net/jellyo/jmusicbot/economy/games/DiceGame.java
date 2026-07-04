@@ -87,7 +87,7 @@ public final class DiceGame
     {
         int roll = rng.nextInt(6) + 1;
         boolean won = isWin(mode, target, roll);
-        long payout = won ? Math.round(wager * mode.multiplier()) : 0;
+        long payout = won ? (long) Math.floor(wager * mode.multiplier()) : 0;
         return new Result(roll, won, payout);
     }
 

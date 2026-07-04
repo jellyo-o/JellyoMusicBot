@@ -39,6 +39,31 @@ public class PayoutsTest
     }
 
     @Test
+    public void maxUnitForEntryBoundsTheWholeEntryToTheReturnCap()
+    {
+        // A single board is bounded exactly like maxBetFor (no entry-level reduction).
+        assertEquals(Payouts.maxBetFor(150.0), Payouts.maxUnitForEntry(150.0, 1));
+        assertEquals(Payouts.maxBetFor(150.0), Payouts.maxUnitForEntry(150.0, 0));
+
+        // A large TOTO System entry (924 boards) is bounded so the whole stake can't exceed the return cap,
+        // which is exactly what stops a System entry being a guaranteed loss even on the jackpot.
+        long sys12 = Payouts.maxUnitForEntry(150.0, 924);
+        assertTrue("entry stake within the return cap", 924L * sys12 <= Payouts.MAX_RETURN_PER_ROUND);
+        assertTrue("lower than the single-board limit", sys12 < Payouts.maxBetFor(150.0));
+
+        // The invariant holds across every realistic board count, and the entry stays playable (>= MIN_BET).
+        for(int boards = 1; boards <= 1000; boards++)
+        {
+            long unit = Payouts.maxUnitForEntry(150.0, boards);
+            assertTrue("boards=" + boards, (long) boards * unit <= Payouts.MAX_RETURN_PER_ROUND);
+            assertTrue("boards=" + boards + " >= min bet", unit >= Payouts.MIN_BET);
+        }
+
+        // A small 4-D System (<= 24 permutations) already stays under the cap, so it is unaffected.
+        assertEquals(Payouts.maxBetFor(300.0), Payouts.maxUnitForEntry(300.0, 24));
+    }
+
+    @Test
     public void isLegalBetEnforcesBounds()
     {
         assertFalse("below min", Payouts.isLegalBet(Payouts.MIN_BET - 1, 2.0));

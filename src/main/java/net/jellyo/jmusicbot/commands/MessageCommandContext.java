@@ -162,7 +162,15 @@ public class MessageCommandContext implements CommandContext
     {
         event.reply(message, callback);
     }
-    
+
+    @Override
+    public void reply(MessageCreateData message, Consumer<Message> onSuccess, Consumer<Throwable> onFailure)
+    {
+        // Send to the channel directly so a failed send routes to onFailure (CommandEvent.reply is
+        // success-only), letting the caller refund an already-escrowed wager.
+        event.getChannel().sendMessage(message).queue(onSuccess, onFailure);
+    }
+
     @Override
     public boolean isSlashCommand()
     {

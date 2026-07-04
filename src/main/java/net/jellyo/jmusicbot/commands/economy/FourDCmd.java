@@ -77,7 +77,9 @@ public class FourDCmd extends WagerGameCommand
             return;
         }
 
-        long maxUnit = Payouts.maxBetFor(FourDGame.PRACTICAL_TOP_MULTIPLIER);
+        // Bound the per-number unit AND the whole entry's stake to the per-round return cap, so a System
+        // (up to 24 permutations) or Roll (10 numbers) entry can never stake more than it could win back.
+        long maxUnit = Payouts.maxUnitForEntry(FourDGame.PRACTICAL_TOP_MULTIPLIER, numbers.size());
         if(unit < Payouts.MIN_BET)
         {
             ctx.replyError("The minimum stake is " + EconomyService.coins(Payouts.MIN_BET) + " per number.");
@@ -85,7 +87,8 @@ public class FourDCmd extends WagerGameCommand
         }
         if(unit > maxUnit)
         {
-            ctx.replyError("The 4-D stake limit is " + EconomyService.coins(maxUnit) + " per number.");
+            ctx.replyError("The stake limit for this entry is " + EconomyService.coins(maxUnit) + " per number ("
+                    + numbers.size() + " number(s)).");
             return;
         }
         long totalStake = (long) numbers.size() * unit;
@@ -115,11 +118,10 @@ public class FourDCmd extends WagerGameCommand
             frames.add(spinEmbed("🎱 4-D Draw", "Drawing the winning numbers…\nYou bet **" + betLabel
                     + "** (" + betType.name().toLowerCase(Locale.ROOT) + ")"));
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg ->
-        {
-            GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel);
-            msg.editMessageEmbeds(resultEmbed(draw, outcome, betType, betLabel, settled)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
+        final GameOutcome settled = economy.settleGame(authorId, outcome.getTotalStake(), outcome.getTotalPayout(), channel);
+        final MessageEmbed reveal = resultEmbed(draw, outcome, betType, betLabel, settled);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 
     private MessageEmbed resultEmbed(Draw draw, Outcome outcome, BetType betType, String betLabel, GameOutcome settled)

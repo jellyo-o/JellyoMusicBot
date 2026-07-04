@@ -80,13 +80,12 @@ public class RouletteCmd extends WagerGameCommand
                     + "\nYou bet **" + betLabel + "**"));
         }
 
-        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg ->
-        {
-            GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
-            String detail = "The ball settled on " + slot(result.getNumber(), result.getColor())
-                    + "\nYou bet **" + betLabel + "** — " + (result.isWon() ? "winner!" : "no luck.");
-            msg.editMessageEmbeds(resultEmbed("🎡 Roulette", detail, outcome, amount)).queue();
-        });
+        // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final String detail = "The ball settled on " + slot(result.getNumber(), result.getColor())
+                + "\nYou bet **" + betLabel + "** — " + (result.isWon() ? "winner!" : "no luck.");
+        final MessageEmbed reveal = resultEmbed("🎡 Roulette", detail, outcome, amount);
+        sendAnimated(ctx, embedMessage(frames.get(0)), frames, 550, msg -> msg.editMessageEmbeds(reveal).queue());
     }
 
     private static String slot(int number, Color color)

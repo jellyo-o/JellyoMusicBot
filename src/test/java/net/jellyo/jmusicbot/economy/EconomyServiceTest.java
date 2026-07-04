@@ -45,17 +45,30 @@ public class EconomyServiceTest
         EconomyService.DailyDecision d = EconomyService.decideDaily(earlierToday, 5, NOON, UTC);
         assertFalse(d.claimable);
         assertEquals(5, d.streak);
-        // Until next UTC midnight: 12 hours.
-        assertEquals(12 * 3600L, d.secondsUntilNext);
+        // The 20h floor (09:00 + 20h = 05:00 next day) outlasts next midnight, so 17 hours remain.
+        assertEquals(17 * 3600L, d.secondsUntilNext);
     }
 
     @Test
     public void consecutiveDayExtendsStreak()
     {
-        long yesterday = TODAY.minusDays(1).atTime(20, 0).atZone(UTC).toEpochSecond();
+        // A different calendar day AND >= 20h since the last claim -> claimable, streak extends.
+        long yesterday = TODAY.minusDays(1).atTime(9, 0).atZone(UTC).toEpochSecond();
         EconomyService.DailyDecision d = EconomyService.decideDaily(yesterday, 5, NOON, UTC);
         assertTrue(d.claimable);
         assertEquals(6, d.streak);
+    }
+
+    @Test
+    public void midnightStraddleCannotDoubleClaim()
+    {
+        // The reported exploit: claim at 23:59:30, then again ~50s later at 00:00:20. It is a new local
+        // day (so the calendar check alone would allow it), but the 20h elapsed floor still blocks it.
+        long lateYesterday = TODAY.minusDays(1).atTime(23, 59, 30).atZone(UTC).toEpochSecond();
+        long justAfterMidnight = TODAY.atTime(0, 0, 20).atZone(UTC).toEpochSecond();
+        EconomyService.DailyDecision d = EconomyService.decideDaily(lateYesterday, 3, justAfterMidnight, UTC);
+        assertFalse("a claim seconds after midnight is still on cooldown", d.claimable);
+        assertEquals(3, d.streak);
     }
 
     @Test

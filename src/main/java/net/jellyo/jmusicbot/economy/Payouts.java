@@ -78,6 +78,24 @@ public final class Payouts
         return Math.max(MIN_BET, Math.min(HARD_MAX_BET, byReturn));
     }
 
+    /**
+     * Largest legal per-unit stake for an entry of {@code boards} independent
+     * boards/numbers that settle together as one {@link #MAX_RETURN_PER_ROUND}-capped
+     * round (a TOTO/4-D System or Roll). Beyond bounding a single board's return via
+     * {@link #maxBetFor}, this bounds the <b>whole entry's</b> stake to the per-round
+     * return cap, so a multi-board entry can never stake more than it could ever win
+     * back — i.e. it can never be a guaranteed loss even on the top prize (which the
+     * settle-time {@link #clampReturn} would otherwise make possible).
+     */
+    public static long maxUnitForEntry(double sizingMultiplier, int boards)
+    {
+        long perBoard = maxBetFor(sizingMultiplier);
+        if(boards <= 1)
+            return perBoard;
+        long byEntryCap = MAX_RETURN_PER_ROUND / boards; // floor: boards * unit <= MAX_RETURN_PER_ROUND
+        return Math.max(MIN_BET, Math.min(perBoard, byEntryCap));
+    }
+
     /** True if {@code wager} is within [{@link #MIN_BET}, {@link #maxBetFor}] for the multiplier. */
     public static boolean isLegalBet(long wager, double sizingMultiplier)
     {
