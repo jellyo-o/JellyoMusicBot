@@ -19,37 +19,37 @@ import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.economy.LotteryStore.DrawInfo;
 import com.jagrosh.jmusicbot.economy.LotteryStore.DrawResult;
 import java.time.Instant;
-import java.util.EnumSet;
-import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import net.dv8tion.jda.api.entities.Message;
-import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
+import net.dv8tion.jda.api.entities.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Runs the per-guild lottery: selling tickets and, on its own scheduler, sweeping
- * for due rounds and resolving them. The DB is the source of truth for the draw
- * schedule; the sweep's first run (shortly after boot) resolves any round whose
- * time passed while the bot was offline, and {@link LotteryStore#resolveDraw} is
- * atomic so a restart never drops or double-pays a draw.
+ * Runs the single, bot-wide lottery. Selling tickets debits coins; a sweep on its own
+ * scheduler resolves the draw when its bot-owner-configured time arrives (with a
+ * boot-time catch-up for a draw missed while offline). The winner is picked weighted
+ * by tickets and credited atomically by {@link LotteryStore}; the result is announced
+ * <b>anonymously</b> (a winner count, never a name) and the winner is DM'd.
+ *
+ * <p>Anti-whale: a hard {@value #MAX_TICKETS_PER_USER}-ticket-per-draw cap per user, so
+ * no one can buy the odds — the biggest buyer tops out at the same ceiling as anyone else.
  */
 public class LotteryService
 {
     private static final Logger LOG = LoggerFactory.getLogger(LotteryService.class);
 
-    public static final long TICKET_PRICE = 100;
-    public static final int MAX_TICKETS_PER_BUY = 100;
-    public static final long DRAW_INTERVAL_SECONDS = 86_400; // 24h
+    /** Anti-whale cap: the most tickets any single user may hold in one draw. */
+    public static final int MAX_TICKETS_PER_USER = 50;
     private static final long SWEEP_INITIAL_DELAY_SECONDS = 20;
     private static final long SWEEP_PERIOD_SECONDS = 30;
 
     private final Bot bot;
     private final LotteryStore store;
     private ScheduledExecutorService scheduler;
+    private volatile LastDraw lastDraw;
 
     public LotteryService(Bot bot, LotteryStore store)
     {
@@ -59,12 +59,17 @@ public class LotteryService
 
     public boolean isEnabled()
     {
-        return store != null && bot.getEconomyService().isEnabled();
+        return store != null && bot.getConfig().isLotteryEnabled() && bot.getEconomyService().isEnabled();
+    }
+
+    public long ticketPrice()
+    {
+        return bot.getConfig().getLotteryTicketPrice();
     }
 
     public void init()
     {
-        if(store == null)
+        if(store == null || !bot.getConfig().isLotteryEnabled())
             return;
         scheduler = Executors.newSingleThreadScheduledExecutor(r ->
         {
@@ -72,8 +77,8 @@ public class LotteryService
             thread.setDaemon(true);
             return thread;
         });
-        // The first sweep (after a short delay so JDA is ready to announce) is the boot-time
-        // catch-up for any round whose draw time passed while the bot was offline.
+        // The first sweep (after a short delay so JDA is ready) catches up any draw whose
+        // time passed while the bot was offline.
         scheduler.scheduleWithFixedDelay(this::sweep, SWEEP_INITIAL_DELAY_SECONDS,
                 SWEEP_PERIOD_SECONDS, TimeUnit.SECONDS);
     }
@@ -86,49 +91,49 @@ public class LotteryService
             store.close();
     }
 
-    /** Buys tickets for the caller (debits coins), opening a round if none is live. */
-    public BuyResult buy(long guildId, long channelId, net.dv8tion.jda.api.entities.User user, int count)
+    /** Buys tickets for the caller, enforcing the anti-whale per-user cap, then debiting coins. */
+    public BuyResult buy(User user, int count)
     {
         if(!isEnabled())
             return BuyResult.disabled();
         int tickets = Math.max(1, count);
-        if(tickets > MAX_TICKETS_PER_BUY)
-            return BuyResult.tooMany();
-        long cost = tickets * TICKET_PRICE;
+        long held = store.getUserTickets(user.getIdLong());
+        if(held + tickets > MAX_TICKETS_PER_USER)
+            return BuyResult.capReached(MAX_TICKETS_PER_USER, held);
+        long price = ticketPrice();
+        long cost = tickets * price;
         bot.getEconomyService().ensureUser(user);
         if(!bot.getEconomyService().trySpend(user.getIdLong(), cost))
             return BuyResult.insufficient(cost);
-        long now = Instant.now().getEpochSecond();
-        DrawInfo info = store.buyTickets(guildId, channelId, user.getIdLong(), tickets,
-                TICKET_PRICE, DRAW_INTERVAL_SECONDS, now);
+        long intervalSeconds = bot.getConfig().getLotteryDrawIntervalHours() * 3600L;
+        DrawInfo info = store.buyTickets(user.getIdLong(), tickets, price, intervalSeconds,
+                Instant.now().getEpochSecond());
         return BuyResult.bought(tickets, cost, info);
     }
 
-    public DrawInfo info(long guildId, long userId)
+    public DrawInfo info(long userId)
     {
-        if(store == null)
-            return null;
-        return store.getDraw(guildId, userId);
+        return store == null ? null : store.getInfo(userId);
+    }
+
+    public LastDraw lastDraw()
+    {
+        return lastDraw;
     }
 
     private void sweep()
     {
         try
         {
-            long now = Instant.now().getEpochSecond();
-            List<Long> due = store.dueDraws(now);
-            for(long guildId : due)
+            if(!store.isDue(Instant.now().getEpochSecond()))
+                return;
+            DrawResult result = store.resolveDraw(ThreadLocalRandom.current());
+            if(result == null)
+                return;
+            if(result.hasWinner())
             {
-                try
-                {
-                    DrawResult result = store.resolveDraw(guildId, ThreadLocalRandom.current());
-                    if(result != null)
-                        announce(result);
-                }
-                catch(RuntimeException ex)
-                {
-                    LOG.warn("Failed to resolve lottery draw for guild {}", guildId, ex);
-                }
+                lastDraw = new LastDraw(result.getPot(), result.getParticipants(), result.getTotalTickets());
+                dmWinner(result);
             }
         }
         catch(RuntimeException ex)
@@ -137,47 +142,69 @@ public class LotteryService
         }
     }
 
-    private void announce(DrawResult result)
+    private void dmWinner(DrawResult result)
     {
-        MessageChannel channel = bot.getJDA() == null
-                ? null : bot.getJDA().getChannelById(MessageChannel.class, result.getChannelId());
-        if(channel == null)
-            return; // winner already credited atomically; announcement is best-effort
-        if(!result.hasWinner())
-            return;
-        String message = "🎉 **Lottery draw!** <@" + result.getWinnerId() + "> won the pot of **"
-                + EconomyService.coins(result.getPot()) + "** from " + result.getParticipants()
-                + " player(s) and " + result.getTotalTickets() + " tickets!\nStart the next round with `/lottery buy`.";
-        channel.sendMessage(message)
-                .setAllowedMentions(EnumSet.of(Message.MentionType.USER))
-                .queue(m -> {}, t -> LOG.debug("Failed to announce lottery winner: {}", t.toString()));
+        if(bot.getJDA() == null)
+            return; // winner already credited atomically; the DM is best-effort
+        bot.getJDA().retrieveUserById(result.getWinnerId()).queue(user ->
+                user.openPrivateChannel().queue(channel ->
+                        channel.sendMessage("🎉 You won the lottery! **"
+                                + EconomyService.coins(result.getPot()) + "** has been added to your balance "
+                                + "(from " + result.getParticipants() + " players and "
+                                + result.getTotalTickets() + " tickets).").queue(m -> {}, t -> {}),
+                        t -> {}),
+                t -> LOG.debug("Could not DM lottery winner {}: {}", result.getWinnerId(), t.toString()));
+    }
+
+    public static final class LastDraw
+    {
+        private final long pot;
+        private final int participants;
+        private final long totalTickets;
+
+        LastDraw(long pot, int participants, long totalTickets)
+        {
+            this.pot = pot;
+            this.participants = participants;
+            this.totalTickets = totalTickets;
+        }
+
+        public long getPot() { return pot; }
+        public int getParticipants() { return participants; }
+        public long getTotalTickets() { return totalTickets; }
     }
 
     public static final class BuyResult
     {
-        public enum Status { DISABLED, TOO_MANY, INSUFFICIENT, BOUGHT }
+        public enum Status { DISABLED, CAP_REACHED, INSUFFICIENT, BOUGHT }
 
         private final Status status;
         private final int tickets;
         private final long cost;
+        private final int cap;
+        private final long held;
         private final DrawInfo info;
 
-        private BuyResult(Status status, int tickets, long cost, DrawInfo info)
+        private BuyResult(Status status, int tickets, long cost, int cap, long held, DrawInfo info)
         {
             this.status = status;
             this.tickets = tickets;
             this.cost = cost;
+            this.cap = cap;
+            this.held = held;
             this.info = info;
         }
 
-        static BuyResult disabled() { return new BuyResult(Status.DISABLED, 0, 0, null); }
-        static BuyResult tooMany() { return new BuyResult(Status.TOO_MANY, 0, 0, null); }
-        static BuyResult insufficient(long cost) { return new BuyResult(Status.INSUFFICIENT, 0, cost, null); }
-        static BuyResult bought(int tickets, long cost, DrawInfo info) { return new BuyResult(Status.BOUGHT, tickets, cost, info); }
+        static BuyResult disabled() { return new BuyResult(Status.DISABLED, 0, 0, 0, 0, null); }
+        static BuyResult capReached(int cap, long held) { return new BuyResult(Status.CAP_REACHED, 0, 0, cap, held, null); }
+        static BuyResult insufficient(long cost) { return new BuyResult(Status.INSUFFICIENT, 0, cost, 0, 0, null); }
+        static BuyResult bought(int tickets, long cost, DrawInfo info) { return new BuyResult(Status.BOUGHT, tickets, cost, 0, 0, info); }
 
         public Status getStatus() { return status; }
         public int getTickets() { return tickets; }
         public long getCost() { return cost; }
+        public int getCap() { return cap; }
+        public long getHeld() { return held; }
         public DrawInfo getInfo() { return info; }
     }
 }

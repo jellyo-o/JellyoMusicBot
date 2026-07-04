@@ -88,7 +88,7 @@ public class SlashCommandListenerTest
 
         String[] games = {
                 "gamble", "predict", "roulette", "wheel", "keno", "scratch",
-                "double", "rps", "hilo", "crash", "mines", "blackjack"
+                "double", "rps", "hilo", "crash", "mines", "blackjack", "4d", "toto"
         };
         for (String game : games)
             assertTrue("Missing casino slash command: " + game, names.contains(game));

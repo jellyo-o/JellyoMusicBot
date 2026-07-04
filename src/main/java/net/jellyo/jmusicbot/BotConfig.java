@@ -51,9 +51,9 @@ public class BotConfig
     private YouTubeUtil.RoutingPlanner ytRoutingPlanner;
     private List<IpBlock> ytIpBlocks;
     private boolean stayInChannel, songInGame, npImages, updatealerts, useEval, dbots,
-            dashboardEnabled, economyEnabled;
-    private long owner, maxSeconds, autoplayMaxDurationMillis, aloneTimeUntilStop;
-    private int maxYTPlaylistPages, maxSpotifyPlaylistPages, dashboardPort;
+            dashboardEnabled, economyEnabled, lotteryEnabled;
+    private long owner, maxSeconds, autoplayMaxDurationMillis, aloneTimeUntilStop, lotteryTicketPrice;
+    private int maxYTPlaylistPages, maxSpotifyPlaylistPages, dashboardPort, lotteryDrawIntervalHours;
     private double skipratio;
     private OnlineStatus status;
     private Activity game;
@@ -108,6 +108,9 @@ public class BotConfig
             dashboardBindAddress = config.getString("dashboard.bindaddress");
             dashboardDatabase = config.getString("dashboard.database");
             economyEnabled = config.getBoolean("economy.enabled");
+            lotteryEnabled = config.getBoolean("economy.lottery.enabled");
+            lotteryDrawIntervalHours = config.getInt("economy.lottery.drawintervalhours");
+            lotteryTicketPrice = config.getLong("economy.lottery.ticketprice");
             maxSeconds = config.getLong("maxtime");
             autoplayMaxDurationMillis = parseAutoplayMaxDuration(config.hasPath("autoplaymaxtime")
                     ? config.getValue("autoplaymaxtime").unwrapped()
@@ -489,6 +492,21 @@ public class BotConfig
     public String getDashboardDatabase()
     {
         return dashboardDatabase;
+    }
+
+    public boolean isLotteryEnabled()
+    {
+        return lotteryEnabled;
+    }
+
+    public int getLotteryDrawIntervalHours()
+    {
+        return Math.max(1, lotteryDrawIntervalHours);
+    }
+
+    public long getLotteryTicketPrice()
+    {
+        return Math.max(1, lotteryTicketPrice);
     }
 
     public boolean isEconomyEnabled()

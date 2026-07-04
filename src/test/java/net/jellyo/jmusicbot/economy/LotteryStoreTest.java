@@ -65,23 +65,25 @@ public class LotteryStoreTest
     }
 
     @Test
-    public void dueDrawsReflectTheDrawEpoch()
+    public void buyingOpensTheGlobalRoundAndGrowsThePot()
     {
-        lottery.buyTickets(1L, 9L, 100L, 1, 100, 0, 1000); // draw_epoch = 1000
-        assertTrue(lottery.dueDraws(1000).contains(1L));
-        assertFalse(lottery.dueDraws(999).contains(1L));
-    }
-
-    @Test
-    public void buyingOpensARoundAndGrowsThePot()
-    {
-        DrawInfo info = lottery.buyTickets(1L, 9L, 100L, 3, 100, 86_400, 1000);
+        DrawInfo info = lottery.buyTickets(100L, 3, 100, 86_400, 1000); // draw_epoch = 87400
         assertEquals(300, info.getPot());
         assertEquals(3, info.getUserTickets());
         assertEquals(3, info.getTotalTickets());
-        DrawInfo info2 = lottery.buyTickets(1L, 9L, 200L, 2, 100, 86_400, 1000);
+        DrawInfo info2 = lottery.buyTickets(200L, 2, 100, 86_400, 1000);
         assertEquals(500, info2.getPot());
         assertEquals(5, info2.getTotalTickets());
+        assertEquals(2, info2.getUserTickets());
+        assertEquals(3, lottery.getUserTickets(100L));
+    }
+
+    @Test
+    public void isDueReflectsTheDrawEpoch()
+    {
+        lottery.buyTickets(100L, 1, 100, 0, 1000); // draw_epoch = 1000
+        assertTrue(lottery.isDue(1000));
+        assertFalse(lottery.isDue(999));
     }
 
     @Test
@@ -89,17 +91,17 @@ public class LotteryStoreTest
     {
         long winner = 100L;
         economy.addCurrency(winner, 1000); // give the winner a profile + starting balance
-        lottery.buyTickets(1L, 9L, winner, 5, 100, 86_400, 1000); // pot 500, sole participant
+        lottery.buyTickets(winner, 5, 100, 86_400, 1000); // pot 500, sole participant
 
-        DrawResult result = lottery.resolveDraw(1L, new Random(7));
+        DrawResult result = lottery.resolveDraw(new Random(7));
         assertTrue(result.hasWinner());
         assertEquals(winner, result.getWinnerId());
         assertEquals(500, result.getPot());
         assertEquals("winner credited the pot atomically", 1500, economy.getBalance(winner));
 
-        // A second resolution (e.g. a double boot) finds no open round and pays nothing.
-        assertNull(lottery.resolveDraw(1L, new Random(7)));
+        // A second resolution (a double boot) finds no open round and pays nothing.
+        assertNull(lottery.resolveDraw(new Random(7)));
         assertEquals("no double payout", 1500, economy.getBalance(winner));
-        assertNull("round is closed", lottery.getDraw(1L, winner));
+        assertNull("round is closed", lottery.getInfo(winner));
     }
 }
