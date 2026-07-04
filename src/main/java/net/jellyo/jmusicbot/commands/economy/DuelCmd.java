@@ -69,12 +69,13 @@ public class DuelCmd extends InteractiveGameCommand
         economy.ensureUser(opponent);
 
         // Ante is zero-sum (winner takes both), so size it like an even-money bet.
-        long ante = takeWager(ctx, economy, amountToken, 2.0);
-        if(ante < 0)
+        EscrowedWager w = takeWager(ctx, economy, amountToken, 2.0);
+        if(w == null)
             return;
+        long ante = w.amount();
 
         DuelSession session = new DuelSession(bot, challengerId, ctx.getAuthor().getEffectiveName(),
-                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), ante,
+                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), ante, w.id(),
                 opponentId, opponent.getEffectiveName());
         start(ctx, session, session.panel(), session.buttons(), DUEL_TIMEOUT_MS);
     }

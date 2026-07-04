@@ -88,6 +88,17 @@ public class EconomyStore
                     + "earned_at INTEGER NOT NULL,"
                     + "PRIMARY KEY(user_id, achievement_id)"
                     + ")");
+            // Durable record of a debited-but-unresolved wager. A row exists only while a game holds an
+            // escrowed stake; it is cleared atomically when the game settles/refunds, and any row still
+            // present on boot (its game was live in memory when the bot crashed) is refunded — so a crash
+            // can never make a player lose the coins they staked.
+            st.executeUpdate("CREATE TABLE IF NOT EXISTS pending_wagers ("
+                    + "id TEXT PRIMARY KEY,"
+                    + "user_id INTEGER NOT NULL,"
+                    + "amount INTEGER NOT NULL,"
+                    + "kind TEXT NOT NULL,"
+                    + "created_at INTEGER NOT NULL"
+                    + ")");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_profiles_currency ON user_profiles(currency DESC)");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_profiles_xp ON user_profiles(xp DESC)");
             st.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_profiles_listened ON user_profiles(ms_listened DESC)");
@@ -202,6 +213,328 @@ public class EconomyStore
         catch(SQLException ex)
         {
             throw new EconomyException("Failed to spend currency", ex);
+        }
+    }
+
+    // ---- wager escrow (crash-safe stakes) ----------------------------------
+
+    /**
+     * Atomically debits {@code amount} and records a durable pending-wager row, in one transaction — so a
+     * crash can never leave a stake removed with no way to recover it. Returns {@code false} (nothing
+     * changed) if the user cannot afford it. The row is cleared by {@link #resolveEscrow} /
+     * {@link #settleDuel} when the game ends, or refunded by {@link #reclaimPending} on the next boot if the
+     * game never finished.
+     */
+    public synchronized boolean escrow(long userId, long amount, String id, String kind)
+    {
+        if(amount <= 0)
+            return true; // nothing to hold
+        ensureRow(userId);
+        boolean previousAutoCommit = true;
+        try
+        {
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            int debited;
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE user_profiles SET currency=currency-?, updated_at=? WHERE user_id=? AND currency>=?"))
+            {
+                ps.setLong(1, amount);
+                ps.setLong(2, now());
+                ps.setLong(3, userId);
+                ps.setLong(4, amount);
+                debited = ps.executeUpdate();
+            }
+            if(debited == 0)
+            {
+                connection.rollback();
+                return false; // unaffordable — stake not taken, no row recorded
+            }
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO pending_wagers(id, user_id, amount, kind, created_at) VALUES(?,?,?,?,?)"))
+            {
+                ps.setString(1, id);
+                ps.setLong(2, userId);
+                ps.setLong(3, amount);
+                ps.setString(4, kind);
+                ps.setLong(5, now());
+                ps.executeUpdate();
+            }
+            connection.commit();
+            return true;
+        }
+        catch(SQLException ex)
+        {
+            rollbackQuietly();
+            throw new EconomyException("Failed to escrow wager", ex);
+        }
+        finally
+        {
+            restoreAutoCommit(previousAutoCommit);
+        }
+    }
+
+    /**
+     * Atomically clears the pending-wager row {@code id} and, only if it still existed, credits its owner
+     * {@code credit} (a stake-inclusive payout, or the stake itself as a refund). Idempotent: a second call
+     * for the same id credits nothing, so a double-settle can never double-pay. Returns the coins credited.
+     */
+    public synchronized long resolveEscrow(String id, long credit)
+    {
+        ensureOpen();
+        boolean previousAutoCommit = true;
+        try
+        {
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            long owner = -1;
+            try(PreparedStatement ps = connection.prepareStatement("SELECT user_id FROM pending_wagers WHERE id=?"))
+            {
+                ps.setString(1, id);
+                try(ResultSet rs = ps.executeQuery())
+                {
+                    if(rs.next())
+                        owner = rs.getLong(1);
+                }
+            }
+            if(owner < 0)
+            {
+                connection.commit();
+                return 0; // already resolved / never escrowed
+            }
+            deletePending(id);
+            long granted = 0;
+            if(credit > 0)
+            {
+                creditInTransaction(owner, credit);
+                granted = credit;
+            }
+            connection.commit();
+            return granted;
+        }
+        catch(SQLException ex)
+        {
+            rollbackQuietly();
+            throw new EconomyException("Failed to resolve escrowed wager", ex);
+        }
+        finally
+        {
+            restoreAutoCommit(previousAutoCommit);
+        }
+    }
+
+    /**
+     * Atomically debits {@code extra} and adds it to the stake held by an existing escrow row — e.g. a
+     * blackjack double-down doubling the live wager — so the extra stake is crash-recoverable too (the row
+     * now reflects the full amount at risk). Returns {@code false} (nothing changed) if the escrow is gone
+     * or the user can't afford the increase.
+     */
+    public synchronized boolean increaseEscrow(String id, long extra)
+    {
+        if(extra <= 0)
+            return true;
+        ensureOpen();
+        boolean previousAutoCommit = true;
+        try
+        {
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            long owner = -1;
+            try(PreparedStatement ps = connection.prepareStatement("SELECT user_id FROM pending_wagers WHERE id=?"))
+            {
+                ps.setString(1, id);
+                try(ResultSet rs = ps.executeQuery())
+                {
+                    if(rs.next())
+                        owner = rs.getLong(1);
+                }
+            }
+            if(owner < 0)
+            {
+                connection.rollback();
+                return false; // no live escrow to grow
+            }
+            int debited;
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE user_profiles SET currency=currency-?, updated_at=? WHERE user_id=? AND currency>=?"))
+            {
+                ps.setLong(1, extra);
+                ps.setLong(2, now());
+                ps.setLong(3, owner);
+                ps.setLong(4, extra);
+                debited = ps.executeUpdate();
+            }
+            if(debited == 0)
+            {
+                connection.rollback();
+                return false; // unaffordable
+            }
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE pending_wagers SET amount=amount+? WHERE id=?"))
+            {
+                ps.setLong(1, extra);
+                ps.setString(2, id);
+                ps.executeUpdate();
+            }
+            connection.commit();
+            return true;
+        }
+        catch(SQLException ex)
+        {
+            rollbackQuietly();
+            throw new EconomyException("Failed to increase escrowed wager", ex);
+        }
+        finally
+        {
+            restoreAutoCommit(previousAutoCommit);
+        }
+    }
+
+    /**
+     * Duel settlement: clears both antes' pending rows and credits the winner {@code pot}, all in one
+     * transaction. Idempotent via the row deletion — a re-settle finds no rows and credits nothing.
+     */
+    public synchronized void settleDuel(String idA, String idB, long winnerId, long pot)
+    {
+        ensureOpen();
+        boolean previousAutoCommit = true;
+        try
+        {
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            int cleared = deletePending(idA) + deletePending(idB);
+            if(cleared > 0 && pot > 0)
+                creditInTransaction(winnerId, pot);
+            connection.commit();
+        }
+        catch(SQLException ex)
+        {
+            rollbackQuietly();
+            throw new EconomyException("Failed to settle duel wagers", ex);
+        }
+        finally
+        {
+            restoreAutoCommit(previousAutoCommit);
+        }
+    }
+
+    /**
+     * Refunds every wager that never completed — e.g. an interactive game still live in memory when the bot
+     * crashed — by crediting each pending row's amount back to its owner and clearing the table, in one
+     * transaction. Returns the refunded wagers so the caller can notify the affected players. Call once on
+     * boot, before commands are served.
+     */
+    public synchronized List<PendingWager> reclaimPending()
+    {
+        ensureOpen();
+        List<PendingWager> pending = new ArrayList<>();
+        try(Statement st = connection.createStatement();
+            ResultSet rs = st.executeQuery("SELECT id, user_id, amount, kind FROM pending_wagers"))
+        {
+            while(rs.next())
+                pending.add(new PendingWager(rs.getString(1), rs.getLong(2), rs.getLong(3), rs.getString(4)));
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to read pending wagers", ex);
+        }
+        if(pending.isEmpty())
+            return pending;
+        boolean previousAutoCommit = true;
+        try
+        {
+            previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try(PreparedStatement ps = connection.prepareStatement(
+                    "UPDATE user_profiles SET currency=currency+?, updated_at=? WHERE user_id=?"))
+            {
+                long now = now();
+                for(PendingWager w : pending)
+                {
+                    ps.setLong(1, w.getAmount());
+                    ps.setLong(2, now);
+                    ps.setLong(3, w.getUserId());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+            try(Statement st = connection.createStatement())
+            {
+                st.executeUpdate("DELETE FROM pending_wagers");
+            }
+            connection.commit();
+        }
+        catch(SQLException ex)
+        {
+            rollbackQuietly();
+            throw new EconomyException("Failed to reclaim pending wagers", ex);
+        }
+        finally
+        {
+            restoreAutoCommit(previousAutoCommit);
+        }
+        return pending;
+    }
+
+    /** Number of unresolved escrowed wagers currently recorded (test/diagnostics helper). */
+    public synchronized int pendingWagerCount()
+    {
+        ensureOpen();
+        try(Statement st = connection.createStatement();
+            ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM pending_wagers"))
+        {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+        catch(SQLException ex)
+        {
+            throw new EconomyException("Failed to count pending wagers", ex);
+        }
+    }
+
+    private int deletePending(String id) throws SQLException
+    {
+        if(id == null)
+            return 0;
+        try(PreparedStatement ps = connection.prepareStatement("DELETE FROM pending_wagers WHERE id=?"))
+        {
+            ps.setString(1, id);
+            return ps.executeUpdate();
+        }
+    }
+
+    private void creditInTransaction(long userId, long amount) throws SQLException
+    {
+        try(PreparedStatement ps = connection.prepareStatement(
+                "UPDATE user_profiles SET currency=currency+?, updated_at=? WHERE user_id=?"))
+        {
+            ps.setLong(1, amount);
+            ps.setLong(2, now());
+            ps.setLong(3, userId);
+            ps.executeUpdate();
+        }
+    }
+
+    private void rollbackQuietly()
+    {
+        try
+        {
+            connection.rollback();
+        }
+        catch(SQLException ex)
+        {
+            LOG.warn("Failed to roll back economy transaction", ex);
+        }
+    }
+
+    private void restoreAutoCommit(boolean previous)
+    {
+        try
+        {
+            connection.setAutoCommit(previous);
+        }
+        catch(SQLException ex)
+        {
+            LOG.warn("Failed to restore autocommit", ex);
         }
     }
 
@@ -706,6 +1039,28 @@ public class EconomyStore
 
         public String getAchievementId() { return achievementId; }
         public long getEarnedAt() { return earnedAt; }
+    }
+
+    /** A wager whose stake was debited but which had not resolved (refunded by {@link #reclaimPending}). */
+    public static final class PendingWager
+    {
+        private final String id;
+        private final long userId;
+        private final long amount;
+        private final String kind;
+
+        public PendingWager(String id, long userId, long amount, String kind)
+        {
+            this.id = id;
+            this.userId = userId;
+            this.amount = amount;
+            this.kind = kind;
+        }
+
+        public String getId() { return id; }
+        public long getUserId() { return userId; }
+        public long getAmount() { return amount; }
+        public String getKind() { return kind; }
     }
 
     public static class EconomyException extends RuntimeException

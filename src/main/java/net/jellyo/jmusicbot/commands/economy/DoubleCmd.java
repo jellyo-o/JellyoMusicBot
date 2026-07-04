@@ -49,22 +49,23 @@ public class DoubleCmd extends InteractiveGameCommand
             ctx.replyError("Usage: `double <amount>` — flip to double, then push your luck or cash out.");
             return;
         }
-        long amount = takeWager(ctx, economy, tokens[0], DoubleGame.topMultiplier());
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], DoubleGame.topMultiplier());
+        if(w == null)
             return;
+        long amount = w.amount();
 
         long authorId = ctx.getAuthor().getIdLong();
         boolean firstWin = ThreadLocalRandom.current().nextDouble() < DoubleGame.winChance(0);
         if(!firstWin)
         {
-            GameOutcome outcome = economy.settleGame(authorId, amount, 0, ctx.getChannel());
+            GameOutcome outcome = economy.settleGame(authorId, amount, 0, ctx.getChannel(), w.id());
             ctx.reply(embedMessage(GameEmbeds.result("🎲 Double or Nothing",
                     "💥 The first flip missed — nothing this time.", outcome, amount)));
             return;
         }
         long pot = amount * 2;
         DoubleSession session = new DoubleSession(bot, authorId, ctx.getAuthor().getEffectiveName(),
-                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), amount, pot, 1);
+                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), amount, w.id(), pot, 1);
         start(ctx, session, DoubleSession.panel(pot, 1, amount), DoubleSession.buttons(1), DEFAULT_TIMEOUT_MS);
     }
 }

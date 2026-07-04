@@ -63,9 +63,10 @@ public class RouletteCmd extends WagerGameCommand
             straightTarget = Integer.parseInt(numToken);
         }
 
-        long amount = takeWager(ctx, economy, tokens[0], bet.multiplier());
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], bet.multiplier());
+        if(w == null)
             return;
+        long amount = w.amount();
 
         final long authorId = ctx.getAuthor().getIdLong();
         final MessageChannel channel = ctx.getChannel();
@@ -81,7 +82,7 @@ public class RouletteCmd extends WagerGameCommand
         }
 
         // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
-        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel, w.id());
         final String detail = "The ball settled on " + slot(result.getNumber(), result.getColor())
                 + "\nYou bet **" + betLabel + "** — " + (result.isWon() ? "winner!" : "no luck.");
         final MessageEmbed reveal = resultEmbed("🎡 Roulette", detail, outcome, amount);

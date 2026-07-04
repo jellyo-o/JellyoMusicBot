@@ -15,7 +15,7 @@
  */
 package com.jagrosh.jmusicbot.economy;
 
-import com.jagrosh.jmusicbot.economy.LotteryStore.DrawInfo;
+import com.jagrosh.jmusicbot.economy.LotteryStore.BuyOutcome;
 import com.jagrosh.jmusicbot.economy.LotteryStore.DrawResult;
 import com.jagrosh.jmusicbot.economy.LotteryStore.TicketHolder;
 import java.nio.file.Path;
@@ -65,22 +65,41 @@ public class LotteryStoreTest
     }
 
     @Test
-    public void buyingOpensTheGlobalRoundAndGrowsThePot()
+    public void buyingDebitsCoinsOpensTheRoundAndGrowsThePot()
     {
-        DrawInfo info = lottery.buyTickets(100L, 3, 100, 86_400, 1000, 1000); // draw_epoch = 87400
-        assertEquals(300, info.getPot());
-        assertEquals(3, info.getUserTickets());
-        assertEquals(3, info.getTotalTickets());
-        DrawInfo info2 = lottery.buyTickets(200L, 2, 100, 86_400, 1000, 1000);
-        assertEquals(500, info2.getPot());
-        assertEquals(5, info2.getTotalTickets());
-        assertEquals(2, info2.getUserTickets());
+        economy.addCurrency(100L, 10_000);
+        economy.addCurrency(200L, 10_000);
+        BuyOutcome o1 = lottery.buyTickets(100L, 3, 100, 86_400, 1000, 1000); // draw_epoch = 87400
+        assertEquals(BuyOutcome.Status.BOUGHT, o1.getStatus());
+        assertEquals(300, o1.getInfo().getPot());
+        assertEquals(3, o1.getInfo().getUserTickets());
+        assertEquals(3, o1.getInfo().getTotalTickets());
+        assertEquals("coins debited for the tickets, in the same transaction", 9_700, economy.getBalance(100L));
+
+        BuyOutcome o2 = lottery.buyTickets(200L, 2, 100, 86_400, 1000, 1000);
+        assertEquals(BuyOutcome.Status.BOUGHT, o2.getStatus());
+        assertEquals(500, o2.getInfo().getPot());
+        assertEquals(5, o2.getInfo().getTotalTickets());
+        assertEquals(2, o2.getInfo().getUserTickets());
+        assertEquals(9_800, economy.getBalance(200L));
         assertEquals(3, lottery.getUserTickets(100L));
+    }
+
+    @Test
+    public void buyingWithoutEnoughCoinsWritesNothing()
+    {
+        economy.addCurrency(100L, 250); // less than 3 * 100
+        BuyOutcome o = lottery.buyTickets(100L, 3, 100, 86_400, 1000, 1000);
+        assertEquals(BuyOutcome.Status.INSUFFICIENT, o.getStatus());
+        assertEquals("coins untouched", 250, economy.getBalance(100L));
+        assertEquals("no tickets granted", 0, lottery.getUserTickets(100L));
+        assertNull("no round opened", lottery.getInfo(100L));
     }
 
     @Test
     public void isDueReflectsTheDrawEpoch()
     {
+        economy.addCurrency(100L, 1_000);
         lottery.buyTickets(100L, 1, 100, 0, 1000, 1000); // draw_epoch = 1000
         assertTrue(lottery.isDue(1000));
         assertFalse(lottery.isDue(999));
@@ -89,33 +108,42 @@ public class LotteryStoreTest
     @Test
     public void perUserCapIsEnforcedAtomicallyAndRejectionWritesNothing()
     {
-        // A first buy of 40 (cap 50) succeeds; a second buy of 20 would exceed the cap, so it is rejected
-        // with null and NOTHING is written — tickets and pot are unchanged.
-        assertEquals(40, lottery.buyTickets(100L, 40, 100, 86_400, 1000, 50).getUserTickets());
-        assertNull(lottery.buyTickets(100L, 20, 100, 86_400, 1000, 50));
+        economy.addCurrency(100L, 10_000);
+        assertEquals(BuyOutcome.Status.BOUGHT, lottery.buyTickets(100L, 40, 100, 86_400, 1000, 50).getStatus());
+        assertEquals(40, lottery.getUserTickets(100L));
+        assertEquals("debited for 40 tickets", 6_000, economy.getBalance(100L));
+
+        // A buy that would exceed the cap is rejected and writes NOTHING — no tickets, no pot, no debit.
+        assertEquals(BuyOutcome.Status.CAP_REACHED,
+                lottery.buyTickets(100L, 20, 100, 86_400, 1000, 50).getStatus());
         assertEquals("tickets unchanged after a capped buy", 40, lottery.getUserTickets(100L));
         assertEquals("pot not grown by the rejected buy", 4000, lottery.getInfo(100L).getPot());
+        assertEquals("coins not debited by the rejected buy", 6_000, economy.getBalance(100L));
+
         // A buy that lands exactly on the cap is allowed.
-        assertEquals(50, lottery.buyTickets(100L, 10, 100, 86_400, 1000, 50).getUserTickets());
+        assertEquals(BuyOutcome.Status.BOUGHT, lottery.buyTickets(100L, 10, 100, 86_400, 1000, 50).getStatus());
+        assertEquals(50, lottery.getUserTickets(100L));
         assertEquals(5000, lottery.getInfo(100L).getPot());
+        assertEquals(5_000, economy.getBalance(100L));
     }
 
     @Test
     public void resolveDrawCreditsWinnerAtomicallyAndIsIdempotent()
     {
         long winner = 100L;
-        economy.addCurrency(winner, 1000); // give the winner a profile + starting balance
-        lottery.buyTickets(winner, 5, 100, 86_400, 1000, 1000); // pot 500, sole participant
+        economy.addCurrency(winner, 1_000);
+        lottery.buyTickets(winner, 5, 100, 86_400, 1000, 1000); // cost 500 -> balance 500, pot 500
+        assertEquals("stake debited by the buy", 500, economy.getBalance(winner));
 
         DrawResult result = lottery.resolveDraw(new Random(7));
         assertTrue(result.hasWinner());
         assertEquals(winner, result.getWinnerId());
         assertEquals(500, result.getPot());
-        assertEquals("winner credited the pot atomically", 1500, economy.getBalance(winner));
+        assertEquals("sole participant wins their own pot back", 1_000, economy.getBalance(winner));
 
         // A second resolution (a double boot) finds no open round and pays nothing.
         assertNull(lottery.resolveDraw(new Random(7)));
-        assertEquals("no double payout", 1500, economy.getBalance(winner));
+        assertEquals("no double payout", 1_000, economy.getBalance(winner));
         assertNull("round is closed", lottery.getInfo(winner));
     }
 }

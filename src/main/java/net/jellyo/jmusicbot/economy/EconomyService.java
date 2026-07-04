@@ -19,7 +19,10 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.EnumSet;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.User;
@@ -321,12 +324,56 @@ public class EconomyService
         return isEnabled() ? store.addCurrency(userId, delta) : getBalance(userId);
     }
 
+    // ---- crash-safe wager escrow -------------------------------------------
+
     /**
-     * Settles a resolved casino round after the wager has already been deducted
-     * via {@link #trySpend}. This is the single settlement path for every game:
-     * it applies the per-round return cap, credits the payout, records the gamble
-     * stats, awards participation XP (announcing a level-up), and pays a
-     * daily-capped loyalty rebate on a net loss.
+     * Escrows a wager: atomically debits {@code amount} and records a durable crash-recovery row. Returns an
+     * opaque escrow id to hand to {@link #settleGame}/{@link #resolveEscrow} when the game ends, or
+     * {@code null} if the economy is off or the user can't afford it (in which case nothing was debited).
+     */
+    public String escrow(long userId, long amount, String kind)
+    {
+        if(!isEnabled() || amount <= 0)
+            return null; // a non-null id always denotes a real pending row that a settle can resolve against
+        String id = UUID.randomUUID().toString();
+        return store.escrow(userId, amount, id, kind) ? id : null;
+    }
+
+    /** Clears an escrow and credits {@code credit} back to its owner (a refund or manual settle). */
+    public long resolveEscrow(String escrowId, long credit)
+    {
+        return isEnabled() && escrowId != null ? store.resolveEscrow(escrowId, credit) : 0;
+    }
+
+    /** Grows a live escrow by an extra stake (e.g. a blackjack double-down), atomically. False if refused. */
+    public boolean increaseEscrow(String escrowId, long extra)
+    {
+        return isEnabled() && escrowId != null && store.increaseEscrow(escrowId, extra);
+    }
+
+    /** Settles a duel: clears both antes' escrows and pays the winner {@code pot}, atomically. */
+    public void settleDuel(String escrowA, String escrowB, long winnerId, long pot)
+    {
+        if(isEnabled())
+            store.settleDuel(escrowA, escrowB, winnerId, pot);
+    }
+
+    /**
+     * Refunds every wager left unresolved by a crash (a game still live in memory when the bot went down)
+     * and returns them so the caller can tell the affected players. Runs even when the economy is currently
+     * disabled, so stakes from a previous enabled run are never lost. Call once on boot.
+     */
+    public List<EconomyStore.PendingWager> reclaimAbandonedWagers()
+    {
+        return store == null ? Collections.emptyList() : store.reclaimPending();
+    }
+
+    /**
+     * Settles a resolved casino round after the wager has already been escrowed
+     * (debited + recorded) via {@link #escrow}. This is the single settlement path
+     * for every game: it applies the per-round return cap, credits the payout,
+     * records the gamble stats, awards participation XP (announcing a level-up),
+     * and pays a daily-capped loyalty rebate on a net loss.
      *
      * <p>{@code rawPayout} is the total returned to the player, stake-inclusive
      * (0 on a total loss, {@code wager} on a push, {@code > wager} on a win) — see
@@ -336,6 +383,17 @@ public class EconomyService
      */
     public GameOutcome settleGame(long userId, long wager, long rawPayout, MessageChannel channel)
     {
+        return settleGame(userId, wager, rawPayout, channel, null);
+    }
+
+    /**
+     * As {@link #settleGame(long, long, long, MessageChannel)}, but resolves the durable escrow
+     * {@code escrowId} atomically with the payout credit — clearing the crash-recovery row in the same
+     * transaction — instead of a bare credit. Every wager game supplies its escrow id, so a round that has
+     * settled can never be double-refunded on the next boot. A {@code null} id falls back to a plain credit.
+     */
+    public GameOutcome settleGame(long userId, long wager, long rawPayout, MessageChannel channel, String escrowId)
+    {
         if(!isEnabled())
             return GameOutcome.disabled(getBalance(userId));
         long payout = Payouts.clampReturn(Math.max(0, rawPayout));
@@ -344,7 +402,9 @@ public class EconomyService
         // Read the level before awarding this round's XP so the rebate reflects the
         // player's standing at the time of the loss.
         int level = LevelCurve.levelForXp(store.getProfile(userId).getXp());
-        if(payout > 0)
+        if(escrowId != null)
+            store.resolveEscrow(escrowId, payout); // credit the payout AND clear the crash-recovery row atomically
+        else if(payout > 0)
             store.addCurrency(userId, payout);
         long net = payout - wager;
         boolean won = net > 0;

@@ -69,9 +69,10 @@ public class PredictCmd extends WagerGameCommand
             return;
         }
 
-        long amount = takeWager(ctx, economy, tokens[0], mode.multiplier());
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], mode.multiplier());
+        if(w == null)
             return;
+        long amount = w.amount();
 
         final long authorId = ctx.getAuthor().getIdLong();
         final MessageChannel channel = ctx.getChannel();
@@ -86,7 +87,7 @@ public class PredictCmd extends WagerGameCommand
         }
 
         // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
-        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel, w.id());
         final String detail = "The die landed on **" + result.getRoll() + "** " + FACES[result.getRoll() - 1]
                 + "\nYou called **" + call + "** — " + (result.isWon() ? "nailed it!" : "no luck.");
         final MessageEmbed reveal = resultEmbed("🎲 Dice Predict", detail, outcome, amount);

@@ -48,9 +48,10 @@ public class ScratchCmd extends WagerGameCommand
             return;
         }
 
-        long amount = takeWager(ctx, economy, tokens[0], ScratchGame.PRACTICAL_TOP_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], ScratchGame.PRACTICAL_TOP_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
 
         final long authorId = ctx.getAuthor().getIdLong();
         final MessageChannel channel = ctx.getChannel();
@@ -66,7 +67,7 @@ public class ScratchCmd extends WagerGameCommand
         }
 
         // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
-        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel, w.id());
         final String detail = grid(result.getGrid()) + "\n💎 count: **" + result.getLuckyCount() + "**"
                 + (result.getLuckyCount() >= 6 ? " — 💎 JACKPOT!" : "");
         final MessageEmbed reveal = resultEmbed("🎟️ Scratch Card", detail, outcome, amount);

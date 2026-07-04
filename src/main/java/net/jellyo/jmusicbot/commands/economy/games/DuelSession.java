@@ -38,9 +38,9 @@ public class DuelSession extends GameSession
     private final long ante;
 
     public DuelSession(Bot bot, long challengerId, String challengerName, long guildId, long channelId,
-                       long ante, long opponentId, String opponentName)
+                       long ante, String escrowId, long opponentId, String opponentName)
     {
-        super(bot, challengerId, challengerName, guildId, channelId, ante);
+        super(bot, challengerId, challengerName, guildId, channelId, ante, escrowId);
         this.opponentId = opponentId;
         this.opponentName = opponentName;
         this.ante = ante;
@@ -74,7 +74,7 @@ public class DuelSession extends GameSession
             ackIfNeeded(event);
             return;
         }
-        bot.getEconomyService().addCurrency(ownerId, ante); // refund challenger
+        bot.getEconomyService().resolveEscrow(escrowId, ante); // refund the challenger's escrowed ante + clear its row
         closeClaimed();
         editResult(event, endEmbed(reason + " Ante refunded."));
     }
@@ -94,10 +94,12 @@ public class DuelSession extends GameSession
             ackIfNeeded(event);
             return;
         }
-        // Only the resolution winner debits the opponent, so a double-click can't double-charge.
-        if(!bot.getEconomyService().trySpend(opponentId, ante))
+        // Escrow the opponent's ante (debit + crash-recovery record). Only the resolution winner does this,
+        // so a double-click can't double-charge.
+        String oppEscrow = bot.getEconomyService().escrow(opponentId, ante, "duel");
+        if(oppEscrow == null)
         {
-            bot.getEconomyService().addCurrency(ownerId, ante); // refund challenger
+            bot.getEconomyService().resolveEscrow(escrowId, ante); // refund the challenger's escrowed ante
             closeClaimed();
             editResult(event, endEmbed(opponentName + " couldn't cover the ante — duel off. Ante refunded."));
             return;
@@ -106,7 +108,9 @@ public class DuelSession extends GameSession
         long winnerId = challengerWins ? ownerId : opponentId;
         String winnerName = challengerWins ? ownerName : opponentName;
         long pot = ante * 2;
-        bot.getEconomyService().addCurrency(winnerId, pot);
+        // Clear both antes' escrows and pay the winner the pot in one transaction — crash-safe even if the
+        // bot dies between the opponent's debit and the winner's credit.
+        bot.getEconomyService().settleDuel(escrowId, oppEscrow, winnerId, pot);
         bot.getEconomyService().recordGamePlayed(ownerId, channel());
         bot.getEconomyService().recordGamePlayed(opponentId, channel());
         closeClaimed();
@@ -124,7 +128,7 @@ public class DuelSession extends GameSession
     {
         if(!claimResolution())
             return;
-        bot.getEconomyService().addCurrency(ownerId, ante); // refund challenger
+        bot.getEconomyService().resolveEscrow(escrowId, ante); // refund the challenger's escrowed ante + clear its row
         closeClaimed();
         editResultById(endEmbed("The duel expired — " + opponentName + " didn't respond. Ante refunded."));
     }

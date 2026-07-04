@@ -37,9 +37,9 @@ public class DoubleSession extends GameSession
     private int wins;
 
     public DoubleSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId,
-                         long wager, long pot, int wins)
+                         long wager, String escrowId, long pot, int wins)
     {
-        super(bot, ownerId, ownerName, guildId, channelId, wager);
+        super(bot, ownerId, ownerName, guildId, channelId, wager, escrowId);
         this.pot = pot;
         this.wins = wins;
     }

@@ -91,7 +91,7 @@ public class LotteryService
             store.close();
     }
 
-    /** Buys tickets for the caller, enforcing the anti-whale per-user cap, then debiting coins. */
+    /** Buys tickets for the caller, enforcing the anti-whale per-user cap, in one crash-safe transaction. */
     public BuyResult buy(User user, int count)
     {
         if(!isEnabled())
@@ -99,34 +99,28 @@ public class LotteryService
         int tickets = Math.max(1, count);
         long userId = user.getIdLong();
         // Fast, friendly pre-check (also guarantees a single request never exceeds the cap). The
-        // authoritative check is the atomic, cap-guarded write in the store below, which closes the
-        // concurrent-buy race the pre-check alone cannot.
+        // authoritative cap + affordability check is the atomic transaction in the store below.
         long held = store.getUserTickets(userId);
         if(tickets > MAX_TICKETS_PER_USER || held + tickets > MAX_TICKETS_PER_USER)
             return BuyResult.capReached(MAX_TICKETS_PER_USER, held);
         long price = ticketPrice();
         long cost = tickets * price;
         bot.getEconomyService().ensureUser(user);
-        if(!bot.getEconomyService().trySpend(userId, cost))
-            return BuyResult.insufficient(cost);
         long intervalSeconds = bot.getConfig().getLotteryDrawIntervalHours() * 3600L;
-        DrawInfo info;
-        try
+        // The debit + ticket write share one LotteryStore transaction, so there is no debit-without-tickets
+        // window to crash into and no separate refund path to get wrong.
+        LotteryStore.BuyOutcome outcome = store.buyTickets(userId, tickets, price, intervalSeconds,
+                Instant.now().getEpochSecond(), MAX_TICKETS_PER_USER);
+        switch(outcome.getStatus())
         {
-            info = store.buyTickets(userId, tickets, price, intervalSeconds,
-                    Instant.now().getEpochSecond(), MAX_TICKETS_PER_USER);
+            case INSUFFICIENT:
+                return BuyResult.insufficient(cost);
+            case CAP_REACHED:
+                return BuyResult.capReached(MAX_TICKETS_PER_USER, store.getUserTickets(userId));
+            case BOUGHT:
+            default:
+                return BuyResult.bought(tickets, cost, outcome.getInfo());
         }
-        catch(RuntimeException ex)
-        {
-            bot.getEconomyService().addCurrency(userId, cost); // coins were debited but the ticket write failed
-            throw ex;
-        }
-        if(info == null) // cap hit atomically (a concurrent buy won the race) — refund and report
-        {
-            bot.getEconomyService().addCurrency(userId, cost);
-            return BuyResult.capReached(MAX_TICKETS_PER_USER, store.getUserTickets(userId));
-        }
-        return BuyResult.bought(tickets, cost, info);
     }
 
     public DrawInfo info(long userId)

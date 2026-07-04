@@ -30,11 +30,12 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Base for a stateful, button-driven casino game bound to one message. The wager
- * is deducted by the command (via {@code trySpend}) <b>before</b> the session
- * starts; the session credits the resolved payout through
- * {@link #settleOnce(long)} exactly once, guarded by a {@link ResolveGuard} so a
- * button click, an inactivity timeout and (for crash) a crash tick can all race
- * without ever double-paying or stranding the debit.
+ * is <b>escrowed</b> by the command (debited + recorded under {@link #escrowId})
+ * before the session starts; the session credits the resolved payout and clears
+ * the escrow atomically through {@link #settleOnce(long)} exactly once, guarded by
+ * a {@link ResolveGuard} so a button click, an inactivity timeout and (for crash)
+ * a crash tick can all race without ever double-paying or stranding the debit. Any
+ * escrow left unresolved by a hard crash is refunded on the next boot.
  *
  * <p>Subclasses own their game state, their button handling and their
  * abandon-time auto-resolution — which must never pay <i>more</i> than an
@@ -50,12 +51,15 @@ public abstract class GameSession
     protected final long guildId;
     protected final long channelId;
     protected final long wager;
+    /** The crash-recovery escrow holding this game's stake; cleared (or refunded) exactly when it resolves. */
+    protected final String escrowId;
 
     private volatile long messageId = -1L;
     private final ResolveGuard guard = new ResolveGuard();
     private volatile ScheduledFuture<?> timeout;
 
-    protected GameSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager)
+    protected GameSession(Bot bot, long ownerId, String ownerName, long guildId, long channelId, long wager,
+                          String escrowId)
     {
         this.bot = bot;
         this.ownerId = ownerId;
@@ -63,10 +67,12 @@ public abstract class GameSession
         this.guildId = guildId;
         this.channelId = channelId;
         this.wager = wager;
+        this.escrowId = escrowId;
     }
 
     public long getOwnerId() { return ownerId; }
     public long getMessageId() { return messageId; }
+    public String getEscrowId() { return escrowId; }
     public boolean isResolved() { return guard.isResolved(); }
 
     /**
@@ -92,7 +98,7 @@ public abstract class GameSession
         if(!guard.claim())
             return; // already resolved somehow — never double-refund
         if(wager > 0)
-            bot.getEconomyService().addCurrency(ownerId, wager);
+            bot.getEconomyService().resolveEscrow(escrowId, wager); // refund the escrowed stake + clear its row
     }
 
     /** Hook invoked once the session's message is bound and registered (e.g. to start ticks). */
@@ -138,7 +144,9 @@ public abstract class GameSession
     protected GameOutcome settleClaimed(long stake, long rawPayout)
     {
         closeClaimed();
-        return bot.getEconomyService().settleGame(ownerId, stake, rawPayout, channel());
+        // Resolve the crash-recovery escrow atomically with the payout, so this settled round can never be
+        // refunded again on a later boot.
+        return bot.getEconomyService().settleGame(ownerId, stake, rawPayout, channel(), escrowId);
     }
 
     /**

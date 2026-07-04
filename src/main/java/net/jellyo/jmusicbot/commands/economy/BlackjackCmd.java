@@ -48,9 +48,10 @@ public class BlackjackCmd extends InteractiveGameCommand
             ctx.replyError("Usage: `blackjack <amount>` — then hit, stand or double.");
             return;
         }
-        long amount = takeWager(ctx, economy, tokens[0], BlackjackSession.SIZING_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], BlackjackSession.SIZING_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
 
         long authorId = ctx.getAuthor().getIdLong();
         List<Integer> player = new ArrayList<>(List.of(
@@ -79,7 +80,7 @@ public class BlackjackCmd extends InteractiveGameCommand
                 payout = 0;
                 detail = "The dealer has blackjack.";
             }
-            GameOutcome outcome = economy.settleGame(authorId, amount, payout, ctx.getChannel());
+            GameOutcome outcome = economy.settleGame(authorId, amount, payout, ctx.getChannel(), w.id());
             String hands = "**You:** " + BlackjackSession.cards(player) + " (" + BlackjackGame.bestValue(player) + ")\n"
                     + "**Dealer:** " + BlackjackSession.cards(dealer) + " (" + BlackjackGame.bestValue(dealer) + ")";
             ctx.reply(embedMessage(GameEmbeds.result("🂡 Blackjack", detail + "\n" + hands, outcome, amount)));
@@ -87,7 +88,7 @@ public class BlackjackCmd extends InteractiveGameCommand
         }
 
         BlackjackSession session = new BlackjackSession(bot, authorId, ctx.getAuthor().getEffectiveName(),
-                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), amount, player, dealer);
+                ctx.getGuild().getIdLong(), ctx.getChannel().getIdLong(), amount, w.id(), player, dealer);
         start(ctx, session, session.panel(), session.buttons(), DEFAULT_TIMEOUT_MS);
     }
 }

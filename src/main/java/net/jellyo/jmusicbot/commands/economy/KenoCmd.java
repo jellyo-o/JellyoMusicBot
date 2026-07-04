@@ -78,9 +78,10 @@ public class KenoCmd extends WagerGameCommand
             picks = quickPick();
         }
 
-        long amount = takeWager(ctx, economy, tokens[0], KenoGame.PRACTICAL_TOP_MULTIPLIER);
-        if(amount < 0)
+        EscrowedWager w = takeWager(ctx, economy, tokens[0], KenoGame.PRACTICAL_TOP_MULTIPLIER);
+        if(w == null)
             return;
+        long amount = w.amount();
 
         final long authorId = ctx.getAuthor().getIdLong();
         final MessageChannel channel = ctx.getChannel();
@@ -93,7 +94,7 @@ public class KenoCmd extends WagerGameCommand
             frames.add(spinEmbed("🔢 Keno", "Your picks: **" + pickList + "**\nDrawing the balls… 🎱"));
 
         // Settle synchronously, before the cosmetic animation, so the debit and payout are one crash-safe unit.
-        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel);
+        final GameOutcome outcome = economy.settleGame(authorId, amount, result.getPayout(), channel, w.id());
         final String drawn = Arrays.stream(result.getDrawn()).sorted()
                 .mapToObj(n -> chosen.contains(n) ? "**[" + n + "]**" : String.valueOf(n))
                 .collect(Collectors.joining(" "));
