@@ -13,10 +13,18 @@ public class LyricsResult
     private final String artist;
     private final String title;
     private final String lyrics;
+    private final String syncedLyrics;
     private final Set<String> aliases;
 
     public LyricsResult(String provider, String sourceId, String sourceKey, String sourceUrl,
                         String artist, String title, String lyrics, Collection<String> aliases)
+    {
+        this(provider, sourceId, sourceKey, sourceUrl, artist, title, lyrics, aliases, null);
+    }
+
+    public LyricsResult(String provider, String sourceId, String sourceKey, String sourceUrl,
+                        String artist, String title, String lyrics, Collection<String> aliases,
+                        String syncedLyrics)
     {
         this.provider = provider == null ? "" : provider.trim();
         this.sourceId = sourceId == null ? "" : sourceId.trim();
@@ -25,6 +33,7 @@ public class LyricsResult
         this.artist = artist == null ? "" : artist.trim();
         this.title = title == null ? "" : title.trim();
         this.lyrics = InputValidator.sanitizeLyrics(lyrics);
+        this.syncedLyrics = syncedLyrics == null ? "" : syncedLyrics.trim();
         this.aliases = new LinkedHashSet<>();
         if(aliases != null)
             this.aliases.addAll(aliases);
@@ -63,6 +72,17 @@ public class LyricsResult
     public String lyrics()
     {
         return lyrics;
+    }
+
+    /** Raw LRC-format time-synced lyrics (LRCLIB {@code syncedLyrics}), or empty if none. */
+    public String syncedLyrics()
+    {
+        return syncedLyrics;
+    }
+
+    public boolean hasSyncedLyrics()
+    {
+        return syncedLyrics != null && !syncedLyrics.isBlank();
     }
 
     public Set<String> aliases()

@@ -222,7 +222,7 @@ public class LyricsCache
                                                    String lyrics, String sourceUrl) throws SQLException
     {
         String provider = path != null && path.startsWith("lrclib:") ? "lrclib" : "genius";
-        return insertOrUpdate(provider, path, path, artist, title, path, keywords, lyrics, sourceUrl, Set.of());
+        return insertOrUpdate(provider, path, path, artist, title, path, keywords, lyrics, "", sourceUrl, Set.of());
     }
 
     public synchronized CachedLyrics insertOrUpdate(LyricsResult result, Collection<String> extraLookupTerms) throws SQLException
@@ -242,6 +242,7 @@ public class LyricsCache
                 result.sourceKey(),
                 "",
                 result.lyrics(),
+                result.syncedLyrics(),
                 result.sourceUrl(),
                 extra
         );
@@ -330,7 +331,7 @@ public class LyricsCache
     }
 
     private CachedLyrics insertOrUpdate(String provider, String sourceId, String sourceKey, String artist, String title,
-                                        String path, String keywords, String lyrics, String sourceUrl,
+                                        String path, String keywords, String lyrics, String syncedLyrics, String sourceUrl,
                                         Collection<String> extraLookupTerms) throws SQLException
     {
         long now = Instant.now().toEpochMilli();
@@ -342,6 +343,7 @@ public class LyricsCache
         if(safeLyrics == null || safeLyrics.isBlank())
             throw new SQLException("Invalid lyrics");
 
+        String safeSynced = syncedLyrics == null ? "" : syncedLyrics.trim();
         String safeArtist = artist == null ? "" : artist.trim();
         String safeTitle = title == null ? "" : title.trim();
         String safeProvider = provider == null || provider.isBlank() ? inferProvider(safePath) : provider.trim();
@@ -352,14 +354,15 @@ public class LyricsCache
         String normalizedTitle = InputValidator.normalizeLookup(safeTitle);
         String lookupTerms = buildLookupTerms(safeArtist, safeTitle, safePath, safeSource, extraLookupTerms);
 
-        String sql = "INSERT INTO songs(artist,title,path,keywords,lyrics,source_url,provider,source_id,"
+        String sql = "INSERT INTO songs(artist,title,path,keywords,lyrics,synced_lyrics,source_url,provider,source_id,"
                 + "normalized_artist,normalized_title,lookup_terms,created_at,updated_at) "
-                + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                + "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 + "ON CONFLICT(path) DO UPDATE SET "
                 + "artist=excluded.artist,"
                 + "title=excluded.title,"
                 + "keywords=excluded.keywords,"
                 + "lyrics=excluded.lyrics,"
+                + "synced_lyrics=excluded.synced_lyrics,"
                 + "source_url=excluded.source_url,"
                 + "provider=excluded.provider,"
                 + "source_id=excluded.source_id,"
@@ -374,14 +377,15 @@ public class LyricsCache
             ps.setString(3, safePath);
             ps.setString(4, safeKeywords);
             ps.setString(5, safeLyrics);
-            ps.setString(6, safeSource);
-            ps.setString(7, safeProvider);
-            ps.setString(8, safeSourceId);
-            ps.setString(9, normalizedArtist);
-            ps.setString(10, normalizedTitle);
-            ps.setString(11, lookupTerms);
-            ps.setLong(12, now);
+            ps.setString(6, safeSynced);
+            ps.setString(7, safeSource);
+            ps.setString(8, safeProvider);
+            ps.setString(9, safeSourceId);
+            ps.setString(10, normalizedArtist);
+            ps.setString(11, normalizedTitle);
+            ps.setString(12, lookupTerms);
             ps.setLong(13, now);
+            ps.setLong(14, now);
             ps.executeUpdate();
         }
         return findByPath(safePath).orElseThrow();
@@ -531,6 +535,7 @@ public class LyricsCache
         addColumnIfMissing("normalized_artist", "TEXT");
         addColumnIfMissing("normalized_title", "TEXT");
         addColumnIfMissing("lookup_terms", "TEXT");
+        addColumnIfMissing("synced_lyrics", "TEXT");
     }
 
     private void addColumnIfMissing(String name, String definition) throws SQLException
@@ -666,6 +671,7 @@ public class LyricsCache
                 nullToEmpty(rs.getString("path")),
                 nullToEmpty(rs.getString("keywords")),
                 nullToEmpty(rs.getString("lyrics")),
+                nullToEmpty(rs.getString("synced_lyrics")),
                 nullToEmpty(rs.getString("source_url")),
                 nullToEmpty(rs.getString("provider")),
                 nullToEmpty(rs.getString("source_id")),
@@ -690,6 +696,7 @@ public class LyricsCache
         private final String path;
         private final String keywords;
         private final String lyrics;
+        private final String syncedLyrics;
         private final String sourceUrl;
         private final String provider;
         private final String sourceId;
@@ -703,12 +710,22 @@ public class LyricsCache
                             String sourceUrl, String provider, String sourceId, String normalizedArtist,
                             String normalizedTitle, String lookupTerms, long createdAt, long updatedAt)
         {
+            this(id, artist, title, path, keywords, lyrics, "", sourceUrl, provider, sourceId,
+                    normalizedArtist, normalizedTitle, lookupTerms, createdAt, updatedAt);
+        }
+
+        public CachedLyrics(long id, String artist, String title, String path, String keywords, String lyrics,
+                            String syncedLyrics, String sourceUrl, String provider, String sourceId,
+                            String normalizedArtist, String normalizedTitle, String lookupTerms,
+                            long createdAt, long updatedAt)
+        {
             this.id = id;
             this.artist = artist;
             this.title = title;
             this.path = path;
             this.keywords = keywords;
             this.lyrics = lyrics;
+            this.syncedLyrics = syncedLyrics == null ? "" : syncedLyrics;
             this.sourceUrl = sourceUrl;
             this.provider = provider;
             this.sourceId = sourceId;
@@ -747,6 +764,17 @@ public class LyricsCache
         public String lyrics()
         {
             return lyrics;
+        }
+
+        /** Raw LRC-format time-synced lyrics for this song, or empty if none were cached. */
+        public String syncedLyrics()
+        {
+            return syncedLyrics;
+        }
+
+        public boolean hasSyncedLyrics()
+        {
+            return syncedLyrics != null && !syncedLyrics.isBlank();
         }
 
         public String sourceUrl()
