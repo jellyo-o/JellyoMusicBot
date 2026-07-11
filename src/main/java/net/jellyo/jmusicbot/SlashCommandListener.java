@@ -404,6 +404,7 @@ public class SlashCommandListener extends ListenerAdapter
                 .addOptions(new OptionData(OptionType.STRING, "time", "Time to seek to (e.g., 1:30, +30, -15)", true)));
         commands.add(slashCommand("lyrics", "Search for lyrics")
                 .addOptions(new OptionData(OptionType.STRING, "query", "Song to search lyrics for", false)));
+        commands.add(slashCommand("karaoke", "Show time-synced karaoke lyrics for the current song"));
         commands.add(slashCommand("correctlyrics", "Correct cached lyrics for a song")
                 .addOptions(
                         new OptionData(OptionType.STRING, "url", "Genius lyrics URL", true),
@@ -761,6 +762,7 @@ public class SlashCommandListener extends ListenerAdapter
             case "shuffle": handleSharedMusicCommand(event, shuffleCmd, "", false, true, true); break;
             case "seek": handleSharedMusicCommand(event, seekCmd, event.getOption("time").getAsString(), false, true, true); break;
             case "lyrics": handleLyrics(event); break;
+            case "karaoke": handleKaraoke(event); break;
             case "correctlyrics": handleCorrectLyrics(event); break;
             case "guess": handleGuess(event); break;
             case "hostgame": handleHostGame(event); break;
@@ -1424,6 +1426,7 @@ public class SlashCommandListener extends ListenerAdapter
                 {"shuffle", "shuffle", "Shuffle your queued songs; DJs shuffle the full queue"},
                 {"seek <time>", "seek time:<time>", "Seek the current song"},
                 {"lyrics [song]", "lyrics [query]", "Fetch lyrics"},
+                {"karaoke", "karaoke", "Live karaoke lyrics for the current song"},
                 {"correctlyrics <genius-url> | <song>", "correctlyrics url:<genius-url> query:<song>", "Correct cached lyrics for a song"},
                 {"guess [start|status|join|leave|reveal|stop|hints|highlight]", "guess <start|settings|join|leave|status|reveal|stop|hints|highlight>", "Play a guess the music game"},
                 {"", "g", "Fast private guess for the active guess the music round"},
@@ -2043,6 +2046,39 @@ public class SlashCommandListener extends ListenerAdapter
                 result -> hook.editOriginal(bot.getConfig().getSuccess() + (result.isPosted()
                         ? " Music panel posted: " : " Music panel is already active: ") + result.getJumpUrl()).queue(),
                 error -> hook.editOriginal(bot.getConfig().getError() + " I could not post the music panel in this channel.").queue()));
+    }
+
+    private void handleKaraoke(SlashCommandInteractionEvent event)
+    {
+        if (event.getGuild() == null)
+        {
+            event.reply(bot.getConfig().getError() + " This command can only be used in a server.").setEphemeral(true).queue();
+            return;
+        }
+        if (bot.getGuessMusicService().isActive(event.getGuild()))
+        {
+            event.reply(bot.getConfig().getWarning() + " A guess the music game is active, so I can't do that right now.").setEphemeral(true).queue();
+            return;
+        }
+        AudioHandler handler = (AudioHandler) event.getGuild().getAudioManager().getSendingHandler();
+        if (handler == null || !handler.isMusicPlaying(event.getJDA()))
+        {
+            event.reply(bot.getConfig().getError() + " There must be music playing to use that.").setEphemeral(true).queue();
+            return;
+        }
+        TextChannel channel = event.getChannel() instanceof TextChannel ? (TextChannel) event.getChannel() : null;
+        if (channel == null)
+            channel = bot.getSettingsManager().getSettings(event.getGuild()).getTextChannel(event.getGuild());
+        if (channel == null)
+        {
+            event.reply(bot.getConfig().getError() + " Run this in a text channel so I can post the lyrics.").setEphemeral(true).queue();
+            return;
+        }
+        AudioTrack track = handler.getPlayer().getPlayingTrack();
+        TextChannel target = channel;
+        event.deferReply(true).queue(hook ->
+                bot.getNowplayingHandler().getKaraoke().startManual(event.getGuild(), track, target,
+                        msg -> hook.editOriginal(msg).queue(null, t -> {})));
     }
 
     private void handleLyrics(SlashCommandInteractionEvent event)

@@ -229,6 +229,7 @@ public class JMusicBot
                         new SettingsCmd(bot),
                         
                         new LyricsCmd(bot),
+                        new KaraokeCmd(bot),
                         new CorrectLyricsCmd(bot),
                         new GuessMusicCmd(bot),
                         new HostGameCmd(bot),

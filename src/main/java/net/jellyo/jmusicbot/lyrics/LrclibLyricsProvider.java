@@ -104,7 +104,7 @@ class LrclibLyricsProvider implements LyricsProvider
         return Optional.empty();
     }
 
-    private LyricsResult toResult(JsonNode item)
+    static LyricsResult toResult(JsonNode item)
     {
         if(item.path("instrumental").asBoolean(false))
             return null;
@@ -130,6 +130,8 @@ class LrclibLyricsProvider implements LyricsProvider
         if(!album.isBlank())
             aliases.add(album + " " + title);
 
+        String synced = item.path("syncedLyrics").asText("");
+
         return new LyricsResult(
                 "lrclib",
                 id,
@@ -138,7 +140,8 @@ class LrclibLyricsProvider implements LyricsProvider
                 artist,
                 title,
                 lyrics,
-                aliases
+                aliases,
+                synced
         );
     }
 

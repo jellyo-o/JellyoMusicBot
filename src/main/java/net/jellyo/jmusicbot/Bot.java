@@ -567,6 +567,8 @@ public class Bot
             crashRecoveryService.saveAllSnapshots();
         if(gameSessions != null)
             gameSessions.resolveAll(); // settle abandoned games so no debit is left dangling
+        if(nowplaying != null)
+            nowplaying.getKaraoke().shutdown(); // stop live karaoke ticks before the scheduler dies
         threadpool.shutdownNow();
         blockingThreadpool.shutdownNow();
         lyricsPreloadPool.shutdownNow();

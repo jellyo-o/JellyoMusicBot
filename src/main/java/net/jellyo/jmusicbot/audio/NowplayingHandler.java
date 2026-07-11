@@ -94,13 +94,20 @@ public class NowplayingHandler
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
     private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
-    private final Map<Long, String> lastAutoShownTrack = new java.util.concurrent.ConcurrentHashMap<>(); // guild -> track identifier
+    private final KaraokeManager karaoke;
 
     public NowplayingHandler(Bot bot)
     {
         this.bot = bot;
         this.panels = new ConcurrentHashMap<>();
         this.panelUpdateStates = new ConcurrentHashMap<>();
+        this.karaoke = new KaraokeManager(bot);
+    }
+
+    /** Manages the per-guild karaoke / auto-lyrics message (used by the {@code /karaoke} command too). */
+    public KaraokeManager getKaraoke()
+    {
+        return karaoke;
     }
     
     public void init()
@@ -245,20 +252,22 @@ public class NowplayingHandler
                 showPanel(guild, channel, false);
             maybeAutoShowLyrics(guild, track);
         }
+        else
+        {
+            karaoke.onSongEnd(guildId);
+        }
     }
 
     /**
-     * When the guild has autoShowLyrics enabled, post the song's lyrics to the
-     * now-playing channel as it starts. LRCLIB-only (cache -> LRCLIB, never the
-     * rate-limited Genius fallback) and silent when nothing is found or perms are
-     * missing. Runs off the JDA/playback thread.
+     * When the guild has autoShowLyrics enabled, show the starting song's lyrics in the
+     * now-playing channel. Delegates to {@link KaraokeManager}, which runs a live karaoke
+     * view when the song has time-synced lyrics and otherwise posts the full plain lyrics,
+     * editing one sticky message in place across songs. Silent when perms are missing or
+     * nothing is found. The actual fetch runs off the JDA/playback thread.
      */
     private void maybeAutoShowLyrics(Guild guild, AudioTrack track)
     {
         if(!bot.getSettingsManager().getSettings(guild.getIdLong()).isAutoShowLyrics())
-            return;
-        LyricsService service = bot.getLyricsService();
-        if(service == null)
             return;
         if(track.getInfo() != null && track.getInfo().isStream)
             return;
@@ -266,52 +275,7 @@ public class NowplayingHandler
         if(channel == null || !guild.getSelfMember().hasPermission(channel,
                 Permission.MESSAGE_SEND, Permission.MESSAGE_EMBED_LINKS))
             return;
-        final String query = com.jagrosh.jmusicbot.lyrics.LyricsQuery.forTrack(track);
-        if(query.isEmpty())
-            return;
-        final long gid = guild.getIdLong();
-        // Don't re-post the same song's lyrics on consecutive starts (e.g. repeat mode
-        // re-adds a clone, or the panel restart button) — only when the track actually changes.
-        String identifier = track.getInfo() == null ? query : track.getInfo().identifier;
-        if(identifier == null || identifier.isEmpty())
-            identifier = query;
-        if(identifier.equals(lastAutoShownTrack.get(gid)))
-            return;
-        lastAutoShownTrack.put(gid, identifier);
-        final long channelId = channel.getIdLong();
-        // Run on the dedicated lyrics executor (not the shared blocking pool) so lyrics
-        // fetches never contend with Spotify/economy/dashboard I/O.
-        bot.getLyricsExecutor().submit(() ->
-        {
-            try
-            {
-                // Full pipeline: cache -> LRCLIB -> Genius (rate-limited); negative-cached misses
-                // are skipped. Runs on the dedicated lyrics thread so the Genius throttle can't
-                // stall other work.
-                Optional<LyricsCache.CachedLyrics> found = service.fetchAndCache(query, true);
-                if(found.isEmpty())
-                    return;
-                LyricsCache.CachedLyrics lyrics = found.get();
-                String content = lyrics.lyrics();
-                if(content == null || content.isBlank() || content.length() > 3900)
-                    return; // keep auto-post to a single tidy embed
-                Guild g = bot.getJDA() == null ? null : bot.getJDA().getGuildById(gid);
-                if(g == null)
-                    return;
-                TextChannel target = g.getTextChannelById(channelId);
-                if(target == null)
-                    return;
-                String titleLine = (lyrics.artist() == null || lyrics.artist().isBlank() ? "" : lyrics.artist() + " - ") + lyrics.title();
-                EmbedBuilder eb = new EmbedBuilder()
-                        .setColor(g.getSelfMember().getColor())
-                        .setTitle(titleLine, lyrics.sourceUrl())
-                        .setDescription(content);
-                target.sendMessageEmbeds(eb.build()).queue(null, t -> {});
-            }
-            catch(Exception ignored)
-            {
-            }
-        });
+        karaoke.onSongStart(guild, track, channel);
     }
     
     public void onMessageDelete(Guild guild, long messageId)
