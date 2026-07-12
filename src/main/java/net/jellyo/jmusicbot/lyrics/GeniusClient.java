@@ -21,7 +21,6 @@ public class GeniusClient
     private static final String BASE = "https://genius.com";
     private static final OkHttpClient CLIENT = new OkHttpClient();
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final boolean DEBUG = Boolean.getBoolean("lyrics.debug") || "true".equalsIgnoreCase(System.getenv("LYRICS_DEBUG"));
     private static final RateLimiter RATE_LIMITER = new RateLimiter(Long.getLong("lyrics.rateMillis", 10_000L));
     private static final String[] STOP_WORDS = {
             "official", "video", "music", "clip", "audio", "lyrics", "lyric", "hd", "4k",
@@ -60,11 +59,6 @@ public class GeniusClient
                 others.add(v);
         }
 
-        if(DEBUG)
-        {
-            System.out.println("[DEBUG] Expected artist: " + expectedArtist);
-            System.out.println("[DEBUG] RateLimiter acquire (search)");
-        }
         RATE_LIMITER.acquire(false);
 
         for(String candidate : prioritized)
@@ -96,8 +90,6 @@ public class GeniusClient
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                 .build();
-        if(DEBUG)
-            System.out.println("[DEBUG] RateLimiter acquire (lyrics fetch)");
         RATE_LIMITER.acquire(false);
         try(Response response = CLIENT.newCall(request).execute())
         {

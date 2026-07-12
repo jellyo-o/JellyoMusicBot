@@ -28,6 +28,11 @@ public class LyricsService
 
     public Optional<LyricsCache.CachedLyrics> fetchAndCache(String rawQuery, boolean allowDifferentArtistFallback) throws IOException
     {
+        return fetchAndCache(rawQuery, allowDifferentArtistFallback, true);
+    }
+
+    public Optional<LyricsCache.CachedLyrics> fetchAndCache(String rawQuery, boolean allowDifferentArtistFallback, boolean allowFallbackProvider) throws IOException
+    {
         String sanitized = InputValidator.sanitizeQuery(rawQuery);
         if(sanitized == null)
             return Optional.empty();
@@ -73,6 +78,12 @@ public class LyricsService
             clearMissQuietly(sanitized);
             return primary;
         }
+
+        // Preload/warm path: consult only the primary (LRCLIB) provider so background warming
+        // never blocks on the rate-limited fallback. Do NOT negative-cache this miss, because the
+        // providers were not fully consulted and an on-demand fetch must still be free to try Genius.
+        if(!allowFallbackProvider)
+            return Optional.empty();
 
         Optional<LyricsCache.CachedLyrics> fallback = Optional.empty();
         try

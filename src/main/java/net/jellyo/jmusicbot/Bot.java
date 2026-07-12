@@ -106,6 +106,9 @@ public class Bot
     private volatile long lyricsInitAttemptAt = 0L;
     private final LyricsPreloader lyricsPreloader;
     private final ExecutorService lyricsPreloadPool;
+    // Foreground pool for the user-visible auto-show / /karaoke fetch, kept separate from the
+    // preload pool so a slow lyrics lookup can never queue behind background preload tasks.
+    private final ExecutorService lyricsForegroundPool;
 
     private boolean shuttingDown = false;
     private JDA jda;
@@ -306,15 +309,25 @@ public class Bot
             thread.setDaemon(true);
             return thread;
         });
+        // Separate pool for the user-visible auto-show / /karaoke fetch so it never waits behind
+        // the background preloader. Two threads let a new song render even while a previous song's
+        // (possibly rate-limited) fetch is still finishing.
+        this.lyricsForegroundPool = Executors.newFixedThreadPool(2, r ->
+        {
+            Thread thread = new Thread(r, "jmusicbot-lyrics-foreground");
+            thread.setDaemon(true);
+            return thread;
+        });
         // The warmer resolves the service lazily so preloading works even if the service
-        // initialized later. Uses the full pipeline (LRCLIB -> Genius, rate-limited) so a
-        // song only on Genius is still pre-cached.
+        // initialized later. Preload is LRCLIB-only (allowFallbackProvider=false) so background
+        // warming stays fast and never blocks on the rate-limited Genius fallback; an on-demand
+        // fetch still reaches Genius for songs LRCLIB does not have.
         this.lyricsPreloader = new LyricsPreloader(lyricsPreloadPool, query ->
         {
             LyricsService svc = getLyricsService();
             if(svc == null)
                 return;
-            try { svc.fetchAndCache(query, true); }
+            try { svc.fetchAndCache(query, true, false); }
             catch(Exception ignored) {}
         }, 256);
 
@@ -386,12 +399,13 @@ public class Bot
         return lyricsPreloader;
     }
 
-    /** Dedicated single-thread executor for lyrics network work (preload + auto-show),
-     *  kept off the shared {@link #getBlockingThreadpool()} so lyrics fetches never
-     *  contend with Spotify/economy/dashboard I/O. */
+    /** Foreground executor for the user-visible auto-show / {@code /karaoke} lyrics fetch. Kept
+     *  separate from the background preload pool so a fetch never queues behind preload tasks, and
+     *  off the shared {@link #getBlockingThreadpool()} so it never contends with Spotify/economy/
+     *  dashboard I/O. */
     public ExecutorService getLyricsExecutor()
     {
-        return lyricsPreloadPool;
+        return lyricsForegroundPool;
     }
     
     public PlayerManager getPlayerManager()
@@ -572,6 +586,7 @@ public class Bot
         threadpool.shutdownNow();
         blockingThreadpool.shutdownNow();
         lyricsPreloadPool.shutdownNow();
+        lyricsForegroundPool.shutdownNow();
         gamesScheduler.shutdownNow();
         if(lotteryService != null)
             lotteryService.shutdown();

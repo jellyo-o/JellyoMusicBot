@@ -89,4 +89,49 @@ public class LyricsServiceFetchTest
         assertEquals(1, primary.calls);
         assertEquals(0, fallback.calls);
     }
+
+    @Test public void preloadModeSkipsRateLimitedFallbackOnPrimaryMiss() throws Exception {
+        FakeProvider primary = new FakeProvider();               // LRCLIB: empty
+        FakeProvider fallback = new FakeProvider();              // Genius: would have it
+        fallback.next = Optional.of(result("NF", "Time"));
+        LyricsService svc = service(primary, fallback);
+
+        // Preload path (allowFallbackProvider=false) consults only LRCLIB, never the
+        // rate-limited Genius fallback, so background warming cannot block on the limiter.
+        Optional<LyricsCache.CachedLyrics> found = svc.fetchAndCache("NF - Time", true, false);
+        assertFalse(found.isPresent());
+        assertEquals(1, primary.calls);
+        assertEquals(0, fallback.calls);
+    }
+
+    @Test public void preloadModeStillReturnsPrimaryHitWithoutTouchingFallback() throws Exception {
+        FakeProvider primary = new FakeProvider();
+        primary.next = Optional.of(result("Adele", "Hello"));
+        FakeProvider fallback = new FakeProvider();
+        LyricsService svc = service(primary, fallback);
+
+        Optional<LyricsCache.CachedLyrics> found = svc.fetchAndCache("Adele - Hello", true, false);
+        assertTrue(found.isPresent());
+        assertEquals("Adele", found.get().artist());
+        assertEquals(1, primary.calls);
+        assertEquals(0, fallback.calls);
+    }
+
+    @Test public void preloadMissIsNotNegativeCachedSoLaterFullFetchStillTriesFallback() throws Exception {
+        FakeProvider primary = new FakeProvider();               // LRCLIB: empty
+        FakeProvider fallback = new FakeProvider();              // Genius: has it
+        fallback.next = Optional.of(result("NF", "Time"));
+        LyricsService svc = service(primary, fallback);
+
+        // A preload miss (LRCLIB-only) must NOT record a negative cache, because the providers
+        // were not fully consulted; otherwise a later on-demand fetch would be wrongly suppressed.
+        assertFalse(svc.fetchAndCache("NF - Time", true, false).isPresent());
+        assertEquals(0, fallback.calls);
+
+        // The later full fetch is still allowed to reach Genius and succeed.
+        Optional<LyricsCache.CachedLyrics> found = svc.fetchAndCache("NF - Time", true);
+        assertTrue(found.isPresent());
+        assertEquals("NF", found.get().artist());
+        assertEquals(1, fallback.calls);
+    }
 }
