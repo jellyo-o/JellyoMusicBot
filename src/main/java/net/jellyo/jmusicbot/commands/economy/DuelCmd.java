@@ -55,7 +55,7 @@ public class DuelCmd extends InteractiveGameCommand
             ctx.replyError("You can't duel yourself.");
             return;
         }
-        User opponent = ctx.getJDA().getUserById(opponentId);
+        User opponent = ctx.resolveUser(opponentId);
         if(opponent == null)
         {
             ctx.replyError("I couldn't find that user.");
@@ -80,7 +80,7 @@ public class DuelCmd extends InteractiveGameCommand
         start(ctx, session, session.panel(), session.buttons(), DUEL_TIMEOUT_MS);
     }
 
-    private static long findUserId(String args)
+    static long findUserId(String args)
     {
         Matcher mention = MENTION.matcher(args);
         if(mention.find())
@@ -91,7 +91,7 @@ public class DuelCmd extends InteractiveGameCommand
         return -1;
     }
 
-    private static String findAmountToken(String args)
+    static String findAmountToken(String args)
     {
         for(String token : args.split("\\s+"))
             if(!RAW_ID.matcher(token).matches() && AMOUNT.matcher(token).matches())

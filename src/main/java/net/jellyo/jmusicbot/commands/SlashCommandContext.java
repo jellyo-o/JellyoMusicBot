@@ -25,6 +25,7 @@ import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.interactions.InteractionHook;
 import net.dv8tion.jda.api.interactions.commands.OptionMapping;
+import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.utils.messages.MessageCreateData;
 
 import java.util.function.Consumer;
@@ -92,6 +93,22 @@ public class SlashCommandContext implements CommandContext
     public User getAuthor()
     {
         return event.getUser();
+    }
+
+    @Override
+    public User resolveUser(long userId)
+    {
+        // Prefer the user resolved by Discord in the interaction's USER options; this carries the
+        // full user object even when it is not in JDA's cache.
+        for(OptionMapping opt : event.getOptions())
+        {
+            if(opt.getType() != OptionType.USER)
+                continue;
+            User user = opt.getAsUser();
+            if(user != null && user.getIdLong() == userId)
+                return user;
+        }
+        return event.getJDA().getUserById(userId);
     }
     
     @Override

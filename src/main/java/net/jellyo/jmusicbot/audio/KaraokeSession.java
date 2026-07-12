@@ -28,6 +28,12 @@ class KaraokeSession
     private static final int WINDOW_AFTER = 2;
     private static final long TICK_MILLIS = Math.max(300L, Long.getLong("jmusicbot.karaoke.tickMillis", 1000L));
     private static final long MIN_EDIT_MILLIS = Math.max(1000L, Long.getLong("jmusicbot.karaoke.minEditMillis", 1500L));
+    /**
+     * How far ahead of the live playback position to pick the current line, so the shown line
+     * leads the audio to compensate for the tick granularity plus the Discord edit/propagation
+     * latency (an edit rendered a fraction of a second later would otherwise read as late).
+     */
+    static final long LEAD_MILLIS = Math.max(0L, Long.getLong("jmusicbot.karaoke.leadMillis", 500L));
 
     private final Bot bot;
     private final long guildId;
@@ -77,11 +83,21 @@ class KaraokeSession
         return buildEmbed(lrc, currentIndex, titleLine, sourceUrl, color);
     }
 
+    /**
+     * Maps a live playback position to the line index that should be shown, leading it by
+     * {@link #LEAD_MILLIS}. Centralizes the offset so every karaoke render (the live tick and the
+     * initial embed in {@link KaraokeManager}) advances the line at the same moment.
+     */
+    static int lineIndexFor(LrcLyrics lrc, long positionMs)
+    {
+        return lrc.lineIndexAt(positionMs + LEAD_MILLIS);
+    }
+
     /** Current line index for the live playback position, or -1 if the song has no player yet. */
     int currentIndex()
     {
         AudioTrack track = playingTrack();
-        return track == null ? -1 : lrc.lineIndexAt(track.getPosition());
+        return track == null ? -1 : lineIndexFor(lrc, track.getPosition());
     }
 
     void start()
@@ -116,7 +132,7 @@ class KaraokeSession
                 return;
             }
 
-            int idx = lrc.lineIndexAt(track.getPosition());
+            int idx = lineIndexFor(lrc, track.getPosition());
             if(idx == lastRenderedIndex)
                 return;
             long now = System.currentTimeMillis();

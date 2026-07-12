@@ -54,6 +54,14 @@ public interface CommandContext
      * Get the user who executed the command
      */
     User getAuthor();
+
+    /**
+     * Resolve a user referenced in this command (a slash USER option or a message mention) by id.
+     * Uses the interaction's or message's resolved data so it works even when the user is not in
+     * JDA's cache (the bot runs without the GUILD_MEMBERS intent). Falls back to the JDA cache, and
+     * returns null when the user cannot be resolved.
+     */
+    User resolveUser(long userId);
     
     /**
      * Get the channel where the command was executed

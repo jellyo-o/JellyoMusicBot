@@ -72,6 +72,17 @@ public class MessageCommandContext implements CommandContext
     {
         return event.getAuthor();
     }
+
+    @Override
+    public User resolveUser(long userId)
+    {
+        // Prefer a user mentioned in the message; mentions carry the resolved user object even when
+        // it is not in JDA's cache.
+        for(User user : event.getMessage().getMentions().getUsers())
+            if(user.getIdLong() == userId)
+                return user;
+        return event.getJDA().getUserById(userId);
+    }
     
     @Override
     public MessageChannel getChannel()
