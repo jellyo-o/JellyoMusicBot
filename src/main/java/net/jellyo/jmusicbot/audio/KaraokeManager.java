@@ -72,6 +72,20 @@ public class KaraokeManager
         sessions.clear();
     }
 
+    /**
+     * Whether a completed (asynchronous) auto-show fetch should be dropped because the song
+     * changed while it was in flight. Manual {@code /karaoke} always renders; an auto render is
+     * stale only when we know both the fetched and the currently playing identifiers and they differ.
+     */
+    static boolean isStaleAutoRender(boolean manual, String fetchedIdentifier, String currentIdentifier)
+    {
+        if(manual)
+            return false;
+        if(fetchedIdentifier == null || currentIdentifier == null)
+            return false;
+        return !fetchedIdentifier.equals(currentIdentifier);
+    }
+
     private void present(Guild guild, AudioTrack track, TextChannel channel, boolean manual, Consumer<String> feedback)
     {
         if(guild == null || track == null || channel == null)
@@ -122,6 +136,10 @@ public class KaraokeManager
                 return;
             TextChannel ch = g.getTextChannelById(channelId);
             if(ch == null)
+                return;
+            // The fetch is asynchronous; if auto-lyrics moved on to another song while it ran,
+            // drop this result so we do not overwrite the current song's message with stale lyrics.
+            if(isStaleAutoRender(manual, identifier, currentIdentifier(g)))
                 return;
 
             String titleLine = (lyrics.artist() == null || lyrics.artist().isBlank() ? "" : lyrics.artist() + " - ")
@@ -234,6 +252,19 @@ public class KaraokeManager
         catch(RuntimeException ignored)
         {
         }
+    }
+
+    /** Identifier of the guild's currently playing track, or null when nothing is playing. */
+    private String currentIdentifier(Guild guild)
+    {
+        Object handler = guild.getAudioManager().getSendingHandler();
+        if(handler instanceof AudioHandler)
+        {
+            AudioTrack track = ((AudioHandler) handler).getPlayer().getPlayingTrack();
+            if(track != null)
+                return KaraokeSession.identifierOf(track);
+        }
+        return null;
     }
 
     private int currentIndexFor(Guild guild, LrcLyrics lrc)
