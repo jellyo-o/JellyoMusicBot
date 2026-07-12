@@ -104,6 +104,7 @@ import net.dv8tion.jda.api.entities.channel.middleman.AudioChannel;
 import net.dv8tion.jda.api.components.actionrow.ActionRow;
 import net.dv8tion.jda.api.components.selections.SelectOption;
 import net.dv8tion.jda.api.components.selections.StringSelectMenu;
+import net.dv8tion.jda.api.events.guild.GuildJoinEvent;
 import net.dv8tion.jda.api.events.interaction.command.CommandAutoCompleteInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
@@ -257,6 +258,16 @@ public class SlashCommandListener extends ListenerAdapter
         registerSlashCommands(event.getJDA());
     }
 
+    @Override
+    public void onGuildJoin(GuildJoinEvent event)
+    {
+        // Register slash commands for a guild we join after startup so they work without a restart.
+        // This runs independently of the once-per-process startup guard below.
+        Guild guild = event.getGuild();
+        LOG.info("Joined guild {} ({}); registering slash commands", guild.getName(), guild.getId());
+        registerGuildSlashCommands(guild, buildSlashCommands());
+    }
+
     private void registerSlashCommands(JDA jda)
     {
         if(!SLASH_COMMAND_REGISTRATION_STARTED.compareAndSet(false, true))
@@ -273,7 +284,12 @@ public class SlashCommandListener extends ListenerAdapter
 
     private void registerGuildSlashCommands(JDA jda, List<SlashCommandData> desiredCommands)
     {
-        jda.getGuilds().forEach(guild -> guild.retrieveCommands().queue(
+        jda.getGuilds().forEach(guild -> registerGuildSlashCommands(guild, desiredCommands));
+    }
+
+    private void registerGuildSlashCommands(Guild guild, List<SlashCommandData> desiredCommands)
+    {
+        guild.retrieveCommands().queue(
                 existing ->
                 {
                     if(!commandsNeedUpdate(desiredCommands, existing))
@@ -294,7 +310,7 @@ public class SlashCommandListener extends ListenerAdapter
                 },
                 err -> LOG.warn("Failed to retrieve slash commands for guild {} ({})",
                         guild.getName(), guild.getId(), err)
-        ));
+        );
     }
 
     static boolean commandsNeedUpdate(List<SlashCommandData> desiredCommands, List<Command> existingCommands)

@@ -228,6 +228,18 @@ public class CrashRecoveryService
     }
 
     /**
+     * Drops the rolling crash-recovery snapshot for a guild whose queue has played
+     * out naturally, so a fully-consumed queue is no longer treated as a restorable
+     * "saved queue from before". Only the live snapshot is removed; any pending
+     * restore offer the user has not yet acted on is left intact.
+     */
+    public synchronized void clearSnapshot(long guildId)
+    {
+        if(store != null)
+            store.delete(guildId);
+    }
+
+    /**
      * Brings a saved queue back into the guild's handler (which must already be
      * connected). A pending restore takes priority and is <em>appended</em> to the
      * live queue (the user explicitly asked to merge it back in); otherwise the

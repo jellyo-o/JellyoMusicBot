@@ -243,7 +243,7 @@ public class KaraokeManager
         {
             AudioTrack track = ((AudioHandler) handler).getPlayer().getPlayingTrack();
             if(track != null)
-                return lrc.lineIndexAt(track.getPosition());
+                return KaraokeSession.lineIndexFor(lrc, track.getPosition());
         }
         return -1;
     }

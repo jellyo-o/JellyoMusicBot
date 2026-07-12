@@ -22,6 +22,7 @@ import com.jagrosh.jmusicbot.dashboard.DashboardStatsService.SkipInfo;
 import com.jagrosh.jmusicbot.lyrics.LyricsPreloader;
 import com.jagrosh.jmusicbot.lyrics.LyricsQuery;
 import com.jagrosh.jmusicbot.queue.AbstractQueue;
+import com.jagrosh.jmusicbot.recovery.CrashRecoveryService;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
@@ -1247,6 +1248,24 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private void finishEmptyQueue(AudioPlayer player)
     {
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
+        // The queue drained by playing out on its own, so there is nothing worth offering to
+        // restore later. Drop the rolling snapshot so the next play from idle does not re-offer
+        // the song that just finished. Interrupted sessions never reach here: everyone leaving
+        // voice early-returns via suppressAutoplayOnce, and a crash runs no onTrackEnd at all, so
+        // their snapshots survive for /restore. Guard the DB write so a snapshot-store hiccup on
+        // this playback thread can never skip the disconnect/unpause teardown below.
+        CrashRecoveryService recovery = manager.getBot().getCrashRecoveryService();
+        if(recovery != null && recovery.isEnabled())
+        {
+            try
+            {
+                recovery.clearSnapshot(guildId);
+            }
+            catch(RuntimeException ex)
+            {
+                LOG.debug("Failed to clear recovery snapshot for guild {}", guildId, ex);
+            }
+        }
         if(!manager.getBot().getConfig().getStay())
         {
             LOG.info("Queue empty and stayinchannel=false for guild {}; closing audio connection", guildId);
