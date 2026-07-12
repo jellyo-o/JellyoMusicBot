@@ -1,4 +1,4 @@
-# ![JellyoMusicBot logo](./JellyoMusicBotLogo.png) JellyoMusicBot
+# <img src="./JellyoMusicBotLogo.png" alt="JellyoMusicBot logo" width="100" align="top"> JellyoMusicBot
 
 JellyoMusicBot is a self-hosted Discord music bot based on
 [jagrosh/MusicBot](https://github.com/jagrosh/MusicBot), with updates from the
