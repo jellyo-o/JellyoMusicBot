@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Random;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,8 +81,54 @@ public class AutoplayService
 
         LOG.info("Attempting autoplay for guild {}; mode={}; previous={}",
                 handler.getGuildId(), mode, describeTrack(previousTrack));
-        new Session(handler, previousTrack, fallback, sources).tryNextSource();
+        new Session(handler, previousTrack, fallback, sources, handler::addTrack, false).tryNextSource();
         return true;
+    }
+
+    /**
+     * Resolves the next autoplay candidate ahead of time without playing it, handing the resolved
+     * {@link QueuedTrack} to {@code onResolved} (or calling {@code onNone} when nothing suitable is
+     * found). Used to warm the next song's lyrics and make the autoplay transition instant. Unlike
+     * {@link #startNext}, this runs while a track is still playing, so it does not require the player
+     * to be idle; the caller decides whether to keep the result when the current track finally ends.
+     */
+    public void prefetchNext(AudioHandler handler, AudioTrack seedTrack, Consumer<QueuedTrack> onResolved, Runnable onNone)
+    {
+        Settings settings = bot.getSettingsManager().getSettings(handler.getGuildId());
+        AutoplayMode mode = settings.getAutoplayMode();
+        if(mode == AutoplayMode.OFF || seedTrack == null)
+        {
+            onNone.run();
+            return;
+        }
+
+        List<AutoplaySource> sources = sourcesFor(mode, handler, seedTrack);
+        if(sources.isEmpty())
+        {
+            onNone.run();
+            return;
+        }
+
+        LOG.debug("Prefetching next autoplay candidate for guild {}; mode={}; seed={}",
+                handler.getGuildId(), mode, describeTrack(seedTrack));
+        new Session(handler, seedTrack, onNone, sources, onResolved, true).tryNextSource();
+    }
+
+    /**
+     * Re-validates a prefetched candidate when the current track ends. Conditions can drift between
+     * prefetch and promotion, so the same gates the immediate path uses are re-applied here.
+     */
+    public boolean isStillPlayable(AudioHandler handler, QueuedTrack queuedTrack)
+    {
+        if(queuedTrack == null || queuedTrack.getTrack() == null)
+            return false;
+        AudioTrack track = queuedTrack.getTrack();
+        boolean autoplayOn = bot.getSettingsManager().getSettings(handler.getGuildId()).getAutoplayMode() != AutoplayMode.OFF;
+        boolean tooLong = bot.getConfig().isTooLong(track);
+        boolean durationAcceptable = isAutoplayDurationAcceptable(track, bot.getConfig().getAutoplayMaxDurationMillis());
+        boolean playedThisSession = handler.hasPlayedThisSession(track);
+        boolean avoided = bot.getAvoidStore() != null && bot.getAvoidStore().isAvoided(handler.getGuildId(), track);
+        return isPlayableCandidate(autoplayOn, tooLong, durationAcceptable, playedThisSession, avoided);
     }
 
     public void recordIfEligible(long guildId, AudioTrack track)
@@ -147,19 +194,33 @@ public class AutoplayService
         private final AudioTrack previousTrack;
         private final Runnable fallback;
         private final List<AutoplaySource> sources;
+        private final Consumer<QueuedTrack> sink;
+        private final boolean prefetch;
         private int sourceIndex = 0;
 
-        private Session(AudioHandler handler, AudioTrack previousTrack, Runnable fallback, List<AutoplaySource> sources)
+        private Session(AudioHandler handler, AudioTrack previousTrack, Runnable fallback, List<AutoplaySource> sources,
+                        Consumer<QueuedTrack> sink, boolean prefetch)
         {
             this.handler = handler;
             this.previousTrack = previousTrack;
             this.fallback = fallback;
             this.sources = sources;
+            this.sink = sink;
+            this.prefetch = prefetch;
+        }
+
+        // Whether it is still appropriate to place a candidate. The immediate (startNext) path requires
+        // the player to be idle, so nothing that started meanwhile gets clobbered. The prefetch path
+        // runs while a track is still playing, so it does not gate on idleness; autoplay-still-enabled
+        // is checked separately, and the caller decides whether to keep the result at track end.
+        private boolean proceed()
+        {
+            return prefetch || isIdle();
         }
 
         private void tryNextSource()
         {
-            if(!isIdle())
+            if(!proceed())
                 return;
             if(!isAutoplayEnabled())
             {
@@ -260,7 +321,7 @@ public class AutoplayService
 
         private void loadPlaylistItems(String playlistName, List<PlaylistTrack> attempts, int index)
         {
-            if(!isIdle())
+            if(!proceed())
                 return;
             if(index >= attempts.size())
             {
@@ -308,7 +369,7 @@ public class AutoplayService
 
         private boolean startTrack(AudioTrack track, String query)
         {
-            if(!isIdle())
+            if(!proceed())
                 return true;
             if(!isAutoplayEnabled())
                 return false;
@@ -337,9 +398,9 @@ public class AutoplayService
                 return false;
             }
 
-            LOG.info("Starting autoplay track for guild {}; query='{}'; track={}",
-                    handler.getGuildId(), query, describeTrack(track));
-            handler.addTrack(new QueuedTrack(track, RequestMetadata.autoplay(query, track)));
+            LOG.info("Selected autoplay track for guild {}; prefetch={}; query='{}'; track={}",
+                    handler.getGuildId(), prefetch, query, describeTrack(track));
+            sink.accept(new QueuedTrack(track, RequestMetadata.autoplay(query, track)));
             return true;
         }
 
@@ -510,6 +571,18 @@ public class AutoplayService
     private static boolean hasText(String value)
     {
         return value != null && !value.trim().isEmpty();
+    }
+
+    /**
+     * Whether a candidate that was resolved ahead of time (an autoplay prefetch) is still worth
+     * playing when the current track finally ends. Conditions can drift between prefetch and
+     * promotion, so this is re-checked at promotion: autoplay must still be on, and the track must
+     * pass the same length/duration/repeat/avoid gates the immediate path applies.
+     */
+    static boolean isPlayableCandidate(boolean autoplayOn, boolean tooLong, boolean durationAcceptable,
+                                       boolean playedThisSession, boolean avoided)
+    {
+        return autoplayOn && !tooLong && durationAcceptable && !playedThisSession && !avoided;
     }
 
     static boolean isAutoplayDurationAcceptable(AudioTrack track)

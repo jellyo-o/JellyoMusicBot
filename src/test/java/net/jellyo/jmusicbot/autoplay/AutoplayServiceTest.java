@@ -66,6 +66,24 @@ public class AutoplayServiceTest
         assertFalse(AutoplayService.isLikelyCover(original));
     }
 
+    @Test
+    public void prefetchedCandidateStaysPlayableWhenNothingChanged()
+    {
+        // Re-validated at promotion time: autoplay still on, short enough, acceptable duration,
+        // not already played this session, and not on the avoid list.
+        assertTrue(AutoplayService.isPlayableCandidate(true, false, true, false, false));
+    }
+
+    @Test
+    public void prefetchedCandidateIsDroppedWhenConditionsChange()
+    {
+        assertFalse("autoplay turned off",     AutoplayService.isPlayableCandidate(false, false, true, false, false));
+        assertFalse("now too long",            AutoplayService.isPlayableCandidate(true, true, true, false, false));
+        assertFalse("duration not acceptable", AutoplayService.isPlayableCandidate(true, false, false, false, false));
+        assertFalse("already played",          AutoplayService.isPlayableCandidate(true, false, true, true, false));
+        assertFalse("now avoided",             AutoplayService.isPlayableCandidate(true, false, true, false, true));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;

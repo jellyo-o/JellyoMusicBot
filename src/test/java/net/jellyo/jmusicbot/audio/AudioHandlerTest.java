@@ -123,6 +123,25 @@ public class AudioHandlerTest
         assertEquals("`[00:01]` **abcdefg...**", AudioHandler.formatQueuedTrackLine(queuedTrack, 10));
     }
 
+    @Test
+    public void prefetchesNextAutoplayOnlyWhenIdleAndEligible()
+    {
+        // The happy path: autoplay on, not repeating, manual queue empty, no guess game,
+        // no candidate already held, and a seed track is playing.
+        assertTrue(AudioHandler.shouldPrefetchAutoplay(true, true, true, false, false, true));
+    }
+
+    @Test
+    public void doesNotPrefetchAutoplayWhenAnyGuardBlocksIt()
+    {
+        assertFalse("autoplay off",        AudioHandler.shouldPrefetchAutoplay(false, true, true, false, false, true));
+        assertFalse("repeat on",           AudioHandler.shouldPrefetchAutoplay(true, false, true, false, false, true));
+        assertFalse("manual queue present",AudioHandler.shouldPrefetchAutoplay(true, true, false, false, false, true));
+        assertFalse("guess game active",   AudioHandler.shouldPrefetchAutoplay(true, true, true, true, false, true));
+        assertFalse("candidate held",      AudioHandler.shouldPrefetchAutoplay(true, true, true, false, true, true));
+        assertFalse("no seed track",       AudioHandler.shouldPrefetchAutoplay(true, true, true, false, false, false));
+    }
+
     private static class TestTrack implements AudioTrack
     {
         private final AudioTrackInfo info;

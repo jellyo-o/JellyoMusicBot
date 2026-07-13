@@ -83,4 +83,29 @@ public class NowplayingHandlerTest
         assertEquals(0L, NowplayingHandler.computePanelUpdateDelayMillis(
                 11_500L, 10_000L, 10_000L, 250L, true));
     }
+
+    @Test
+    public void outputChannelPrefersConfiguredThenTrackThenRemembered()
+    {
+        // A configured settc channel always wins.
+        assertEquals(5L, NowplayingHandler.resolveOutputChannelId(5L, 7L, 9L));
+        assertEquals(5L, NowplayingHandler.resolveOutputChannelId(5L, 0L, 0L));
+        // No configured channel: use the track's own channel (manual/playlist plays carry this).
+        assertEquals(7L, NowplayingHandler.resolveOutputChannelId(0L, 7L, 9L));
+        assertEquals(7L, NowplayingHandler.resolveOutputChannelId(0L, 7L, 0L));
+    }
+
+    @Test
+    public void outputChannelFallsBackToRememberedWhenTrackHasNone()
+    {
+        // Autoplay tracks carry channel 0; with no settc, fall back to the last resolved channel
+        // so their lyrics still land in the channel the manual songs used.
+        assertEquals(9L, NowplayingHandler.resolveOutputChannelId(0L, 0L, 9L));
+    }
+
+    @Test
+    public void outputChannelIsNoneWhenNothingIsKnown()
+    {
+        assertEquals(0L, NowplayingHandler.resolveOutputChannelId(0L, 0L, 0L));
+    }
 }
