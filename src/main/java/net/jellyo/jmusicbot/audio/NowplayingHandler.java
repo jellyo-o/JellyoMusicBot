@@ -94,6 +94,7 @@ public class NowplayingHandler
     private final Bot bot;
     private final Map<Long, Map<Long, Long>> panels; // guild -> channel -> message
     private final Map<PanelKey, PanelUpdateState> panelUpdateStates;
+    private final Map<Long, Long> lastResolvedChannel; // guild -> last channel we placed output in
     private final KaraokeManager karaoke;
 
     public NowplayingHandler(Bot bot)
@@ -101,6 +102,7 @@ public class NowplayingHandler
         this.bot = bot;
         this.panels = new ConcurrentHashMap<>();
         this.panelUpdateStates = new ConcurrentHashMap<>();
+        this.lastResolvedChannel = new ConcurrentHashMap<>();
         this.karaoke = new KaraokeManager(bot);
     }
 
@@ -792,6 +794,22 @@ public class NowplayingHandler
         return replaceExisting && hasViewer && !hasPanelInRequestedChannel;
     }
 
+    /**
+     * Picks the output channel id for a track's now-playing panel and auto-lyrics, in priority order:
+     * the configured settc channel, then the channel the track itself carries (manual and playlist
+     * plays store this), then the last channel we successfully resolved for this guild. Autoplay and
+     * restored tracks carry no channel of their own, so without the remembered fallback their lyrics
+     * would have nowhere to go on servers that never set settc. Returns 0 when nothing is known.
+     */
+    static long resolveOutputChannelId(long configuredId, long trackChannelId, long rememberedId)
+    {
+        if(configuredId != 0L)
+            return configuredId;
+        if(trackChannelId != 0L)
+            return trackChannelId;
+        return rememberedId;
+    }
+
     private Long getPanelMessageId(long guildId, long channelId)
     {
         Map<Long, Long> channelPanels = panels.get(guildId);
@@ -806,15 +824,26 @@ public class NowplayingHandler
 
     private TextChannel getDefaultPanelChannel(Guild guild, AudioTrack track)
     {
+        long guildId = guild.getIdLong();
         Settings settings = bot.getSettingsManager().getSettings(guild);
         TextChannel configured = settings.getTextChannel(guild);
-        if(configured != null)
-            return configured;
+        long configuredId = configured == null ? 0L : configured.getIdLong();
 
-        RequestMetadata rm = track.getUserData(RequestMetadata.class);
-        if(rm != null && rm.getTextChannelId() != 0L)
-            return guild.getTextChannelById(rm.getTextChannelId());
-        return null;
+        RequestMetadata rm = track == null ? null : track.getUserData(RequestMetadata.class);
+        long trackChannelId = rm == null ? 0L : rm.getTextChannelId();
+
+        long rememberedId = lastResolvedChannel.getOrDefault(guildId, 0L);
+        long chosenId = resolveOutputChannelId(configuredId, trackChannelId, rememberedId);
+        if(chosenId == 0L)
+            return null;
+
+        TextChannel channel = chosenId == configuredId ? configured : guild.getTextChannelById(chosenId);
+        if(channel == null)
+            return null;
+        // Remember whatever channel actually resolved (from settc or the track) so a later autoplay or
+        // restored track, which carries no channel of its own, still lands in the same place.
+        lastResolvedChannel.put(guildId, chosenId);
+        return channel;
     }
 
     private boolean isPanelButton(String componentId)

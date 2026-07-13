@@ -15,6 +15,7 @@
  */
 package com.jagrosh.jmusicbot.audio;
 
+import com.jagrosh.jmusicbot.Bot;
 import com.jagrosh.jmusicbot.audio.filter.AudioFilterPreset;
 import com.jagrosh.jmusicbot.dashboard.DashboardStatsService;
 import com.jagrosh.jmusicbot.economy.EconomyService;
@@ -25,6 +26,7 @@ import com.jagrosh.jmusicbot.queue.AbstractQueue;
 import com.jagrosh.jmusicbot.recovery.CrashRecoveryService;
 import com.jagrosh.jmusicbot.settings.AutoplayMode;
 import com.jagrosh.jmusicbot.settings.QueueType;
+import com.jagrosh.jmusicbot.settings.Settings;
 import com.jagrosh.jmusicbot.utils.TimeUtil;
 import com.jagrosh.jmusicbot.utils.TrackIdentity;
 import com.jagrosh.jmusicbot.settings.RepeatMode;
@@ -99,6 +101,9 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     private long lastPlaylistId;
     private boolean autoplayStopQueued = false;
     private boolean suppressAutoplayOnce = false;
+    // Next autoplay track resolved ahead of time while the current one plays (invisible to the queue),
+    // so its lyrics are warmed and the transition is instant. Guarded by synchronized(this).
+    private QueuedTrack pendingAutoplayTrack;
     private String currentStatsSessionKey;
     private long currentTrackStartedAt;
     private SkipInfo pendingSkip;
@@ -146,6 +151,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public int addTrackToFront(QueuedTrack qtrack)
     {
         onManualEnqueue(qtrack);
+        clearPendingAutoplayIfManual(qtrack);
         if(audioPlayer.getPlayingTrack()==null)
         {
             LOG.info("Starting track immediately at front for guild {}: {}", guildId, trackSummary(qtrack.getTrack()));
@@ -173,6 +179,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
     public int addTrack(QueuedTrack qtrack)
     {
         onManualEnqueue(qtrack);
+        clearPendingAutoplayIfManual(qtrack);
         if(audioPlayer.getPlayingTrack()==null)
         {
             LOG.info("Starting track immediately for guild {}: {}", guildId, trackSummary(qtrack.getTrack()));
@@ -202,6 +209,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(qtracks == null || qtracks.isEmpty())
             return 0;
         onManualEnqueue(qtracks.get(0));
+        clearPendingAutoplayIfManual(qtracks.get(0));
 
         if(audioPlayer.getPlayingTrack()==null)
         {
@@ -239,6 +247,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         if(qtracks == null || qtracks.isEmpty())
             return 0;
         onManualEnqueue(qtracks.get(0));
+        clearPendingAutoplayIfManual(qtracks.get(0));
 
         if(audioPlayer.getPlayingTrack()==null)
         {
@@ -284,6 +293,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         queue.clear();
         autoplayStopQueued = false;
         suppressAutoplayOnce = playing != null;
+        clearPendingAutoplay();
         clearPlaybackSessionHistory();
         audioPlayer.stopTrack();
         synchronized(this)
@@ -823,6 +833,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
             if(suppressAutoplayOnce)
             {
                 suppressAutoplayOnce = false;
+                clearPendingAutoplay();
                 manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, null);
                 player.setPaused(false);
                 return;
@@ -918,6 +929,7 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 guildId, player.getVolume(), queue.size(), trackSummary(track));
         manager.getBot().getNowplayingHandler().onTrackUpdate(guildId, track);
         maybePreloadUpcomingLyrics();
+        maybePrefetchAutoplay();
     }
 
     /**
@@ -953,6 +965,96 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
                 keys.add(key);
         }
         preloader.preloadKeys(keys);
+    }
+
+    /**
+     * While a track plays and the manual queue is empty, resolve the next autoplay song ahead of time
+     * into a single hidden slot and warm its lyrics. This makes the autoplay transition instant and,
+     * with {@link NowplayingHandler}'s channel fallback, lets auto-lyrics render the moment it starts.
+     * A manual request clears the slot ({@link #clearPendingAutoplayIfManual}); the candidate is
+     * re-validated before it is ever promoted ({@link #handleEmptyQueue}).
+     */
+    private void maybePrefetchAutoplay()
+    {
+        Bot bot = manager.getBot();
+        Settings settings = bot.getSettingsManager().getSettings(guildId);
+        AudioTrack seed = audioPlayer.getPlayingTrack();
+        boolean eligible = shouldPrefetchAutoplay(
+                settings.getAutoplayMode() != AutoplayMode.OFF,
+                settings.getRepeatMode() == RepeatMode.OFF,
+                queue.isEmpty(),
+                guessMusicMode,
+                hasPendingAutoplay(),
+                seed != null && seed.getInfo() != null);
+        if(!eligible)
+            return;
+        bot.getAutoplayService().prefetchNext(this, seed,
+                qtrack ->
+                {
+                    if(acceptPendingAutoplay(qtrack))
+                        preloadPendingAutoplayLyrics(qtrack);
+                },
+                () -> {});
+    }
+
+    /** Warms the lyrics cache for a prefetched autoplay candidate (LRCLIB-only, like the queue preload). */
+    private void preloadPendingAutoplayLyrics(QueuedTrack qtrack)
+    {
+        if(!manager.getBot().getSettingsManager().getSettings(guildId).isAutoPreloadLyrics())
+            return;
+        LyricsPreloader preloader = manager.getBot().getLyricsPreloader();
+        if(preloader == null)
+            return;
+        AudioTrack track = qtrack.getTrack();
+        if(track == null || track.getInfo() == null || track.getInfo().isStream)
+            return;
+        String key = LyricsQuery.forTrack(track);
+        if(!key.isEmpty())
+            preloader.preloadKeys(Collections.singletonList(key));
+    }
+
+    private synchronized boolean hasPendingAutoplay()
+    {
+        return pendingAutoplayTrack != null;
+    }
+
+    /**
+     * Stores a freshly prefetched autoplay candidate, but only if it is still wanted: no candidate is
+     * already held and the manual queue is still empty (a manual request during resolution wins).
+     * Returns whether it was kept.
+     */
+    private synchronized boolean acceptPendingAutoplay(QueuedTrack qtrack)
+    {
+        if(pendingAutoplayTrack != null || !queue.isEmpty())
+            return false;
+        pendingAutoplayTrack = qtrack;
+        return true;
+    }
+
+    /** Consumes and clears the prefetched autoplay candidate, if any. */
+    private synchronized QueuedTrack takePendingAutoplay()
+    {
+        QueuedTrack pending = pendingAutoplayTrack;
+        pendingAutoplayTrack = null;
+        return pending;
+    }
+
+    /** Discards any prefetched autoplay candidate. */
+    private synchronized void clearPendingAutoplay()
+    {
+        pendingAutoplayTrack = null;
+    }
+
+    /**
+     * Drops the prefetched autoplay candidate when a non-autoplay (manual or saved-playlist) track is
+     * enqueued, so a user request always takes precedence over the speculative next-up song.
+     */
+    private void clearPendingAutoplayIfManual(QueuedTrack qtrack)
+    {
+        RequestMetadata md = qtrack == null || qtrack.getTrack() == null
+                ? null : qtrack.getTrack().getUserData(RequestMetadata.class);
+        if(md == null || !md.isAutoplay())
+            clearPendingAutoplay();
     }
 
     /**
@@ -1108,6 +1210,18 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
         return "<t:" + epochSeconds + ":" + style + ">";
     }
 
+    /**
+     * Whether to resolve the next autoplay track ahead of time while the current one plays, so its
+     * lyrics can be warmed and the transition is instant. Only when autoplay is on, the guild is not
+     * repeating (repeat re-queues the finished track, so autoplay never runs), the manual queue is
+     * empty, no guess game is in progress, no candidate is already held, and a seed track is playing.
+     */
+    static boolean shouldPrefetchAutoplay(boolean autoplayOn, boolean repeatOff, boolean queueEmpty,
+                                          boolean guessActive, boolean candidateHeld, boolean seedPresent)
+    {
+        return autoplayOn && repeatOff && queueEmpty && !guessActive && !candidateHeld && seedPresent;
+    }
+
     private static String formatRepeatMode(RepeatMode repeatMode)
     {
         String emoji = repeatMode.getEmoji();
@@ -1237,6 +1351,17 @@ public class AudioHandler extends AudioEventAdapter implements AudioSendHandler
 
     private void handleEmptyQueue(AudioPlayer player, AudioTrack previousTrack)
     {
+        // Prefer the autoplay track we resolved ahead of time (its lyrics are already warm), but only
+        // if it is still playable now; conditions can drift between prefetch and this moment.
+        QueuedTrack pending = takePendingAutoplay();
+        if(pending != null && manager.getBot().getAutoplayService().isStillPlayable(this, pending))
+        {
+            LOG.info("Promoting prefetched autoplay track for guild {}; track={}",
+                    guildId, trackSummary(pending.getTrack()));
+            addTrack(pending);
+            player.setPaused(false);
+            return;
+        }
         if(manager.getBot().getAutoplayService().startNext(this, previousTrack, () -> finishEmptyQueue(player)))
         {
             player.setPaused(false);
